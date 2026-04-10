@@ -357,4 +357,3 @@ MIT © [Franck Birba](https://github.com/franckbirba)
 **Franck Birba**
 
 - GitHub: [@franckbirba](https://github.com/franckbirba)
-- Email: franck.birba@gmail.com
