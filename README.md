@@ -1,8 +1,12 @@
 # dev-panel
 
+[![npm version](https://img.shields.io/npm/v/dev-panel.svg)](https://www.npmjs.com/package/dev-panel)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/franckbirba/dev-panel.svg)](https://github.com/franckbirba/dev-panel/stargazers)
+
 A plug & play bug/feature reporting panel with SQLite storage and GitHub sync.
 
-> Collect user feedback directly in your React app, review with AI assistance, and publish to GitHub Issues - all with a simple workflow.
+> Collect user feedback directly in your React app, review with AI assistance (Claude Code, Cursor, etc.), and publish to GitHub Issues - all with a simple workflow.
 
 ## Features
 
