@@ -1,8 +1,6 @@
 import express from 'express';
-import multer from 'multer';
-import { join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
 import {
+  getProjectByApiKey,
   createTicket,
   getTicket,
   listTickets,
@@ -13,76 +11,80 @@ import {
 
 const router = express.Router();
 
-// Configure multer for file uploads
-function configureUpload(storagePath) {
-  const uploadPath = join(storagePath, 'uploads');
+// ============================================================================
+// MIDDLEWARE - API Key Auth
+// ============================================================================
 
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      const date = new Date().toISOString().split('T')[0];
-      const dayPath = join(uploadPath, date);
+function authenticateProject(req, res, next) {
+  const apiKey = req.headers['x-api-key'] || req.query.api_key;
 
-      if (!existsSync(dayPath)) {
-        mkdirSync(dayPath, { recursive: true });
-      }
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Missing API key. Provide via X-API-Key header or api_key query param.' });
+  }
 
-      cb(null, dayPath);
-    },
-    filename: (req, file, cb) => {
-      const timestamp = Date.now();
-      const ext = file.originalname.split('.').pop();
-      cb(null, `screenshot-${timestamp}.${ext}`);
-    }
-  });
+  const project = getProjectByApiKey(apiKey);
 
-  return multer({
-    storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-    fileFilter: (req, file, cb) => {
-      const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
-      if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only image files are allowed'));
-      }
-    }
-  });
+  if (!project) {
+    return res.status(401).json({ error: 'Invalid API key.' });
+  }
+
+  // Attach project to request
+  req.project = project;
+  next();
 }
 
 export function createRouter(config = {}) {
-  const upload = configureUpload(config.storagePath || './storage');
+  const storagePath = config.storagePath || './storage';
 
-  // USER ENDPOINTS
+  // ============================================================================
+  // PUBLIC ENDPOINTS (No auth)
+  // ============================================================================
+
+  // Health check
+  router.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // ============================================================================
+  // PROJECT-SCOPED ENDPOINTS (API Key required)
+  // ============================================================================
 
   // Create ticket
-  router.post('/tickets', upload.single('screenshot'), (req, res) => {
+  router.post('/tickets', authenticateProject, async (req, res) => {
     try {
-      const { type, title, description, context, created_by, project } = req.body;
+      const { type, title, description, context, screenshot, created_by } = req.body;
 
       if (!type || !title || !description) {
         return res.status(400).json({ error: 'Missing required fields: type, title, description' });
       }
 
-      let screenshot_path = null;
-      if (req.file) {
-        // Store relative path
-        const date = new Date().toISOString().split('T')[0];
-        screenshot_path = `uploads/${date}/${req.file.filename}`;
+      // Handle base64 screenshot
+      let screenshotBuffer = null;
+      let screenshotMimeType = null;
+
+      if (screenshot) {
+        // Extract base64 data and mime type
+        const matches = screenshot.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          screenshotMimeType = matches[1];
+          screenshotBuffer = Buffer.from(matches[2], 'base64');
+        }
       }
 
-      const ticketId = createTicket({
+      const ticketId = createTicket(storagePath, req.project.id, {
         type,
         title,
         description,
-        context: typeof context === 'string' ? JSON.parse(context) : context,
-        screenshot_path,
-        created_by,
-        project: project || config.project
+        context,
+        screenshot: screenshotBuffer,
+        screenshot_mime_type: screenshotMimeType,
+        created_by
       });
 
       res.status(201).json({
         id: ticketId,
-        message: 'Ticket created successfully'
+        message: 'Ticket created successfully',
+        project: req.project.name
       });
     } catch (error) {
       console.error('Error creating ticket:', error);
@@ -91,15 +93,19 @@ export function createRouter(config = {}) {
   });
 
   // Get ticket details
-  router.get('/tickets/:id', (req, res) => {
+  router.get('/tickets/:id', authenticateProject, (req, res) => {
     try {
-      const ticket = getTicket(parseInt(req.params.id));
+      const ticket = getTicket(storagePath, req.project.id, parseInt(req.params.id));
 
       if (!ticket) {
         return res.status(404).json({ error: 'Ticket not found' });
       }
 
-      res.json(ticket);
+      // Don't send screenshot BLOB in JSON response
+      const { screenshot, ...ticketWithoutBlob } = ticket;
+      ticketWithoutBlob.has_screenshot = !!screenshot;
+
+      res.json(ticketWithoutBlob);
     } catch (error) {
       console.error('Error getting ticket:', error);
       res.status(500).json({ error: error.message });
@@ -107,17 +113,19 @@ export function createRouter(config = {}) {
   });
 
   // List tickets
-  router.get('/tickets', (req, res) => {
+  router.get('/tickets', authenticateProject, (req, res) => {
     try {
-      const { status, project, limit } = req.query;
+      const { status, limit } = req.query;
 
-      const tickets = listTickets({
+      const tickets = listTickets(storagePath, req.project.id, {
         status,
-        project,
         limit: limit ? parseInt(limit) : undefined
       });
 
-      res.json(tickets);
+      res.json({
+        project: req.project.name,
+        tickets
+      });
     } catch (error) {
       console.error('Error listing tickets:', error);
       res.status(500).json({ error: error.message });
@@ -125,35 +133,29 @@ export function createRouter(config = {}) {
   });
 
   // Get screenshot
-  router.get('/tickets/:id/screenshot', (req, res) => {
+  router.get('/tickets/:id/screenshot', authenticateProject, (req, res) => {
     try {
-      const ticket = getTicket(parseInt(req.params.id));
+      const ticket = getTicket(storagePath, req.project.id, parseInt(req.params.id));
 
       if (!ticket) {
         return res.status(404).json({ error: 'Ticket not found' });
       }
 
-      if (!ticket.screenshot_path) {
+      if (!ticket.screenshot) {
         return res.status(404).json({ error: 'No screenshot for this ticket' });
       }
 
-      const screenshotPath = join(config.storagePath || './storage', ticket.screenshot_path);
-
-      if (!existsSync(screenshotPath)) {
-        return res.status(404).json({ error: 'Screenshot file not found' });
-      }
-
-      res.sendFile(screenshotPath);
+      // Send BLOB as image
+      res.set('Content-Type', ticket.screenshot_mime_type || 'image/png');
+      res.send(ticket.screenshot);
     } catch (error) {
       console.error('Error getting screenshot:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // PM ENDPOINTS
-
-  // Update ticket (review, publish, etc.)
-  router.patch('/tickets/:id', (req, res) => {
+  // Update ticket
+  router.patch('/tickets/:id', authenticateProject, (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const updates = req.body;
@@ -163,7 +165,7 @@ export function createRouter(config = {}) {
         updates.reviewed_at = new Date().toISOString();
       }
 
-      updateTicket(id, updates);
+      updateTicket(storagePath, req.project.id, id, updates);
 
       res.json({ message: 'Ticket updated successfully' });
     } catch (error) {
@@ -173,21 +175,21 @@ export function createRouter(config = {}) {
   });
 
   // Delete/reject ticket
-  router.delete('/tickets/:id', (req, res) => {
+  router.delete('/tickets/:id', authenticateProject, (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { reason } = req.body;
 
       if (reason) {
         // Soft delete: mark as rejected
-        updateTicket(id, {
+        updateTicket(storagePath, req.project.id, id, {
           status: 'rejected',
           rejection_reason: reason,
           reviewed_at: new Date().toISOString()
         });
       } else {
         // Hard delete
-        deleteTicket(id);
+        deleteTicket(storagePath, req.project.id, id);
       }
 
       res.json({ message: 'Ticket deleted successfully' });
@@ -198,21 +200,18 @@ export function createRouter(config = {}) {
   });
 
   // Get stats
-  router.get('/stats', (req, res) => {
+  router.get('/stats', authenticateProject, (req, res) => {
     try {
-      const { project } = req.query;
-      const stats = getStats(project);
+      const stats = getStats(storagePath, req.project.id);
 
-      res.json(stats);
+      res.json({
+        project: req.project.name,
+        stats
+      });
     } catch (error) {
       console.error('Error getting stats:', error);
       res.status(500).json({ error: error.message });
     }
-  });
-
-  // Health check
-  router.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
   return router;

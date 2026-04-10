@@ -5,7 +5,11 @@ const PANEL_TYPES = {
   FEATURE: 'feature'
 };
 
-export function DevPanel({ apiUrl = 'http://localhost:3030', project = 'unknown' }) {
+export function DevPanel({ apiUrl = 'http://localhost:3030', apiKey }) {
+  if (!apiKey) {
+    console.warn('DevPanel: No API key provided. Component will not work.');
+    return null;
+  }
   const [isOpen, setIsOpen] = useState(false);
   const [activePanel, setActivePanel] = useState(null);
   const [formData, setFormData] = useState({
@@ -26,33 +30,35 @@ export function DevPanel({ apiUrl = 'http://localhost:3030', project = 'unknown'
     setSubmitStatus(null);
 
     try {
-      const formPayload = new FormData();
-      formPayload.append('type', type);
-      formPayload.append('title', formData.title);
-      formPayload.append('description', formData.description);
-      formPayload.append('project', project);
-      formPayload.append('created_by', 'user@example.com'); // TODO: Get from auth
-
-      // Capture context
-      const context = {
-        url: window.location.href,
-        userAgent: navigator.userAgent,
-        timestamp: Date.now(),
-        viewport: {
-          width: window.innerWidth,
-          height: window.innerHeight
+      // Prepare payload
+      const payload = {
+        type,
+        title: formData.title,
+        description: formData.description,
+        created_by: 'user@example.com', // TODO: Get from auth
+        context: {
+          url: window.location.href,
+          userAgent: navigator.userAgent,
+          timestamp: Date.now(),
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight
+          }
         }
       };
-      formPayload.append('context', JSON.stringify(context));
 
-      // Add screenshot if provided
+      // Add screenshot if provided (as base64)
       if (formData.screenshot) {
-        formPayload.append('screenshot', formData.screenshot);
+        payload.screenshot = formData.screenshot;
       }
 
       const response = await fetch(`${apiUrl}/api/tickets`, {
         method: 'POST',
-        body: formPayload
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey
+        },
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
@@ -82,15 +88,18 @@ export function DevPanel({ apiUrl = 'http://localhost:3030', project = 'unknown'
 
   const captureScreenshot = async () => {
     try {
-      // Use html2canvas or similar in production
-      // For now, just allow file upload
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*';
       input.onchange = (e) => {
         const file = e.target.files[0];
         if (file) {
-          setFormData(prev => ({ ...prev, screenshot: file }));
+          // Convert to base64
+          const reader = new FileReader();
+          reader.onload = () => {
+            setFormData(prev => ({ ...prev, screenshot: reader.result }));
+          };
+          reader.readAsDataURL(file);
         }
       };
       input.click();

@@ -1,26 +1,68 @@
 import Database from 'better-sqlite3';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import crypto from 'crypto';
 
-let db = null;
+let masterDb = null;
+const projectDbs = new Map(); // Cache project databases
 
-export function initDatabase(storagePath = './storage') {
-  const dbPath = join(storagePath, 'tickets.db');
+// ============================================================================
+// MASTER DATABASE (projects.db)
+// ============================================================================
+
+export function initMasterDatabase(storagePath = './storage') {
+  const dbPath = join(storagePath, 'projects.db');
 
   // Ensure storage directory exists
   if (!existsSync(storagePath)) {
     mkdirSync(storagePath, { recursive: true });
   }
 
-  // Ensure uploads directory exists
-  const uploadsPath = join(storagePath, 'uploads');
-  if (!existsSync(uploadsPath)) {
-    mkdirSync(uploadsPath, { recursive: true });
+  masterDb = new Database(dbPath);
+
+  // Create projects table
+  masterDb.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      github_owner TEXT,
+      github_repo TEXT,
+      github_token TEXT,
+      api_key TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_api_key ON projects(api_key);
+    CREATE INDEX IF NOT EXISTS idx_name ON projects(name);
+  `);
+
+  return masterDb;
+}
+
+export function getMasterDatabase() {
+  if (!masterDb) {
+    throw new Error('Master database not initialized. Call initMasterDatabase() first.');
+  }
+  return masterDb;
+}
+
+// ============================================================================
+// PROJECT DATABASE (per-project tickets.db)
+// ============================================================================
+
+export function initProjectDatabase(storagePath, projectId) {
+  const projectDir = join(storagePath, projectId);
+  const dbPath = join(projectDir, 'tickets.db');
+
+  // Ensure project directory exists
+  if (!existsSync(projectDir)) {
+    mkdirSync(projectDir, { recursive: true });
   }
 
-  db = new Database(dbPath);
+  const db = new Database(dbPath);
 
-  // Create tickets table
+  // Create tickets table with BLOB for screenshots
   db.exec(`
     CREATE TABLE IF NOT EXISTS tickets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +78,8 @@ export function initDatabase(storagePath = './storage') {
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       context TEXT,
-      screenshot_path TEXT,
+      screenshot BLOB,                    -- Image stored as BLOB
+      screenshot_mime_type TEXT,          -- e.g., 'image/png'
 
       -- PM review
       reviewed_at DATETIME,
@@ -51,85 +94,68 @@ export function initDatabase(storagePath = './storage') {
 
       -- Metadata
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      created_by TEXT,
-      project TEXT
+      created_by TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_status ON tickets(status);
     CREATE INDEX IF NOT EXISTS idx_github_issue ON tickets(github_issue_number);
-    CREATE INDEX IF NOT EXISTS idx_project ON tickets(project);
   `);
+
+  // Cache the database connection
+  projectDbs.set(projectId, db);
 
   return db;
 }
 
-export function getDatabase() {
-  if (!db) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
+export function getProjectDatabase(storagePath, projectId) {
+  // Return cached connection if exists
+  if (projectDbs.has(projectId)) {
+    return projectDbs.get(projectId);
   }
-  return db;
+
+  // Initialize if not cached
+  return initProjectDatabase(storagePath, projectId);
 }
 
-// CRUD operations
-export function createTicket({ type, title, description, context, screenshot_path, created_by, project }) {
-  const stmt = db.prepare(`
-    INSERT INTO tickets (type, title, description, context, screenshot_path, created_by, project)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+// ============================================================================
+// PROJECT MANAGEMENT
+// ============================================================================
+
+export function createProject({ name, github_owner, github_repo, github_token }) {
+  const id = crypto.randomUUID();
+  const api_key = 'dp_' + crypto.randomBytes(32).toString('hex');
+
+  const stmt = masterDb.prepare(`
+    INSERT INTO projects (id, name, github_owner, github_repo, github_token, api_key)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
-  const result = stmt.run(
-    type,
-    title,
-    description,
-    JSON.stringify(context || {}),
-    screenshot_path,
-    created_by,
-    project
-  );
+  stmt.run(id, name, github_owner, github_repo, github_token, api_key);
 
-  return result.lastInsertRowid;
+  return { id, name, api_key };
 }
 
-export function getTicket(id) {
-  const stmt = db.prepare('SELECT * FROM tickets WHERE id = ?');
-  const ticket = stmt.get(id);
-
-  if (ticket && ticket.context) {
-    ticket.context = JSON.parse(ticket.context);
-  }
-
-  return ticket;
+export function getProjectByApiKey(api_key) {
+  const stmt = masterDb.prepare('SELECT * FROM projects WHERE api_key = ?');
+  return stmt.get(api_key);
 }
 
-export function listTickets({ status, project, limit = 100 } = {}) {
-  let query = 'SELECT * FROM tickets WHERE 1=1';
-  const params = [];
-
-  if (status) {
-    query += ' AND status = ?';
-    params.push(status);
-  }
-
-  if (project) {
-    query += ' AND project = ?';
-    params.push(project);
-  }
-
-  query += ' ORDER BY created_at DESC LIMIT ?';
-  params.push(limit);
-
-  const stmt = db.prepare(query);
-  const tickets = stmt.all(...params);
-
-  return tickets.map(ticket => {
-    if (ticket.context) {
-      ticket.context = JSON.parse(ticket.context);
-    }
-    return ticket;
-  });
+export function getProjectById(id) {
+  const stmt = masterDb.prepare('SELECT * FROM projects WHERE id = ?');
+  return stmt.get(id);
 }
 
-export function updateTicket(id, updates) {
+export function getProjectByName(name) {
+  const stmt = masterDb.prepare('SELECT * FROM projects WHERE name = ?');
+  return stmt.get(name);
+}
+
+export function listProjects() {
+  const stmt = masterDb.prepare('SELECT id, name, github_owner, github_repo, api_key, created_at FROM projects ORDER BY created_at DESC');
+  return stmt.all();
+}
+
+export function updateProject(id, updates) {
   const fields = [];
   const values = [];
 
@@ -138,7 +164,89 @@ export function updateTicket(id, updates) {
     values.push(value);
   }
 
+  fields.push('updated_at = CURRENT_TIMESTAMP');
   values.push(id);
+
+  const stmt = masterDb.prepare(`
+    UPDATE projects SET ${fields.join(', ')} WHERE id = ?
+  `);
+
+  return stmt.run(...values);
+}
+
+export function deleteProject(id) {
+  const stmt = masterDb.prepare('DELETE FROM projects WHERE id = ?');
+  return stmt.run(id);
+}
+
+// ============================================================================
+// TICKET OPERATIONS (per-project)
+// ============================================================================
+
+export function createTicket(storagePath, projectId, ticketData) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const { type, title, description, context, screenshot, screenshot_mime_type, created_by } = ticketData;
+
+  const stmt = db.prepare(`
+    INSERT INTO tickets (type, title, description, context, screenshot, screenshot_mime_type, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    type,
+    title,
+    description,
+    JSON.stringify(context || {}),
+    screenshot || null,
+    screenshot_mime_type || null,
+    created_by
+  );
+
+  return result.lastInsertRowid;
+}
+
+export function getTicket(storagePath, projectId, ticketId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare('SELECT * FROM tickets WHERE id = ?');
+  const ticket = stmt.get(ticketId);
+
+  if (ticket && ticket.context) {
+    ticket.context = JSON.parse(ticket.context);
+  }
+
+  return ticket;
+}
+
+export function listTickets(storagePath, projectId, { status, limit = 100 } = {}) {
+  const db = getProjectDatabase(storagePath, projectId);
+  let query = 'SELECT id, type, status, title, description, github_issue_number, github_issue_url, created_at, created_by FROM tickets WHERE 1=1';
+  const params = [];
+
+  if (status) {
+    query += ' AND status = ?';
+    params.push(status);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(limit);
+
+  const stmt = db.prepare(query);
+  const tickets = stmt.all(...params);
+
+  return tickets;
+}
+
+export function updateTicket(storagePath, projectId, ticketId, updates) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const fields = [];
+  const values = [];
+
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+
+  values.push(ticketId);
 
   const stmt = db.prepare(`
     UPDATE tickets SET ${fields.join(', ')} WHERE id = ?
@@ -147,30 +255,21 @@ export function updateTicket(id, updates) {
   return stmt.run(...values);
 }
 
-export function deleteTicket(id) {
+export function deleteTicket(storagePath, projectId, ticketId) {
+  const db = getProjectDatabase(storagePath, projectId);
   const stmt = db.prepare('DELETE FROM tickets WHERE id = ?');
-  return stmt.run(id);
+  return stmt.run(ticketId);
 }
 
-export function getStats(project) {
-  let query = `
-    SELECT
-      status,
-      COUNT(*) as count
+export function getStats(storagePath, projectId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    SELECT status, COUNT(*) as count
     FROM tickets
-  `;
+    GROUP BY status
+  `);
 
-  const params = [];
-
-  if (project) {
-    query += ' WHERE project = ?';
-    params.push(project);
-  }
-
-  query += ' GROUP BY status';
-
-  const stmt = db.prepare(query);
-  const rows = stmt.all(...params);
+  const rows = stmt.all();
 
   const stats = {
     pending: 0,
@@ -186,4 +285,21 @@ export function getStats(project) {
   });
 
   return stats;
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+export function closeAllDatabases() {
+  if (masterDb) {
+    masterDb.close();
+    masterDb = null;
+  }
+
+  for (const db of projectDbs.values()) {
+    db.close();
+  }
+
+  projectDbs.clear();
 }

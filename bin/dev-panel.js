@@ -18,6 +18,7 @@ program
   .version(pkg.version);
 
 // Import commands
+import { adminCommand } from '../src/cli/commands/admin.js';
 import { initCommand } from '../src/cli/commands/init.js';
 import { serveCommand } from '../src/cli/commands/serve.js';
 import { listCommand } from '../src/cli/commands/list.js';
@@ -28,6 +29,7 @@ import { syncCommand } from '../src/cli/commands/sync.js';
 import { statsCommand } from '../src/cli/commands/stats.js';
 
 // Register commands
+program.addCommand(adminCommand);
 program.addCommand(initCommand);
 program.addCommand(serveCommand);
 program.addCommand(listCommand);

@@ -2,64 +2,41 @@ import express from 'express';
 import cors from 'cors';
 import { join } from 'path';
 import { readFileSync, existsSync } from 'fs';
-import { initDatabase } from './db.js';
+import { initMasterDatabase } from './db.js';
 import { initGitHub } from './github.js';
 import { createRouter } from './routes.js';
 
-export function createServer(configPath = './.devpanelrc.json') {
-  // Load config
-  let config = {
-    project: 'unknown',
-    storage: { path: './storage' },
-    server: { port: 3030, host: 'localhost' },
-    github: {}
+export function createServer(storagePath = './storage') {
+  // Initialize master database (projects.db)
+  initMasterDatabase(storagePath);
+
+  // Default config
+  const config = {
+    storagePath,
+    server: { port: 3030, host: 'localhost' }
   };
-
-  if (existsSync(configPath)) {
-    const configFile = readFileSync(configPath, 'utf-8');
-    config = { ...config, ...JSON.parse(configFile) };
-  }
-
-  // Initialize database
-  initDatabase(config.storage.path);
-
-  // Initialize GitHub if token provided
-  if (config.github.token && config.github.token !== '${GITHUB_TOKEN}') {
-    initGitHub(config.github.token);
-  } else if (process.env.GITHUB_TOKEN) {
-    initGitHub(process.env.GITHUB_TOKEN);
-  }
 
   // Create Express app
   const app = express();
 
   // Middleware
   app.use(cors());
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '10mb' })); // Increase limit for base64 images
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Routes
   app.use('/api', createRouter(config));
 
-  // Static files (for screenshots in development)
-  app.use('/storage', express.static(config.storage.path));
-
   return { app, config };
 }
 
-export function startServer(configPath) {
-  const { app, config } = createServer(configPath);
-
-  const port = config.server.port || 3030;
-  const host = config.server.host || 'localhost';
+export function startServer(storagePath = './storage', port = 3030, host = 'localhost') {
+  const { app, config } = createServer(storagePath);
 
   const server = app.listen(port, host, () => {
     console.log(`✓ DevPanel server running on http://${host}:${port}`);
-    console.log(`✓ Project: ${config.project}`);
-    console.log(`✓ Storage: ${config.storage.path}`);
-    if (config.github.owner && config.github.repo) {
-      console.log(`✓ GitHub: ${config.github.owner}/${config.github.repo}`);
-    }
+    console.log(`✓ Storage: ${storagePath}`);
+    console.log(`✓ Multi-project mode with API key authentication`);
   });
 
   // Graceful shutdown

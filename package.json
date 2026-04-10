@@ -1,6 +1,6 @@
 {
   "name": "dev-panel",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Plug & play bug/feature reporting panel with SQLite storage and GitHub sync",
   "type": "module",
   "main": "./src/server/index.js",
