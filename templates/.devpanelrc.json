@@ -1,0 +1,24 @@
+{
+  "project": "my-project",
+  "storage": {
+    "path": "./storage",
+    "maxFileSize": "10MB"
+  },
+  "server": {
+    "port": 3030,
+    "host": "localhost"
+  },
+  "github": {
+    "owner": "your-org",
+    "repo": "your-repo",
+    "token": "${GITHUB_TOKEN}",
+    "labels": {
+      "bug": ["bug", "needs-triage"],
+      "feature": ["enhancement", "feature-request"]
+    }
+  },
+  "sync": {
+    "enabled": true,
+    "interval": "15m"
+  }
+}

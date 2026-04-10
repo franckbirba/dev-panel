@@ -1,0 +1,7 @@
+storage/
+*.log
+.DS_Store
+.env
+.env.local
+test/
+*.test.js
