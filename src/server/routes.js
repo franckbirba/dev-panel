@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   getProjectByApiKey,
   createProject,
@@ -50,6 +51,55 @@ function authenticateProject(req, res, next) {
 export function createRouter(config = {}) {
   const storagePath = config.storagePath || './storage';
 
+  // Rate limiters
+  const globalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' }
+  });
+
+  const ticketCreateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many ticket submissions, please try again later.' }
+  });
+
+  const authLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many auth attempts, please try again later.' }
+  });
+
+  // Apply global rate limit
+  router.use(globalLimiter);
+
+  // Admin authentication middleware
+  function authenticateAdmin(req, res, next) {
+    const adminKey = req.headers['x-admin-key'];
+    const configuredKey = process.env.ADMIN_API_KEY;
+
+    if (!configuredKey) {
+      // No admin key configured = admin endpoints disabled in production
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({ error: 'Admin endpoints disabled. Set ADMIN_API_KEY.' });
+      }
+      // In dev, allow without key
+      return next();
+    }
+
+    if (!adminKey || adminKey !== configuredKey) {
+      return res.status(401).json({ error: 'Invalid or missing admin key. Provide via X-Admin-Key header.' });
+    }
+
+    next();
+  }
+
   // ============================================================================
   // PUBLIC ENDPOINTS (No auth)
   // ============================================================================
@@ -64,7 +114,7 @@ export function createRouter(config = {}) {
   // ============================================================================
 
   // List all projects
-  router.get('/projects', (req, res) => {
+  router.get('/projects', authLimiter, authenticateAdmin, (req, res) => {
     try {
       const projects = listProjects();
       res.json({ projects });
@@ -74,7 +124,7 @@ export function createRouter(config = {}) {
   });
 
   // Import GitHub repo as project
-  router.post('/projects/import', async (req, res) => {
+  router.post('/projects/import', authLimiter, authenticateAdmin, async (req, res) => {
     try {
       const { github_url, github_token } = req.body;
 
@@ -260,7 +310,7 @@ export function createRouter(config = {}) {
   });
 
   // Create ticket
-  router.post('/tickets', authenticateProject, async (req, res) => {
+  router.post('/tickets', ticketCreateLimiter, authenticateProject, async (req, res) => {
     try {
       const { type, title, description, context, screenshot, created_by } = req.body;
 
