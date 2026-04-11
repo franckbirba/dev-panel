@@ -4,356 +4,253 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/franckbirba/dev-panel.svg)](https://github.com/franckbirba/dev-panel/stargazers)
 
-A plug & play bug/feature reporting panel with SQLite storage and GitHub sync.
+A plug & play bug/feature reporting system for React apps with multi-project support, GitHub sync, and MCP integration for AI-assisted ticket management.
 
-> Collect user feedback directly in your React app, review with AI assistance (Claude Code, Cursor, etc.), and publish to GitHub Issues - all with a simple workflow.
+> Users report bugs via a floating widget, PMs review tickets via CLI, and approved tickets are published as GitHub Issues.
 
 ## Features
 
-- 🐛 **Bug Reporting**: Users can report bugs with screenshots directly from your app
-- 💡 **Feature Requests**: Collect feature requests from users
-- 📦 **SQLite Storage**: Lightweight local database for ticket storage
-- 🔄 **GitHub Sync**: Publish tickets as GitHub issues
-- 🎯 **PM Review Workflow**: Review and format tickets before publishing (perfect with Claude Code)
-- 🔌 **Plug & Play**: Easy installation in any React project
-- 🚀 **Zero Config**: Auto-detects project settings from package.json
+- **Bug Reporting** — Users report bugs with screenshots directly from your React app
+- **Feature Requests** — Collect feature ideas with full context capture
+- **Multi-Project** — Centralized server with isolated databases per project
+- **GitHub Sync** — Import repos, publish tickets as issues, bi-directional status sync
+- **Doc Indexing** — Full-text search across project markdown docs (FTS5)
+- **MCP Server** — AI assistants (Claude, Cursor, etc.) can manage tickets via Model Context Protocol
+- **Production Ready** — Docker, Traefik, Let's Encrypt, CI/CD included
 
-## Installation
+## Architecture
+
+```
+React DevPanel UI --> Express API --> SQLite storage --> CLI review --> GitHub Issues
+                         |
+                    MCP Server (AI assistants)
+```
+
+Four layers with clean separation:
+
+- **React UI** (`src/react/DevPanel.jsx`) — Floating widget with screenshot capture
+- **API Server** (`src/server/`) — Express REST API with API key auth and rate limiting
+- **Database** (`src/server/db.js`) — Master `projects.db` + per-project `tickets.db` (SQLite via better-sqlite3)
+- **CLI** (`bin/dev-panel.js` + `src/cli/commands/`) — Commander.js-based management tool
+
+## Quick Start
+
+### 1. Install
 
 ```bash
 npm install dev-panel
 ```
 
-## Quick Start
-
-### 1. Initialize in your project
+### 2. Start the server
 
 ```bash
-npx dev-panel init
+npx dev-panel serve
 ```
 
-This creates:
-- `.devpanelrc.json` - Configuration file
-- `storage/` - SQLite database and uploads directory
-- Updates `.gitignore` to exclude storage
-
-### 2. Configure GitHub
-
-Set your GitHub token:
+### 3. Create a project
 
 ```bash
-# .env.local
-GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+# Import from GitHub (fetches open issues, milestones, docs)
+npx dev-panel import https://github.com/your-org/your-repo -t ghp_xxxxx
+
+# Or create manually
+npx dev-panel admin create -n my-project -o your-org -r your-repo
 ```
 
-Update `.devpanelrc.json` with your repo info:
+This returns an **API key** (prefixed `dp_`) for the project.
 
-```json
-{
-  "github": {
-    "owner": "your-org",
-    "repo": "your-repo"
-  }
-}
-```
-
-### 3. Add to React app
+### 4. Add the React widget
 
 ```jsx
-// src/App.jsx
 import { DevPanel } from 'dev-panel/react';
 
 function App() {
   return (
     <>
       <YourApp />
-
-      {/* Only show in development */}
-      {import.meta.env.DEV && (
-        <DevPanel
-          apiUrl="http://localhost:3030"
-          project="my-project"
-        />
-      )}
+      <DevPanel
+        apiUrl="http://localhost:3030"
+        apiKey="dp_your_project_key_here"
+      />
     </>
   );
 }
 ```
 
-### 4. Start the server
+**Props:**
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `apiUrl` | string | `http://localhost:3030` | API server URL |
+| `apiKey` | string | *required* | Project API key |
 
-**Option A: Separate terminal**
-
-```bash
-# Terminal 1: Your dev server
-npm run dev
-
-# Terminal 2: DevPanel server
-npx dev-panel serve
-```
-
-**Option B: Concurrent (recommended)**
-
-```bash
-# Install concurrently
-npm install -D concurrently
-
-# Update package.json
-{
-  "scripts": {
-    "dev": "concurrently \"vite\" \"dev-panel serve\""
-  }
-}
-
-# Run both with one command
-npm run dev
-```
-
-## Workflow
-
-### For Users (Reporting)
-
-1. Click the 🐛 floating button in your app
-2. Choose "Report Bug" or "Request Feature"
-3. Fill in title and description
-4. Optionally attach screenshot
-5. Submit
-
-Tickets are stored in local SQLite database with status `pending`.
-
-### For PM (Review & Publish)
-
-#### List pending tickets
-
-```bash
-npx dev-panel list --status=pending
-```
-
-Output:
-```
-┌────┬──────────┬─────────────────────────────────────┬───────────┬────────────┐
-│ ID │ Type     │ Title                               │ Status    │ Created    │
-├────┼──────────┼─────────────────────────────────────┼───────────┼────────────┤
-│ 42 │ bug      │ Perdiem calculation broken          │ pending   │ 2h ago     │
-│ 43 │ feature  │ Export CSV button                   │ pending   │ 1d ago     │
-└────┴──────────┴─────────────────────────────────────┴───────────┴────────────┘
-```
-
-#### Review ticket (formatted for Claude Code)
-
-```bash
-npx dev-panel review 42
-```
-
-Output shows full ticket details optimized for Claude Code to help format.
-
-#### Publish to GitHub
-
-```bash
-# Basic
-npx dev-panel publish 42
-
-# With options
-npx dev-panel publish 42 \
-  --title="[BUG] Attendance: Perdiem calculation error" \
-  --labels="bug,attendance,priority:high" \
-  --assignee="dev-team"
-```
-
-This:
-1. Creates a formatted GitHub issue
-2. Updates ticket status to `published`
-3. Stores GitHub issue URL and number
-
-#### Reject ticket
-
-```bash
-npx dev-panel reject 42 --reason="Duplicate of #45"
-```
-
-#### Sync with GitHub
-
-```bash
-# Sync all published tickets
-npx dev-panel sync --auto
-```
-
-This checks GitHub for issue status and updates local tickets (e.g., marks as `closed` when GitHub issue is closed).
-
-#### Stats
-
-```bash
-npx dev-panel stats
-```
-
-Output:
-```
-📊 DevPanel Statistics
-
-Project: my-app
-────────────────────────────────────────
-Pending:      12
-Published:    45
-Closed:       38
-Rejected:      5
-────────────────────────────────────────
-Total:       100
-```
+The widget captures URL, user agent, viewport dimensions, and timestamp automatically. Bug reports support optional screenshot attachments.
 
 ## CLI Reference
 
-```bash
-# Initialization
-dev-panel init [--force]           # Initialize in current project
-
-# Server
-dev-panel serve                     # Start API server
-
-# Ticket Management
-dev-panel list [options]            # List tickets
-  --status <status>                 #   Filter: pending|published|rejected|closed
-  --project <project>               #   Filter by project
-  --limit <number>                  #   Max results (default: 50)
-
-dev-panel review <id>               # Review ticket details
-
-dev-panel publish <id> [options]    # Publish ticket to GitHub
-  --title <title>                   #   Override issue title
-  --labels <labels>                 #   Comma-separated labels
-  --assignee <user>                 #   GitHub username
-
-dev-panel reject <id> [options]     # Reject ticket
-  --reason <reason>                 #   Rejection reason
-
-dev-panel sync [--auto]             # Sync with GitHub
-
-dev-panel stats [--project <name>]  # Show statistics
-```
-
-## Configuration
-
-`.devpanelrc.json`:
-
-```json
-{
-  "project": "my-project",
-  "storage": {
-    "path": "./storage",
-    "maxFileSize": "10MB"
-  },
-  "server": {
-    "port": 3030,
-    "host": "localhost"
-  },
-  "github": {
-    "owner": "your-org",
-    "repo": "your-repo",
-    "token": "${GITHUB_TOKEN}",
-    "labels": {
-      "bug": ["bug", "needs-triage"],
-      "feature": ["enhancement", "feature-request"]
-    }
-  },
-  "sync": {
-    "enabled": true,
-    "interval": "15m"
-  }
-}
-```
-
-## Multi-Project Usage
-
-You can use DevPanel in multiple projects on the same machine. Each project has its own:
-
-- Configuration (`.devpanelrc.json`)
-- Database (`storage/tickets.db`)
-- Server port (configure different ports)
+### Server
 
 ```bash
-# Project 1
-cd /path/to/project1
-npx dev-panel serve  # Runs on port 3030
-
-# Project 2
-cd /path/to/project2
-npx dev-panel serve  # Runs on port 3031 (if configured)
+dev-panel serve [-p 3030] [-H localhost] [-s ./storage]
 ```
 
-## Database Schema
+### Project Management
 
-SQLite table `tickets`:
+```bash
+dev-panel admin create -n <name> -o <owner> -r <repo> [-t <token>]
+dev-panel admin list
+dev-panel admin show <name>
+dev-panel admin delete <name> --yes
 
-```sql
-CREATE TABLE tickets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL,                    -- 'bug' | 'feature'
-  status TEXT DEFAULT 'pending',         -- 'pending' | 'published' | 'rejected' | 'closed'
+dev-panel import <github-url> [-t <token>]    # Import repo + issues + milestones + docs
+```
 
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  context TEXT,                          -- JSON: {url, userAgent, timestamp, ...}
-  screenshot_path TEXT,
+### Ticket Workflow
 
-  reviewed_at DATETIME,
-  reviewed_by TEXT,
-  rejection_reason TEXT,
+```bash
+dev-panel list [-s pending|published|rejected|closed] [-p <project>] [-l 50]
+dev-panel review <id>                          # Formatted output for AI assistants
+dev-panel publish <id> [-t <title>] [-l <labels>] [-a <assignee>]
+dev-panel reject <id> [-r <reason>]
+dev-panel sync [--auto]                        # Sync status with GitHub issues
+dev-panel stats [-p <project>]
+```
 
-  github_issue_number INTEGER,
-  github_issue_url TEXT,
-  github_synced_at DATETIME,
-  github_status TEXT,                    -- 'open' | 'closed'
+### Documentation
 
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  created_by TEXT,
-  project TEXT
-);
+```bash
+dev-panel sync-docs [project]                  # Sync markdown docs from GitHub (incremental)
+```
+
+### Clarifications
+
+```bash
+dev-panel clarify list [-p <project>]
+dev-panel clarify answer <project> <ticket-id> <answer>
 ```
 
 ## API Endpoints
 
-The server exposes a REST API:
+All project-scoped endpoints require `X-API-Key` header. Admin endpoints require `X-Admin-Key` header.
 
+### Public
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+
+### Admin
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/projects` | List all projects |
+| POST | `/api/projects/import` | Import GitHub repo as project |
+
+### Tickets
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/tickets` | Create ticket (rate-limited: 30/min) |
+| GET | `/api/tickets` | List tickets (`?status`, `?limit`) |
+| GET | `/api/tickets/:id` | Get ticket details |
+| PATCH | `/api/tickets/:id` | Update ticket |
+| DELETE | `/api/tickets/:id` | Delete/reject ticket |
+| GET | `/api/tickets/:id/screenshot` | Get screenshot image |
+
+### Documentation
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/docs` | List docs |
+| GET | `/api/docs/search` | Full-text search (`?q`, `?limit`) |
+| POST | `/api/docs/sync` | Sync docs from GitHub |
+
+### Other
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/milestones` | List milestones (`?state`) |
+| GET | `/api/clarifications` | List pending clarification questions |
+| POST | `/api/tickets/:id/answer` | Answer a clarification |
+| GET | `/api/stats` | Ticket statistics |
+
+## MCP Server
+
+dev-panel exposes an MCP server for AI assistants (Claude Code, Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "dev-panel": {
+      "command": "node",
+      "args": ["node_modules/dev-panel/src/mcp/server.js"]
+    }
+  }
+}
 ```
-POST   /api/tickets              # Create ticket (from React UI)
-GET    /api/tickets              # List tickets
-GET    /api/tickets/:id          # Get ticket details
-GET    /api/tickets/:id/screenshot  # Get screenshot file
-PATCH  /api/tickets/:id          # Update ticket
-DELETE /api/tickets/:id          # Delete/reject ticket
-GET    /api/stats                # Get statistics
-GET    /api/health               # Health check
+
+**Available tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | Get all projects with GitHub info |
+| `get_bugs` | List tickets (supports status/limit filters) |
+| `get_context` | Full-text search project documentation |
+| `update_status` | Change ticket status |
+| `ask_clarification` | Post clarification question on ticket |
+| `get_project_info` | Get project stats |
+
+## Production Deployment
+
+### Docker
+
+```bash
+docker build -t dev-panel .
+docker run -p 3030:3030 -v ./storage:/app/storage dev-panel
 ```
 
-## Troubleshooting
+### Docker Compose with Traefik + Let's Encrypt
 
-### Server won't start
+The repo includes a production-ready setup:
 
-- Check if port 3030 is already in use
-- Verify `.devpanelrc.json` exists
-- Check storage directory permissions
+```bash
+# On your VPS
+git clone https://github.com/franckbirba/dev-panel.git
+cd dev-panel
+cp .env.example .env    # Configure GITHUB_TOKEN, ADMIN_API_KEY, ALLOWED_ORIGINS
+mkdir -p traefik && cp infra/traefik.yml infra/dynamic.yml traefik/
+touch traefik/acme.json && chmod 600 traefik/acme.json
+docker compose -f docker-compose.prod.yml up -d
+```
 
-### GitHub integration not working
+### CI/CD
 
-- Verify `GITHUB_TOKEN` is set correctly
-- Check GitHub repo owner/name in config
-- Ensure token has `repo` scope
+Push to `main` triggers GitHub Actions to build the Docker image, push to GHCR, and deploy to VPS via SSH.
 
-### Screenshots not uploading
+### Environment Variables
 
-- Check `storage/uploads/` directory exists
-- Verify file size is under 10MB
-- Check file type is image (png, jpg, gif, webp)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | GitHub token for repo sync |
+| `ADMIN_API_KEY` | Yes (prod) | Admin API key for project management |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins (default: `*`) |
+| `NODE_ENV` | No | `production` or `development` |
 
-## Contributing
+### VPS Bootstrap
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+bash infra/setup-vps.sh
+```
+
+Sets up Docker, deploy user, UFW firewall (22/80/443), SSH hardening, and unattended upgrades.
+
+## Package Exports
+
+```javascript
+import { createServer, startServer } from 'dev-panel';        // Server
+import { DevPanel } from 'dev-panel/react';                    // React widget
+import { createMCPServer } from 'dev-panel/mcp';               // MCP server
+```
 
 ## License
 
 MIT © [Franck Birba](https://github.com/franckbirba)
-
-## Author
-
-**Franck Birba**
-
-- GitHub: [@franckbirba](https://github.com/franckbirba)

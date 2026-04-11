@@ -10,9 +10,10 @@ services:
       - ./storage:/app/storage
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.devpanel.rule=Host(`devpanel.dev`)"
+      - "traefik.http.routers.devpanel.rule=Host(`devpanl.dev`)"
       - "traefik.http.routers.devpanel.entrypoints=websecure"
       - "traefik.http.routers.devpanel.tls=true"
+      - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
       - "traefik.http.routers.devpanel.middlewares=security-headers@file"
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
     networks:
