@@ -6,7 +6,8 @@
   "main": "./src/server/index.js",
   "exports": {
     ".": "./src/server/index.js",
-    "./react": "./src/react/index.js"
+    "./react": "./src/react/index.js",
+    "./mcp": "./src/mcp/server.js"
   },
   "bin": {
     "dev-panel": "./bin/dev-panel.js"
@@ -38,6 +39,7 @@
     "react": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
     "commander": "^12.0.0",
     "cors": "^2.8.5",

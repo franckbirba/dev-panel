@@ -99,6 +99,52 @@ export function initProjectDatabase(storagePath, projectId) {
 
     CREATE INDEX IF NOT EXISTS idx_status ON tickets(status);
     CREATE INDEX IF NOT EXISTS idx_github_issue ON tickets(github_issue_number);
+
+    -- Milestones
+    CREATE TABLE IF NOT EXISTS milestones (
+      id INTEGER PRIMARY KEY,
+      github_id INTEGER UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      state TEXT DEFAULT 'open' CHECK(state IN ('open', 'closed')),
+      due_on DATETIME,
+      open_issues INTEGER DEFAULT 0,
+      closed_issues INTEGER DEFAULT 0,
+      github_url TEXT,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_milestones_state ON milestones(state);
+
+    -- Documentation storage
+    CREATE TABLE IF NOT EXISTS docs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      content TEXT NOT NULL,
+      sha TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_docs_path ON docs(path);
+
+    -- Full-text search index
+    CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
+      path, content, content=docs, content_rowid=id
+    );
+
+    -- Triggers to keep FTS in sync
+    CREATE TRIGGER IF NOT EXISTS docs_ai AFTER INSERT ON docs BEGIN
+      INSERT INTO docs_fts(rowid, path, content) VALUES (new.id, new.path, new.content);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS docs_ad AFTER DELETE ON docs BEGIN
+      INSERT INTO docs_fts(docs_fts, rowid, path, content) VALUES('delete', old.id, old.path, old.content);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS docs_au AFTER UPDATE ON docs BEGIN
+      INSERT INTO docs_fts(docs_fts, rowid, path, content) VALUES('delete', old.id, old.path, old.content);
+      INSERT INTO docs_fts(rowid, path, content) VALUES (new.id, new.path, new.content);
+    END;
   `);
 
   // Cache the database connection
@@ -285,6 +331,146 @@ export function getStats(storagePath, projectId) {
   });
 
   return stats;
+}
+
+// ============================================================================
+// CLARIFICATIONS (per-project)
+// ============================================================================
+
+export function listPendingClarifications(storagePath, projectId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const tickets = db.prepare(`
+    SELECT id, title, type, context FROM tickets
+    WHERE context LIKE '%clarifications%'
+  `).all();
+
+  const pending = [];
+  for (const ticket of tickets) {
+    try {
+      const ctx = JSON.parse(ticket.context || '{}');
+      if (ctx.clarifications) {
+        for (const c of ctx.clarifications) {
+          if (!c.answer) {
+            pending.push({
+              ticket_id: ticket.id,
+              ticket_title: ticket.title,
+              ticket_type: ticket.type,
+              question: c.question,
+              asked_at: c.asked_at
+            });
+          }
+        }
+      }
+    } catch { /* skip malformed */ }
+  }
+
+  return pending;
+}
+
+export function answerClarification(storagePath, projectId, ticketId, questionIndex, answer) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const ticket = db.prepare('SELECT context FROM tickets WHERE id = ?').get(ticketId);
+  if (!ticket) return null;
+
+  const ctx = JSON.parse(ticket.context || '{}');
+  if (!ctx.clarifications || !ctx.clarifications[questionIndex]) return null;
+
+  ctx.clarifications[questionIndex].answer = answer;
+  ctx.clarifications[questionIndex].answered_at = new Date().toISOString();
+
+  db.prepare('UPDATE tickets SET context = ? WHERE id = ?').run(JSON.stringify(ctx), ticketId);
+  return ctx.clarifications[questionIndex];
+}
+
+// ============================================================================
+// MILESTONES (per-project)
+// ============================================================================
+
+export function upsertMilestone(storagePath, projectId, milestone) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    INSERT INTO milestones (github_id, title, description, state, due_on, open_issues, closed_issues, github_url, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(github_id) DO UPDATE SET
+      title = excluded.title,
+      description = excluded.description,
+      state = excluded.state,
+      due_on = excluded.due_on,
+      open_issues = excluded.open_issues,
+      closed_issues = excluded.closed_issues,
+      github_url = excluded.github_url,
+      synced_at = CURRENT_TIMESTAMP
+  `);
+  return stmt.run(
+    milestone.github_id, milestone.title, milestone.description || null,
+    milestone.state, milestone.due_on || null,
+    milestone.open_issues || 0, milestone.closed_issues || 0,
+    milestone.github_url || null
+  );
+}
+
+export function listMilestones(storagePath, projectId, { state } = {}) {
+  const db = getProjectDatabase(storagePath, projectId);
+  let query = 'SELECT * FROM milestones';
+  const params = [];
+  if (state) {
+    query += ' WHERE state = ?';
+    params.push(state);
+  }
+  query += ' ORDER BY due_on ASC NULLS LAST';
+  return db.prepare(query).all(...params);
+}
+
+// ============================================================================
+// DOCUMENTATION (per-project)
+// ============================================================================
+
+export function upsertDoc(storagePath, projectId, { path, content, sha }) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    INSERT INTO docs (path, content, sha, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(path) DO UPDATE SET
+      content = excluded.content,
+      sha = excluded.sha,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  return stmt.run(path, content, sha);
+}
+
+export function getDoc(storagePath, projectId, path) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare('SELECT * FROM docs WHERE path = ?').get(path);
+}
+
+export function listDocs(storagePath, projectId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare('SELECT id, path, sha, updated_at FROM docs ORDER BY path').all();
+}
+
+export function searchDocs(storagePath, projectId, query, limit = 10) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    SELECT d.id, d.path, d.updated_at,
+           snippet(docs_fts, 1, '>>>', '<<<', '...', 64) as snippet,
+           rank
+    FROM docs_fts
+    JOIN docs d ON d.id = docs_fts.rowid
+    WHERE docs_fts MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, limit);
+}
+
+export function deleteDoc(storagePath, projectId, path) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare('DELETE FROM docs WHERE path = ?').run(path);
+}
+
+export function getDocStats(storagePath, projectId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare('SELECT COUNT(*) as count FROM docs').get();
 }
 
 // ============================================================================

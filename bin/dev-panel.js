@@ -27,6 +27,9 @@ import { publishCommand } from '../src/cli/commands/publish.js';
 import { rejectCommand } from '../src/cli/commands/reject.js';
 import { syncCommand } from '../src/cli/commands/sync.js';
 import { statsCommand } from '../src/cli/commands/stats.js';
+import { importCommand } from '../src/cli/commands/import.js';
+import { syncDocsCommand } from '../src/cli/commands/sync-docs.js';
+import { clarifyCommand } from '../src/cli/commands/clarify.js';
 
 // Register commands
 program.addCommand(adminCommand);
@@ -38,5 +41,8 @@ program.addCommand(publishCommand);
 program.addCommand(rejectCommand);
 program.addCommand(syncCommand);
 program.addCommand(statsCommand);
+program.addCommand(importCommand);
+program.addCommand(syncDocsCommand);
+program.addCommand(clarifyCommand);
 
 program.parse();

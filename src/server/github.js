@@ -72,6 +72,45 @@ export async function listIssues({ owner, repo, state = 'open', labels, assignee
   return data;
 }
 
+export async function fetchMilestones({ owner, repo, state = 'all' }) {
+  const { data } = await octokit.rest.issues.listMilestones({
+    owner, repo, state, per_page: 100
+  });
+
+  return data.map(m => ({
+    github_id: m.number,
+    title: m.title,
+    description: m.description,
+    state: m.state,
+    due_on: m.due_on,
+    open_issues: m.open_issues,
+    closed_issues: m.closed_issues,
+    github_url: m.html_url
+  }));
+}
+
+export async function fetchRepoDocs({ owner, repo }) {
+  const { data: tree } = await octokit.rest.git.getTree({
+    owner, repo, tree_sha: 'HEAD', recursive: '1'
+  });
+
+  const mdFiles = tree.tree.filter(f =>
+    f.type === 'blob' && f.path.endsWith('.md')
+  );
+
+  const docs = [];
+  for (const file of mdFiles) {
+    const { data } = await octokit.rest.repos.getContent({
+      owner, repo, path: file.path
+    });
+
+    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+    docs.push({ path: file.path, content, sha: file.sha });
+  }
+
+  return docs;
+}
+
 export function formatTicketAsIssue(ticket, config = {}) {
   const { title, description, context, type, created_by, screenshot_path } = ticket;
 

@@ -1,0 +1,23 @@
+name: dev-panel
+
+services:
+  api:
+    build: .
+    container_name: devpanel-api
+    restart: unless-stopped
+    networks: [default, ajira_net]
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=ajira_net
+      - traefik.http.routers.devpanel-api.rule=Host(`devpanel.lan`)
+      - traefik.http.routers.devpanel-api.tls=true
+      - traefik.http.services.devpanel-api.loadbalancer.server.port=3030
+
+networks:
+  ajira_net:
+    external: true
+    name: ajira_net
