@@ -4,15 +4,6 @@ api:
 entryPoints:
   web:
     address: ":80"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: ":443"
-    http:
-      tls: {}
 
 providers:
   docker:
@@ -24,5 +15,3 @@ providers:
 
 log:
   level: "WARN"
-
-accessLog: {}

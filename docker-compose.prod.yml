@@ -11,8 +11,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.devpanel.rule=Host(`devpanel.dev`)"
-      - "traefik.http.routers.devpanel.entrypoints=websecure"
-      - "traefik.http.routers.devpanel.tls=true"
+      - "traefik.http.routers.devpanel.entrypoints=web"
+      - "traefik.http.routers.devpanel.middlewares=security-headers@file"
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
     networks:
       - traefik
@@ -23,7 +23,6 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik:/etc/traefik

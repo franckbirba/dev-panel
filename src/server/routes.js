@@ -1,5 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
+import { timingSafeEqual } from 'crypto';
 import {
   getProjectByApiKey,
   createProject,
@@ -92,7 +93,13 @@ export function createRouter(config = {}) {
       return next();
     }
 
-    if (!adminKey || adminKey !== configuredKey) {
+    if (!adminKey) {
+      return res.status(401).json({ error: 'Invalid or missing admin key. Provide via X-Admin-Key header.' });
+    }
+
+    const adminBuf = Buffer.from(adminKey);
+    const configBuf = Buffer.from(configuredKey);
+    if (adminBuf.length !== configBuf.length || !timingSafeEqual(adminBuf, configBuf)) {
       return res.status(401).json({ error: 'Invalid or missing admin key. Provide via X-Admin-Key header.' });
     }
 

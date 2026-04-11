@@ -21,9 +21,18 @@ mkdir -p /home/deploy/dev-panel/storage
 mkdir -p /home/deploy/dev-panel/traefik
 chown -R deploy:deploy /home/deploy/dev-panel
 
+echo "=== Configuring firewall ==="
+apt-get install -y ufw
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+
 echo "=== Configuring SSH hardening ==="
-sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i '/^#\?PermitRootLogin/c\PermitRootLogin no' /etc/ssh/sshd_config
+sed -i '/^#\?PasswordAuthentication/c\PasswordAuthentication no' /etc/ssh/sshd_config
 systemctl restart sshd
 
 echo "=== Configuring unattended upgrades ==="
