@@ -1,57 +1,136 @@
-import React, { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { ConsoleBuffer, NetworkInterceptor, PerfMetrics } from './captureUtils.js';
+import { SessionRecorder } from './sessionRecorder.js';
+import { InspectOverlay } from './InspectOverlay.jsx';
+import { RegionSelect } from './RegionSelect.jsx';
+import { AnnotationCanvas } from './AnnotationCanvas.jsx';
+import { BugReportPanel } from './BugReportPanel.jsx';
+import { FeaturePanel } from './FeaturePanel.jsx';
 
-const PANEL_TYPES = {
-  BUG: 'bug',
-  FEATURE: 'feature'
-};
+const ANIMATIONS = `
+  @keyframes devpanel-fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes devpanel-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+`;
 
-export function DevPanel({ apiUrl = 'http://localhost:3030', apiKey }) {
+export function DevPanel({
+  apiUrl = 'http://localhost:3030',
+  apiKey,
+  position = 'bottom-right'
+}) {
   if (!apiKey) {
-    console.warn('DevPanel: No API key provided. Component will not work.');
+    console.warn('DevPanel: apiKey is required. Component will not render.');
     return null;
   }
-  const [isOpen, setIsOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState(null);
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    screenshot: null
-  });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitStatus, setSubmitStatus] = useState(null);
 
-  const handleSubmit = async (type) => {
-    if (!formData.title || !formData.description) {
-      alert('Please fill in title and description');
-      return;
+  const [mode, setMode] = useState('idle');
+  const [componentInfo, setComponentInfo] = useState(null);
+  const [screenshot, setScreenshot] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const consoleBuffer = useRef(null);
+  const networkInterceptor = useRef(null);
+  const perfMetrics = useRef(null);
+  const sessionRecorder = useRef(null);
+
+  // Mount capture utils
+  useEffect(() => {
+    consoleBuffer.current = new ConsoleBuffer(50);
+    networkInterceptor.current = new NetworkInterceptor(50);
+    perfMetrics.current = new PerfMetrics();
+    sessionRecorder.current = new SessionRecorder();
+
+    consoleBuffer.current.attach();
+    networkInterceptor.current.attach();
+    perfMetrics.current.attach();
+    sessionRecorder.current.attach();
+
+    return () => {
+      consoleBuffer.current?.detach();
+      networkInterceptor.current?.detach();
+      perfMetrics.current?.detach();
+      sessionRecorder.current?.detach();
+    };
+  }, []);
+
+  // Auto-clear toast after 3000ms
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  // Escape key: menu → idle
+  useEffect(() => {
+    if (mode !== 'menu') return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setMode('idle');
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [mode]);
+
+  const reset = useCallback(() => {
+    setMode('idle');
+    setComponentInfo(null);
+    setScreenshot(null);
+    setSubmitting(false);
+  }, []);
+
+  const handleInspectSelect = useCallback((info) => {
+    setComponentInfo(info);
+    setMode('region-select');
+  }, []);
+
+  const handleRegionCapture = useCallback((screenshotBase64) => {
+    if (screenshotBase64) {
+      setScreenshot(screenshotBase64);
+      setMode('annotating');
+    } else {
+      setMode('bug-report');
     }
+  }, []);
 
-    setIsSubmitting(true);
-    setSubmitStatus(null);
+  const handleAnnotationDone = useCallback((annotated) => {
+    setScreenshot(annotated);
+    setMode('bug-report');
+  }, []);
+
+  const submitBug = useCallback(async (description) => {
+    setSubmitting(true);
+    setMode('submitting');
+
+    const name = componentInfo?.name || componentInfo?.displayName || 'Component';
+    const title = componentInfo
+      ? `${name}: ${description.slice(0, 60)}`
+      : description.slice(0, 80);
+
+    const payload = {
+      type: 'bug',
+      title,
+      description,
+      created_by: 'user',
+      context: {
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        timestamp: Date.now(),
+        component: componentInfo || null,
+        console: consoleBuffer.current?.getEntries?.() ?? [],
+        network: networkInterceptor.current?.getEntries?.() ?? [],
+        performance: perfMetrics.current?.getMetrics?.() ?? {},
+        sessionReplay: sessionRecorder.current?.getEvents?.() ?? []
+      },
+      screenshot: screenshot || null
+    };
 
     try {
-      // Prepare payload
-      const payload = {
-        type,
-        title: formData.title,
-        description: formData.description,
-        created_by: 'user@example.com', // TODO: Get from auth
-        context: {
-          url: window.location.href,
-          userAgent: navigator.userAgent,
-          timestamp: Date.now(),
-          viewport: {
-            width: window.innerWidth,
-            height: window.innerHeight
-          }
-        }
-      };
-
-      // Add screenshot if provided (as base64)
-      if (formData.screenshot) {
-        payload.screenshot = formData.screenshot;
-      }
-
       const response = await fetch(`${apiUrl}/api/tickets`, {
         method: 'POST',
         headers: {
@@ -62,292 +141,213 @@ export function DevPanel({ apiUrl = 'http://localhost:3030', apiKey }) {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to submit ticket');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${response.status}`);
       }
 
-      const result = await response.json();
-
-      setSubmitStatus({ type: 'success', message: `Ticket #${result.id} created successfully!` });
-
-      // Reset form
-      setFormData({ title: '', description: '', screenshot: null });
-
-      // Close panel after 2 seconds
-      setTimeout(() => {
-        setActivePanel(null);
-        setSubmitStatus(null);
-      }, 2000);
-
-    } catch (error) {
-      console.error('Error submitting ticket:', error);
-      setSubmitStatus({ type: 'error', message: error.message });
-    } finally {
-      setIsSubmitting(false);
+      const data = await response.json();
+      setToast({ kind: 'success', message: `Bug #${data.id} reported` });
+    } catch (err) {
+      setToast({ kind: 'error', message: err.message });
     }
-  };
 
-  const captureScreenshot = async () => {
+    reset();
+  }, [apiUrl, apiKey, componentInfo, screenshot, reset]);
+
+  const submitFeature = useCallback(async (title, description) => {
+    setSubmitting(true);
+    setMode('submitting');
+
+    const payload = {
+      type: 'feature',
+      title,
+      description,
+      created_by: 'user',
+      context: {
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        timestamp: Date.now()
+      }
+    };
+
     try {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          // Convert to base64
-          const reader = new FileReader();
-          reader.onload = () => {
-            setFormData(prev => ({ ...prev, screenshot: reader.result }));
-          };
-          reader.readAsDataURL(file);
-        }
-      };
-      input.click();
-    } catch (error) {
-      console.error('Error capturing screenshot:', error);
+      const response = await fetch(`${apiUrl}/api/tickets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      setToast({ kind: 'success', message: `Feature #${data.id} submitted` });
+    } catch (err) {
+      setToast({ kind: 'error', message: err.message });
     }
+
+    reset();
+  }, [apiUrl, apiKey, reset]);
+
+  const isRight = position === 'bottom-right';
+  const sideKey = isRight ? 'right' : 'left';
+
+  // FAB button
+  const fabStyle = {
+    position: 'fixed',
+    bottom: '24px',
+    [sideKey]: '24px',
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '22px',
+    zIndex: 99999,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: mode === 'menu' ? '#333' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+    boxShadow: '0 4px 16px rgba(99,102,241,0.4)',
+    transition: 'background 0.2s'
   };
 
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        style={{
-          position: 'fixed',
-          bottom: '20px',
-          right: '20px',
-          width: '60px',
-          height: '60px',
-          borderRadius: '50%',
-          backgroundColor: '#6366f1',
-          color: 'white',
-          border: 'none',
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
-          fontSize: '24px',
-          zIndex: 9999,
-          transition: 'transform 0.2s',
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
-        onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-      >
-        🐛
-      </button>
-    );
-  }
+  // Menu popover style
+  const menuStyle = {
+    position: 'fixed',
+    bottom: '80px',
+    [sideKey]: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    zIndex: 99999,
+    animation: 'devpanel-fade-in 0.18s ease'
+  };
+
+  const menuBtnBase = {
+    minWidth: '180px',
+    padding: '10px 16px',
+    borderRadius: '10px',
+    fontWeight: 600,
+    fontSize: '13px',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'white',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+  };
+
+  // Toast style
+  const toastStyle = toast ? {
+    position: 'fixed',
+    bottom: '80px',
+    [sideKey]: '24px',
+    zIndex: 100000,
+    padding: '10px 16px',
+    borderRadius: '10px',
+    fontWeight: 600,
+    fontSize: '13px',
+    color: 'white',
+    backgroundColor: toast.kind === 'success' ? '#10b981' : '#ef4444',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    animation: 'devpanel-fade-in 0.18s ease'
+  } : null;
+
+  const showFab = mode === 'idle' || mode === 'menu';
 
   return (
-    <div style={{
-      position: 'fixed',
-      bottom: '20px',
-      right: '20px',
-      zIndex: 9999,
-      fontFamily: 'system-ui, -apple-system, sans-serif'
-    }}>
-      {/* Main Panel */}
-      {!activePanel && (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-          padding: '20px',
-          width: '280px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>Dev Panel</h3>
-            <button
-              onClick={() => setIsOpen(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '20px',
-                cursor: 'pointer',
-                padding: '4px',
-                color: '#666'
-              }}
-            >
-              ×
-            </button>
-          </div>
+    <>
+      <style data-devtool-ignore>{ANIMATIONS}</style>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <button
-              onClick={() => setActivePanel(PANEL_TYPES.BUG)}
-              style={{
-                padding: '12px 16px',
-                backgroundColor: '#ef4444',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'opacity 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              🐛 Report Bug
-            </button>
+      {/* FAB */}
+      {showFab && (
+        <button
+          data-devtool-ignore
+          style={fabStyle}
+          onClick={() => setMode(mode === 'menu' ? 'idle' : 'menu')}
+          aria-label="DevPanel"
+        >
+          🐛
+        </button>
+      )}
 
-            <button
-              onClick={() => setActivePanel(PANEL_TYPES.FEATURE)}
-              style={{
-                padding: '12px 16px',
-                backgroundColor: '#10b981',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'opacity 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              💡 Request Feature
-            </button>
-          </div>
+      {/* Menu popover */}
+      {mode === 'menu' && (
+        <div data-devtool-ignore style={menuStyle}>
+          <button
+            data-devtool-ignore
+            style={{ ...menuBtnBase, backgroundColor: '#ef4444' }}
+            onClick={() => setMode('inspecting')}
+          >
+            🐛 Report Bug
+          </button>
+          <button
+            data-devtool-ignore
+            style={{ ...menuBtnBase, backgroundColor: '#6366f1' }}
+            onClick={() => setMode('feature-panel')}
+          >
+            ✨ Request Feature
+          </button>
         </div>
       )}
 
-      {/* Bug/Feature Form */}
-      {activePanel && (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-          padding: '20px',
-          width: '400px',
-          maxHeight: '600px',
-          overflowY: 'auto'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>
-              {activePanel === PANEL_TYPES.BUG ? '🐛 Report Bug' : '💡 Request Feature'}
-            </h3>
-            <button
-              onClick={() => setActivePanel(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '20px',
-                cursor: 'pointer',
-                padding: '4px',
-                color: '#666'
-              }}
-            >
-              ←
-            </button>
-          </div>
+      {/* Overlays / panels */}
+      {mode === 'inspecting' && (
+        <InspectOverlay
+          data-devtool-ignore
+          onSelect={handleInspectSelect}
+          onCancel={() => setMode('menu')}
+        />
+      )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>
-                Title *
-              </label>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-                placeholder={activePanel === PANEL_TYPES.BUG ? 'Brief description of the bug' : 'Feature you want to request'}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  boxSizing: 'border-box'
-                }}
-              />
-            </div>
+      {mode === 'region-select' && (
+        <RegionSelect
+          data-devtool-ignore
+          onCapture={handleRegionCapture}
+          onCancel={() => setMode('inspecting')}
+        />
+      )}
 
-            <div>
-              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>
-                Description *
-              </label>
-              <textarea
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                placeholder={
-                  activePanel === PANEL_TYPES.BUG
-                    ? 'What happened? What did you expect to happen?'
-                    : 'Describe the feature and why it would be useful'
-                }
-                rows={6}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  boxSizing: 'border-box'
-                }}
-              />
-            </div>
+      {mode === 'annotating' && (
+        <AnnotationCanvas
+          data-devtool-ignore
+          screenshot={screenshot}
+          onDone={handleAnnotationDone}
+          onCancel={() => setMode('region-select')}
+        />
+      )}
 
-            {activePanel === PANEL_TYPES.BUG && (
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500' }}>
-                  Screenshot (optional)
-                </label>
-                <button
-                  onClick={captureScreenshot}
-                  style={{
-                    padding: '10px 16px',
-                    backgroundColor: formData.screenshot ? '#10b981' : '#6366f1',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    width: '100%'
-                  }}
-                >
-                  {formData.screenshot ? '✓ Screenshot attached' : '📸 Attach screenshot'}
-                </button>
-              </div>
-            )}
+      {(mode === 'bug-report' || mode === 'submitting') && (
+        <BugReportPanel
+          data-devtool-ignore
+          componentInfo={componentInfo}
+          screenshot={screenshot}
+          onSubmit={submitBug}
+          onCancel={reset}
+          submitting={submitting}
+        />
+      )}
 
-            {submitStatus && (
-              <div style={{
-                padding: '12px',
-                borderRadius: '6px',
-                backgroundColor: submitStatus.type === 'success' ? '#d1fae5' : '#fee2e2',
-                color: submitStatus.type === 'success' ? '#065f46' : '#991b1b',
-                fontSize: '14px'
-              }}>
-                {submitStatus.message}
-              </div>
-            )}
+      {mode === 'feature-panel' && (
+        <FeaturePanel
+          data-devtool-ignore
+          onSubmit={submitFeature}
+          onCancel={reset}
+          submitting={submitting}
+        />
+      )}
 
-            <button
-              onClick={() => handleSubmit(activePanel)}
-              disabled={isSubmitting}
-              style={{
-                padding: '12px 16px',
-                backgroundColor: isSubmitting ? '#9ca3af' : '#6366f1',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'opacity 0.2s'
-              }}
-            >
-              {isSubmitting ? 'Submitting...' : 'Submit'}
-            </button>
-
-            <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, textAlign: 'center' }}>
-              Your report will be reviewed by the team
-            </p>
-          </div>
+      {/* Toast */}
+      {toast && (
+        <div data-devtool-ignore style={toastStyle}>
+          {toast.kind === 'success' ? '✓' : '✗'} {toast.message}
         </div>
       )}
-    </div>
+    </>
   );
 }
