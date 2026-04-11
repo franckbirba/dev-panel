@@ -327,4 +327,3 @@ export function BugReportPanel({
   );
 }
 
-export default BugReportPanel;

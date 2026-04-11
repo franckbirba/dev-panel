@@ -9,7 +9,7 @@ import { getComponentInfo } from './captureUtils.js';
  *   onSelect(componentInfo) — called when the user clicks an element
  *   onCancel()              — called when the user presses Escape
  */
-export default function InspectOverlay({ onSelect, onCancel }) {
+export function InspectOverlay({ onSelect, onCancel }) {
   const highlightRef = useRef(null);
   const tooltipRef = useRef(null);
   const lastElRef = useRef(null);

@@ -11,7 +11,7 @@ const COLORS = ['#ef4444', '#facc15', '#3b82f6'];
  *   onDone(annotatedScreenshot)      — called with final base64 JPEG (quality 0.8)
  *   onCancel()                       — back to region-select
  */
-export default function AnnotationCanvas({ screenshot, onDone, onCancel }) {
+export function AnnotationCanvas({ screenshot, onDone, onCancel }) {
   const [tool, setTool] = useState(TOOLS.ARROW);
   const [color, setColor] = useState(COLORS[0]);
   const [annotations, setAnnotations] = useState([]);

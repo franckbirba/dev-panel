@@ -8,7 +8,7 @@ import { takeScreenshot } from './captureUtils.js';
  *   onCapture(screenshotBase64, rect) — called after screenshot, rect may be null
  *   onCancel()                        — called on Escape
  */
-export default function RegionSelect({ onCapture, onCancel }) {
+export function RegionSelect({ onCapture, onCancel }) {
   const [dragging, setDragging] = useState(false);
   const [start, setStart] = useState({ x: 0, y: 0 });
   const [rect, setRect] = useState(null);
