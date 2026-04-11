@@ -24,8 +24,6 @@ import {
 } from './db.js';
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones } from './github.js';
 
-const router = express.Router();
-
 // ============================================================================
 // MIDDLEWARE - API Key Auth
 // ============================================================================
@@ -49,6 +47,7 @@ function authenticateProject(req, res, next) {
 }
 
 export function createRouter(config = {}) {
+  const router = express.Router();
   const storagePath = config.storagePath || './storage';
 
   // Rate limiters

@@ -54,9 +54,7 @@ export function startServer(storagePath = './storage', port = 3030, host = 'loca
     console.log(`✓ DevPanel server running on http://${host}:${port}`);
     console.log(`✓ Storage: ${storagePath}`);
     console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
-    if (process.env.ALLOWED_ORIGINS) {
-      console.log(`✓ CORS: ${process.env.ALLOWED_ORIGINS}`);
-    }
+    console.log(`✓ CORS: ${process.env.ALLOWED_ORIGINS || '* (all origins)'}`);
   });
 
   process.on('SIGTERM', () => {
