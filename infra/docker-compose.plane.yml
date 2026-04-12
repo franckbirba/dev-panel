@@ -10,6 +10,13 @@ services:
       - plane-api
     networks:
       - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane.rule=Host(`plane.devpanl.dev`)"
+      - "traefik.http.routers.plane.entrypoints=websecure"
+      - "traefik.http.routers.plane.tls=true"
+      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane.loadbalancer.server.port=3000"
 
   plane-admin:
     image: makeplane/plane-admin:stable
@@ -46,7 +53,7 @@ services:
     command: ./bin/docker-entrypoint-api.sh
     environment:
       DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://plane-redis:6379
       SECRET_KEY: ${PLANE_SECRET_KEY}
       WEB_URL: https://plane.devpanl.dev
       CORS_ALLOWED_ORIGINS: https://plane.devpanl.dev
@@ -58,6 +65,14 @@ services:
         condition: service_completed_successfully
     networks:
       - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-api.rule=Host(`plane.devpanl.dev`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.plane-api.entrypoints=websecure"
+      - "traefik.http.routers.plane-api.tls=true"
+      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.plane-api.priority=10"
+      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
 
   plane-worker:
     image: makeplane/plane-backend:stable
@@ -66,7 +81,7 @@ services:
     command: ./bin/docker-entrypoint-worker.sh
     environment:
       DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://plane-redis:6379
       SECRET_KEY: ${PLANE_SECRET_KEY}
       WEB_URL: https://plane.devpanl.dev
     depends_on:
@@ -81,7 +96,7 @@ services:
     command: ./bin/docker-entrypoint-beat.sh
     environment:
       DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://plane-redis:6379
       SECRET_KEY: ${PLANE_SECRET_KEY}
     depends_on:
       - plane-api
@@ -95,7 +110,7 @@ services:
     command: ./bin/docker-entrypoint-migrator.sh
     environment:
       DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://plane-redis:6379
       SECRET_KEY: ${PLANE_SECRET_KEY}
     depends_on:
       plane-db:
@@ -138,32 +153,8 @@ services:
       timeout: 3s
       retries: 3
 
-  # Plane proxy (nginx-based, routes to all Plane services)
-  plane-proxy:
-    image: makeplane/plane-proxy:stable
-    container_name: plane-proxy
-    restart: unless-stopped
-    environment:
-      SERVICE_API: plane-api:8000
-      SERVICE_WEB: plane-web:3000
-      SERVICE_SPACE: plane-space:3000
-      SERVICE_ADMIN: plane-admin:3000
-      SERVICE_LIVE: plane-live:3000
-    depends_on:
-      - plane-web
-      - plane-api
-      - plane-space
-      - plane-admin
-      - plane-live
-    networks:
-      - devpanel_net
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.plane.rule=Host(`plane.devpanl.dev`)"
-      - "traefik.http.routers.plane.entrypoints=websecure"
-      - "traefik.http.routers.plane.tls=true"
-      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane.loadbalancer.server.port=80"
+  # Traefik routes directly to plane-web (no Caddy proxy needed)
+  # plane-web serves the frontend and proxies /api to plane-api internally
 
 volumes:
   plane-pgdata:
