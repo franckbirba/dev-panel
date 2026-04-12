@@ -3,7 +3,7 @@ services:
   # TRAEFIK — Reverse proxy with Let's Encrypt
   # ============================================================================
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.3
     container_name: traefik
     restart: unless-stopped
     command:
