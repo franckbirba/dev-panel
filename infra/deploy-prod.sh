@@ -79,6 +79,10 @@ ${SCP_CMD} infra/docker-compose.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DI
 ${SCP_CMD} infra/docker-compose.monitoring.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 ${SCP_CMD} infra/docker-compose.plane.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 
+# Deploy nginx config for Plane SPA routing
+ssh -i $SSH_KEY ${DEPLOY_USER}@${SERVICES_NODE} "mkdir -p ${PROJECT_DIR}/nginx"
+${SCP_CMD} infra/nginx/spa.conf ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/nginx/
+
 # Deploy Traefik config
 ${SCP_CMD} infra/traefik.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 ${SCP_CMD} infra/dynamic.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
