@@ -76,7 +76,10 @@ TELEGRAM_CHAT_ID=
 
 # External services (OPTIONAL - Leave empty if not monitoring)
 PENPOT_URL=
-AFFINE_URL=
+AFFINE_URL=http://affine:3010
+
+# AFFiNE database
+AFFINE_DB_PASSWORD=$(openssl rand -hex 16)
 EOF
 
 echo ""
