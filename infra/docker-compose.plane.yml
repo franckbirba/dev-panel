@@ -16,9 +16,7 @@ services:
       - "traefik.http.routers.plane.entrypoints=websecure"
       - "traefik.http.routers.plane.tls=true"
       - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.plane.middlewares=plane-auth"
       - "traefik.http.services.plane.loadbalancer.server.port=3000"
-      - "traefik.http.middlewares.plane-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
 
   plane-admin:
     image: makeplane/plane-admin:stable
@@ -77,7 +75,6 @@ services:
       - "traefik.http.routers.plane-api.tls=true"
       - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.plane-api.priority=10"
-      - "traefik.http.routers.plane-api.middlewares=plane-auth"
       - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
 
   plane-worker:
