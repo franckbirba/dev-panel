@@ -23,7 +23,9 @@ import {
   listPendingClarifications,
   answerClarification,
   logActivity,
-  listActivity
+  listActivity,
+  listMessages,
+  addMessage
 } from './db.js';
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones } from './github.js';
 import { addClient, broadcast } from './sse.js';
@@ -712,6 +714,53 @@ export function createRouter(config = {}) {
       res.json(activity);
     } catch (error) {
       console.error('Error listing activity:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // TICKET MESSAGES (conversation thread)
+  // ============================================================================
+
+  // List messages for a ticket
+  router.get('/tickets/:id/messages', authenticateProject, (req, res) => {
+    try {
+      const messages = listMessages(storagePath, req.project.id, parseInt(req.params.id));
+      res.json({ ticket_id: parseInt(req.params.id), messages });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Post a message to a ticket thread
+  router.post('/tickets/:id/messages', authenticateProject, (req, res) => {
+    try {
+      const { role, author, content } = req.body;
+      if (!content) {
+        return res.status(400).json({ error: 'Missing required field: content' });
+      }
+      if (!role || !['user', 'agent', 'admin', 'system'].includes(role)) {
+        return res.status(400).json({ error: 'Invalid role. Must be: user, agent, admin, system' });
+      }
+
+      const ticket = getTicket(storagePath, req.project.id, parseInt(req.params.id));
+      if (!ticket) {
+        return res.status(404).json({ error: 'Ticket not found' });
+      }
+
+      const message = addMessage(storagePath, req.project.id, parseInt(req.params.id), {
+        role,
+        author: author || null,
+        content
+      });
+
+      broadcast('message:created', {
+        ticket_id: parseInt(req.params.id),
+        message
+      });
+
+      res.status(201).json(message);
+    } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
