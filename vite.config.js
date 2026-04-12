@@ -12,6 +12,11 @@ export default defineConfig({
     },
   },
   base: '/dashboard/',
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3030',
+    },
+  },
   build: {
     outDir: '../../dist/dashboard',
     emptyOutDir: true,
