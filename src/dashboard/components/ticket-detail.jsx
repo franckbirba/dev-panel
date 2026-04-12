@@ -1,7 +1,136 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "./status-chip";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+const roleStyles = {
+  user: "bg-info/10 text-info",
+  agent: "bg-warning/10 text-warning",
+  admin: "bg-success/10 text-success",
+  system: "bg-muted text-muted-foreground",
+};
+
+function MessageBubble({ message }) {
+  const time = message.created_at ? new Date(message.created_at).toLocaleTimeString() : "";
+  return (
+    <div className="flex flex-col gap-1 py-2">
+      <div className="flex items-center gap-2">
+        <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${roleStyles[message.role] || roleStyles.system}`}>
+          {message.author || message.role}
+        </span>
+        <span className="text-muted-foreground/40 text-[10px] font-mono">{time}</span>
+        {message.github_comment_id && (
+          <span className="text-muted-foreground/30 text-[9px] font-mono">via GitHub</span>
+        )}
+      </div>
+      <p className="text-foreground/80 text-[13px] leading-relaxed whitespace-pre-wrap pl-1">
+        {message.content}
+      </p>
+    </div>
+  );
+}
+
+function MessageThread({ ticketId, apiUrl, apiKey }) {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    if (!ticketId) return;
+    fetch(`${apiUrl}/api/tickets/${ticketId}/messages`, {
+      headers: { "X-API-Key": apiKey },
+    })
+      .then((r) => (r.ok ? r.json() : { messages: [] }))
+      .then((data) => setMessages(data.messages || []))
+      .catch(() => setMessages([]));
+  }, [ticketId, apiUrl, apiKey]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSend(e) {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+    setSending(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/tickets/${ticketId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+        body: JSON.stringify({ role: "admin", content: newMessage.trim() }),
+      });
+      if (res.ok) {
+        const msg = await res.json();
+        setMessages((prev) => [...prev, msg]);
+        setNewMessage("");
+      }
+    } catch { /* ignore */ }
+    setSending(false);
+  }
+
+  async function handleSyncComments() {
+    setSyncing(true);
+    try {
+      await fetch(`${apiUrl}/api/tickets/${ticketId}/sync-comments`, {
+        method: "POST",
+        headers: { "X-API-Key": apiKey },
+      });
+      // Refresh messages
+      const res = await fetch(`${apiUrl}/api/tickets/${ticketId}/messages`, {
+        headers: { "X-API-Key": apiKey },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages || []);
+      }
+    } catch { /* ignore */ }
+    setSyncing(false);
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <span className="text-muted-foreground/60 text-[11px] font-mono uppercase tracking-wider">Messages</span>
+        <div className="flex-1 h-px bg-border/50" />
+        <button
+          onClick={handleSyncComments}
+          disabled={syncing}
+          className="text-[10px] font-mono text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+        >
+          {syncing ? "Syncing..." : "Sync GitHub"}
+        </button>
+      </div>
+      <ScrollArea className="max-h-[300px]">
+        {messages.length === 0 ? (
+          <div className="empty-state flex items-center justify-center py-6 rounded-lg">
+            <span className="text-muted-foreground/50 text-xs font-mono">No messages yet</span>
+          </div>
+        ) : (
+          <div className="flex flex-col divide-y divide-border/30">
+            {messages.map((m) => (
+              <MessageBubble key={m.id} message={m} />
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
+      </ScrollArea>
+      <form onSubmit={handleSend} className="flex gap-2">
+        <input
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Reply..."
+          className="flex-1 h-8 px-3 rounded-lg border border-border bg-background text-foreground font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 transition-all placeholder:text-muted-foreground/40"
+        />
+        <Button type="submit" disabled={sending || !newMessage.trim()} className="h-8 text-xs cursor-pointer">
+          Send
+        </Button>
+      </form>
+    </div>
+  );
+}
 
 function InfoRow({ label, value }) {
   return (
@@ -105,6 +234,9 @@ export function TicketDetail({ ticket, apiUrl, apiKey, onAction }) {
           </div>
         </div>
       )}
+
+      <Separator className="bg-border/50" />
+      <MessageThread ticketId={ticket.id} apiUrl={apiUrl} apiKey={apiKey} />
 
       {isPending && (
         <div className="flex gap-3 mt-1">
