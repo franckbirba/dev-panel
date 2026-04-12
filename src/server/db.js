@@ -158,6 +158,42 @@ export function initProjectDatabase(storagePath, projectId) {
     CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity_log(created_at);
   `);
 
+  // Thread messages per ticket
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+      role TEXT NOT NULL CHECK(role IN ('user', 'agent', 'admin', 'system')),
+      author TEXT,
+      content TEXT NOT NULL,
+      github_comment_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_ticket ON messages(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_github ON messages(github_comment_id);
+  `);
+
+  // Migrate old clarifications into messages table
+  try {
+    const tickets = db.prepare(`
+      SELECT id, context FROM tickets WHERE context LIKE '%clarifications%'
+    `).all();
+    for (const ticket of tickets) {
+      const ctx = JSON.parse(ticket.context || '{}');
+      if (ctx.clarifications && ctx.clarifications.length > 0) {
+        const insert = db.prepare(
+          'INSERT OR IGNORE INTO messages (ticket_id, role, author, content, created_at) VALUES (?, ?, ?, ?, ?)'
+        );
+        for (const c of ctx.clarifications) {
+          insert.run(ticket.id, 'agent', 'shelly', c.question, c.asked_at || new Date().toISOString());
+          if (c.answer) {
+            insert.run(ticket.id, 'admin', null, c.answer, c.answered_at || new Date().toISOString());
+          }
+        }
+      }
+    }
+  } catch { /* first run or no clarifications — fine */ }
+
   // Cache the database connection
   projectDbs.set(projectId, db);
 
@@ -407,6 +443,39 @@ export function answerClarification(storagePath, projectId, ticketId, questionIn
 
   db.prepare('UPDATE tickets SET context = ? WHERE id = ?').run(JSON.stringify(ctx), ticketId);
   return ctx.clarifications[questionIndex];
+}
+
+// ============================================================================
+// MESSAGES (per-ticket thread)
+// ============================================================================
+
+export function listMessages(storagePath, projectId, ticketId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare(
+    'SELECT * FROM messages WHERE ticket_id = ? ORDER BY created_at ASC'
+  ).all(ticketId);
+}
+
+export function addMessage(storagePath, projectId, ticketId, { role, author, content, github_comment_id }) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(
+    'INSERT INTO messages (ticket_id, role, author, content, github_comment_id) VALUES (?, ?, ?, ?, ?)'
+  );
+  const result = stmt.run(ticketId, role, author || null, content, github_comment_id || null);
+  return {
+    id: result.lastInsertRowid,
+    ticket_id: ticketId,
+    role,
+    author,
+    content,
+    github_comment_id: github_comment_id || null,
+    created_at: new Date().toISOString()
+  };
+}
+
+export function getMessageByGithubCommentId(storagePath, projectId, commentId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  return db.prepare('SELECT * FROM messages WHERE github_comment_id = ?').get(commentId);
 }
 
 // ============================================================================
