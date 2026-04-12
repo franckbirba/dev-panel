@@ -6,7 +6,6 @@ services:
     image: makeplane/plane-frontend:stable
     container_name: plane-web
     restart: unless-stopped
-    command: node apps/web/server.js web
     depends_on:
       - plane-api
     networks:
@@ -16,7 +15,6 @@ services:
     image: makeplane/plane-admin:stable
     container_name: plane-admin
     restart: unless-stopped
-    command: node apps/admin/server.js admin
     depends_on:
       - plane-api
     networks:
@@ -26,7 +24,6 @@ services:
     image: makeplane/plane-space:stable
     container_name: plane-space
     restart: unless-stopped
-    command: node apps/space/server.js space
     depends_on:
       - plane-api
     networks:
@@ -36,7 +33,6 @@ services:
     image: makeplane/plane-live:stable
     container_name: plane-live
     restart: unless-stopped
-    command: node apps/live/server.js live
     depends_on:
       - plane-api
       - plane-redis
@@ -147,6 +143,12 @@ services:
     image: makeplane/plane-proxy:stable
     container_name: plane-proxy
     restart: unless-stopped
+    environment:
+      SERVICE_API: plane-api:8000
+      SERVICE_WEB: plane-web:3000
+      SERVICE_SPACE: plane-space:3000
+      SERVICE_ADMIN: plane-admin:3000
+      SERVICE_LIVE: plane-live:3000
     depends_on:
       - plane-web
       - plane-api
