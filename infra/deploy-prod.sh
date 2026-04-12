@@ -34,6 +34,16 @@ fi
 
 # Skip DOMAIN check (can be empty for apex domain)
 
+if ! grep -q "AFFINE_DB_PASSWORD=." .env.production; then
+  echo "⚠️  AFFINE_DB_PASSWORD not set — generating one..."
+  echo "AFFINE_DB_PASSWORD=$(openssl rand -hex 16)" >> .env.production
+fi
+
+if [ ! -f "infra/.htpasswd" ]; then
+  echo "❌ infra/.htpasswd not found. Generate with: htpasswd -nb admin yourpassword > infra/.htpasswd"
+  exit 1
+fi
+
 echo "✓ Pre-flight checks passed"
 
 # ============================================================================
@@ -67,6 +77,11 @@ ${SCP_CMD} .env.production ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/.env
 # Deploy Docker Compose files
 ${SCP_CMD} infra/docker-compose.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 ${SCP_CMD} infra/docker-compose.monitoring.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
+
+# Deploy Traefik config
+${SCP_CMD} infra/traefik.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
+${SCP_CMD} infra/dynamic.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
+${SCP_CMD} infra/.htpasswd ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 
 # Deploy Dockerfile
 ${SCP_CMD} Dockerfile ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
@@ -153,10 +168,11 @@ echo ""
 echo "✅ Deployment complete!"
 echo ""
 echo "Access URLs:"
-echo "  • DevPanel:     https://devpanel.${DOMAIN}"
-echo "  • Traefik:      https://traefik.${DOMAIN}"
-echo "  • Uptime Kuma:  https://status.${DOMAIN}"
-echo "  • Bull Board:   https://queues.${DOMAIN}"
+echo "  • DevPanel:     https://devpanl.dev"
+echo "  • AFFiNE:       https://devpanl.dev/affine"
+echo "  • Traefik:      https://traefik.devpanl.dev"
+echo "  • Uptime Kuma:  https://status.devpanl.dev"
+echo "  • Bull Board:   https://queues.devpanl.dev"
 echo ""
 echo "Next steps:"
 echo "  1. Configure DNS A records for the above domains"
