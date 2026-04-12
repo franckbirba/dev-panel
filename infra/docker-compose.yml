@@ -162,7 +162,7 @@ services:
       REDIS_SERVER_HOST: redis
       DATABASE_URL: postgresql://affine:${AFFINE_DB_PASSWORD}@postgres:5432/affine
       AFFINE_INDEXER_ENABLED: "false"
-      AFFINE_SERVER_EXTERNAL_URL: "https://devpanl.dev/affine"
+      AFFINE_SERVER_EXTERNAL_URL: "https://affine.devpanl.dev"
     volumes:
       - affine-config:/root/.affine/config
       - affine-storage:/root/.affine/storage
@@ -185,16 +185,14 @@ services:
           memory: 512M
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.affine.rule=Host(`devpanl.dev`) && PathPrefix(`/affine`)"
+      - "traefik.http.routers.affine.rule=Host(`affine.devpanl.dev`)"
       - "traefik.http.routers.affine.entrypoints=websecure"
       - "traefik.http.routers.affine.tls=true"
       - "traefik.http.routers.affine.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.affine.middlewares=affine-auth,affine-strip"
+      - "traefik.http.routers.affine.middlewares=affine-auth"
       - "traefik.http.services.affine.loadbalancer.server.port=3010"
       # Basic auth
       - "traefik.http.middlewares.affine-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
-      # Strip /affine prefix before forwarding to AFFiNE
-      - "traefik.http.middlewares.affine-strip.stripprefix.prefixes=/affine"
 
 volumes:
   traefik-certs:
