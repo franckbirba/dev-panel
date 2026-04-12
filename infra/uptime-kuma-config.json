@@ -1,0 +1,101 @@
+{
+  "monitors": [
+    {
+      "name": "DevPanel API",
+      "type": "http",
+      "url": "http://10.0.0.2:3030/api/health",
+      "interval": 60,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "DevPanel Dashboard",
+      "type": "http",
+      "url": "http://10.0.0.2:3030/dashboard",
+      "interval": 60,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "BullMQ Queues",
+      "type": "http",
+      "url": "http://10.0.0.2:3030/api/health/queues",
+      "interval": 60,
+      "maxretries": 2,
+      "notificationIDList": {
+        "1": true
+      },
+      "headers": {
+        "X-Admin-Key": "${ADMIN_API_KEY}"
+      }
+    },
+    {
+      "name": "Redis",
+      "type": "redis",
+      "hostname": "redis",
+      "port": 6379,
+      "interval": 60,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "Penpot API",
+      "type": "http",
+      "url": "${PENPOT_URL}/health",
+      "interval": 120,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "AFFiNE API",
+      "type": "http",
+      "url": "${AFFINE_URL}/api/health",
+      "interval": 120,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "Agent Node SSH",
+      "type": "port",
+      "hostname": "10.0.0.3",
+      "port": 22,
+      "interval": 300,
+      "maxretries": 2,
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "name": "Agent Node Process",
+      "type": "http",
+      "url": "http://10.0.0.3:8080/health",
+      "interval": 60,
+      "maxretries": 3,
+      "notificationIDList": {
+        "1": true
+      },
+      "description": "OpenClaw/Claude Code agent health"
+    }
+  ],
+  "notifications": [
+    {
+      "id": 1,
+      "name": "Telegram Critical Alerts",
+      "type": "telegram",
+      "telegramBotToken": "${TELEGRAM_BOT_TOKEN}",
+      "telegramChatID": "${TELEGRAM_CHAT_ID}",
+      "isDefault": true,
+      "applyExisting": true
+    }
+  ]
+}

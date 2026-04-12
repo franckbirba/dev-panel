@@ -1,0 +1,31 @@
+#cloud-config
+# Agents node (10.0.0.3) — OpenClaw + Claude Code
+package_update: true
+package_upgrade: true
+packages: [curl, git, wget, ca-certificates, gnupg, ufw]
+
+runcmd:
+  # Node.js 22
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+
+  # Claude Code + OpenClaw
+  - npm install -g @anthropic-ai/claude-code openclaw
+
+  # Deploy user
+  - useradd -m -s /bin/bash deploy || true
+  - mkdir -p /home/deploy/.ssh /home/deploy/.claude /home/deploy/dev-panel
+  - cp /root/.ssh/authorized_keys /home/deploy/.ssh/
+  - chown -R deploy:deploy /home/deploy/.ssh /home/deploy/.claude /home/deploy/dev-panel
+  - chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+
+  # Firewall — public: SSH only, private network: all
+  - ufw default deny incoming && ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow from 10.0.0.0/24
+  - ufw --force enable
+
+  # SSH hardening
+  - sed -i '/^#\?PermitRootLogin/c\PermitRootLogin no' /etc/ssh/sshd_config
+  - sed -i '/^#\?PasswordAuthentication/c\PasswordAuthentication no' /etc/ssh/sshd_config
+  - systemctl restart sshd

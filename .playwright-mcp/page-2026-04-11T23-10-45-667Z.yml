@@ -1,0 +1,460 @@
+- generic [active] [ref=e1]:
+  - main [ref=e318]:
+    - generic [ref=e320]:
+      - generic [ref=e322]: Connect Claude to Penpot.
+      - link "Discover Penpot MCP" [ref=e323] [cursor=pointer]:
+        - /url: /penpot-mcp-server
+        - generic [ref=e325]: Discover Penpot MCP
+    - generic [ref=e327]:
+      - link "Penpot" [ref=e328] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e329]:
+          - img [ref=e330]
+          - img "Penpot" [ref=e332]
+      - navigation [ref=e333]:
+        - generic [ref=e334]:
+          - generic [ref=e338] [cursor=pointer]: Product
+          - img [ref=e340]
+        - generic [ref=e342]:
+          - generic [ref=e346] [cursor=pointer]: Developers
+          - img [ref=e348]
+        - generic [ref=e350]:
+          - generic [ref=e354] [cursor=pointer]:
+            - generic [ref=e355]: Community
+            - generic [ref=e356]: NEW
+          - img [ref=e358]
+        - generic [ref=e360]:
+          - generic [ref=e365] [cursor=pointer]: Resources
+          - img [ref=e367]
+        - link "Pricing" [ref=e369] [cursor=pointer]:
+          - /url: /pricing
+      - generic [ref=e370]:
+        - link "Log in" [ref=e372] [cursor=pointer]:
+          - /url: https://design.penpot.app/
+          - generic [ref=e375]: Log in
+        - link "Contact Sales" [ref=e377] [cursor=pointer]:
+          - /url: /talk-to-us
+          - generic [ref=e380]: Contact Sales
+        - link "Sign up for free" [ref=e382] [cursor=pointer]:
+          - /url: https://design.penpot.app/#/auth/register
+          - generic [ref=e385]: Sign up for free
+    - generic [ref=e387]:
+      - 'heading "Better Together: Design and Code." [level=1] [ref=e390]'
+      - generic [ref=e391]: Unite design and development in one workflow. Level up your multiplayer experience with seamless collaboration.
+      - generic [ref=e393]:
+        - link "Sign up for free" [ref=e395] [cursor=pointer]:
+          - /url: https://design.penpot.app/#/auth/register
+          - generic [ref=e398]: Sign up for free
+        - link "Self-host install" [ref=e400] [cursor=pointer]:
+          - /url: /self-host
+          - generic [ref=e403]: Self-host install
+    - img [ref=e407]
+    - generic [ref=e414]:
+      - heading "Goodbye handoffs. Sayonara silos. Au revoir compromises." [level=2] [ref=e416]:
+        - generic [ref=e417]: Goodbye handoffs. Sayonara silos. Au revoir compromises.
+      - generic [ref=e418]:
+        - generic [ref=e419]:
+          - generic [ref=e420]: If
+          - generic [ref=e421]: Then
+        - generic [ref=e423]:
+          - generic [ref=e424]:
+            - generic [ref=e428]: Designers and developers use the same tool
+            - generic [ref=e432]: Dev and design processesalign
+            - generic [ref=e436]: Designs embrace code standards
+          - generic [ref=e437]:
+            - img [ref=e440]
+            - img [ref=e444]
+            - img [ref=e448]
+          - generic [ref=e450]:
+            - generic [ref=e453]: Developers ship faster
+            - generic [ref=e456]: Design scales up true to vision
+            - generic [ref=e458]:
+              - generic [ref=e459]: Less frustration, more joy
+              - img [ref=e461]
+        - img [ref=e464]
+    - generic [ref=e466]:
+      - heading "Invite with no limits for true collaboration" [level=2] [ref=e468]:
+        - generic [ref=e469]: Invite with no limits for true collaboration
+      - generic [ref=e471]:
+        - generic [ref=e472]:
+          - generic [ref=e473]:
+            - generic [ref=e478]: native
+            - generic [ref=e483]: code standards
+          - heading "No handoffs" [level=3] [ref=e484]:
+            - heading "No handoffs" [level=3] [ref=e486]
+          - generic [ref=e489]: Bringing code standards natively to design capabilities means no more back and forth between designers and developers.
+        - generic [ref=e491]:
+          - img [ref=e492]
+          - img "Design from the web and for the web" [ref=e494]
+      - generic [ref=e496]:
+        - generic [ref=e498]:
+          - img [ref=e499]
+          - img "Design from the web and for the web" [ref=e501]
+        - generic [ref=e502]:
+          - generic [ref=e503]:
+            - generic [ref=e508]: inspect
+            - generic [ref=e513]: properties
+          - heading "Code matches design" [level=3] [ref=e514]:
+            - heading "Code matches design" [level=3] [ref=e516]
+          - generic [ref=e519]: Forget about "exporting", "generating" or "outputting" code from designs. Simply "inspect".
+      - generic [ref=e521]:
+        - generic [ref=e522]:
+          - generic [ref=e523]:
+            - generic [ref=e528]: team
+            - generic [ref=e533]: collaboration
+          - heading "All design conversations in one tool" [level=3] [ref=e534]:
+            - heading "All design conversations in one tool" [level=3] [ref=e536]
+          - generic [ref=e539]: From whiteboarding to high-res UI work, we built Penpot for everyone on the team, not just designers.
+        - generic [ref=e541]:
+          - img [ref=e542]
+          - img "Design from the web and for the web" [ref=e544]
+      - generic [ref=e546]:
+        - generic [ref=e548]:
+          - img [ref=e549]
+          - img "Design from the web and for the web" [ref=e551]
+        - generic [ref=e552]:
+          - generic [ref=e553]:
+            - generic [ref=e558]: API
+            - generic [ref=e563]: Webhooks
+          - heading "API-based customization" [level=3] [ref=e564]:
+            - heading "API-based customization" [level=3] [ref=e566]
+          - generic [ref=e569]: Integrate Penpot into your dev workflow with our API and access tokens. Decide whether to go SaaS or self-host.
+      - generic [ref=e571]:
+        - generic [ref=e572]:
+          - generic [ref=e573]:
+            - generic [ref=e578]: Team
+            - generic [ref=e583]: Unlimited
+          - heading "No limits to team size" [level=3] [ref=e584]:
+            - heading "No limits to team size" [level=3] [ref=e586]
+          - generic [ref=e589]: True collaboration demands universal access. Loop in all necessary stakeholders without worrying about cost.
+        - generic [ref=e591]:
+          - img [ref=e592]
+          - img "Design from the web and for the web" [ref=e594]
+      - generic [ref=e596]:
+        - generic [ref=e598]:
+          - img [ref=e599]
+          - img "Design from the web and for the web" [ref=e601]
+        - generic [ref=e602]:
+          - generic [ref=e603]:
+            - generic [ref=e608]: Libraries
+            - generic [ref=e613]: Templates
+          - heading "Design Systems" [level=3] [ref=e614]:
+            - heading "Design Systems" [level=3] [ref=e616]
+          - generic [ref=e619]:
+            - generic [ref=e620]: Build your own libraries, share them across your organization to control design at scale. Reuse libraries & templates from our Community.
+            - link "More on Design Systems" [ref=e621] [cursor=pointer]:
+              - /url: /design/design-systems
+              - generic [ref=e624]: More on Design Systems
+      - generic [ref=e626]:
+        - generic [ref=e627]:
+          - generic [ref=e628]:
+            - generic [ref=e633]: Collaboration
+            - generic [ref=e638]: Native
+          - heading "Design Tokens" [level=3] [ref=e639]:
+            - heading "Design Tokens" [level=3] [ref=e641]
+          - generic [ref=e644]:
+            - generic [ref=e645]: No need of a plugin. Use built-in design tokens as a single source of truth to improve efficiency and collaboration between product design and development.
+            - link "More on Design Tokens" [ref=e646] [cursor=pointer]:
+              - /url: https://penpot.app/collaboration/design-tokens
+              - generic [ref=e649]: More on Design Tokens
+        - generic [ref=e651]:
+          - img [ref=e652]
+          - img "Design from the web and for the web" [ref=e654]
+      - generic [ref=e656]:
+        - generic [ref=e658]:
+          - img [ref=e659]
+          - img "Design from the web and for the web" [ref=e661]
+        - generic [ref=e662]:
+          - generic [ref=e663]:
+            - generic [ref=e668]: Design
+            - generic [ref=e673]: Code
+          - heading "Plugins" [level=3] [ref=e674]:
+            - heading "Plugins" [level=3] [ref=e676]
+          - generic [ref=e679]:
+            - generic [ref=e680]: Improve your team's workflow by making Penpot more versatile. Adapt your experience to your design and code needs.
+            - link "Check out Plugins" [ref=e681] [cursor=pointer]:
+              - /url: https://penpot.com/penpothub/plugins
+              - generic [ref=e684]: Check out Plugins
+    - generic [ref=e685]:
+      - heading "Unlimited teams and invitations" [level=2] [ref=e687]
+      - generic [ref=e689]:
+        - generic [ref=e691]:
+          - img [ref=e695]
+          - generic [ref=e697]:
+            - heading "Teams and projects" [level=4] [ref=e698]:
+              - generic [ref=e700]: Teams and projects
+            - generic [ref=e702]: Setup as many teams and projects as you want. Manage invitations and users role & permissions.
+            - link "Technical guide" [ref=e703] [cursor=pointer]:
+              - /url: https://help.penpot.app/technical-guide/getting-started/
+              - generic [ref=e706]: Technical guide
+              - img [ref=e709]
+        - generic [ref=e712]:
+          - img [ref=e716]
+          - generic [ref=e718]:
+            - heading "Share your work" [level=4] [ref=e719]:
+              - generic [ref=e721]: Share your work
+            - generic [ref=e723]: Make part or all of your work accessible beyond your team and get valuable feedback.
+            - link "Contributing guide" [ref=e724] [cursor=pointer]:
+              - /url: https://help.penpot.app/contributing-guide/
+              - generic [ref=e727]: Contributing guide
+              - img [ref=e730]
+    - generic [ref=e732]:
+      - generic [ref=e733]:
+        - generic [ref=e738]: TESTIMONIALS
+        - heading "What they say about design-code collaboration in Penpot" [level=2] [ref=e739]
+      - generic [ref=e743]:
+        - generic [ref=e745]:
+          - generic [ref=e748]: You should not learn apps, you should learn workflows and open standards. You just design and the developer can just copy the HTML and paste where necessary. Pair that with Git and you have an organism that works in perfect harmony.
+          - img [ref=e750]
+          - generic [ref=e752]:
+            - generic [ref=e755]: VC
+            - generic [ref=e759]: Valery Chutak
+        - generic [ref=e761]:
+          - generic [ref=e764]: I tested a new grid functionality yesterday. I like how it keeps me as a designer "honest" with laying out items so that they work with a real CSS grid. This will really help design-development collaboration go much smoother.
+          - img [ref=e766]
+          - generic [ref=e768]:
+            - generic [ref=e771]: RG
+            - generic [ref=e772]:
+              - generic [ref=e775]: Roxanne G.
+              - generic [ref=e778]: "@RoxanneG"
+      - link "Wall of love" [ref=e780] [cursor=pointer]:
+        - /url: /wall-of-love
+        - generic [ref=e783]: Wall of love
+    - generic [ref=e785]:
+      - heading "Designers and Developers love Penpot" [level=2] [ref=e786]:
+        - generic [ref=e789]: Designers and Developers love Penpot
+      - generic [ref=e790]:
+        - link "Sign up for free" [ref=e792] [cursor=pointer]:
+          - /url: https://design.penpot.app/#/auth/register
+          - generic [ref=e795]: Sign up for free
+        - link "Self-host install" [ref=e797] [cursor=pointer]:
+          - /url: /self-host
+          - generic [ref=e800]: Self-host install
+    - generic [ref=e802]:
+      - heading "Stay in the loop" [level=2] [ref=e804]
+      - generic [ref=e805]: Receive product and Community updates!
+      - img [ref=e807]
+      - generic [ref=e810]:
+        - generic [ref=e812]:
+          - generic "Email" [ref=e814]: "* Email"
+          - textbox "* Email * Email" [ref=e818]
+        - generic [ref=e824] [cursor=pointer]:
+          - checkbox "I agree to receive this newsletter and I agree to the Penpot Privacy Policy" [ref=e826]
+          - generic [ref=e829]:
+            - text: I agree to receive this newsletter and I agree to the
+            - link "Penpot Privacy Policy" [ref=e830]:
+              - /url: https://penpot.app/privacy
+        - button "Get your newsletter" [ref=e831] [cursor=pointer]:
+          - generic [ref=e834]: Get your newsletter
+      - text: "*"
+    - generic [ref=e836]:
+      - generic [ref=e837]:
+        - generic [ref=e838]:
+          - link "Penpot" [ref=e839] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e840]:
+              - img [ref=e841]
+              - img "Penpot" [ref=e843]
+          - generic "Go to the Homepage" [ref=e844]:
+            - generic [ref=e846]: Full-stack Design
+        - generic [ref=e847]:
+          - generic [ref=e848]:
+            - heading "Product" [level=4] [ref=e849]
+            - list [ref=e850]:
+              - listitem [ref=e851]:
+                - link "Design" [ref=e852] [cursor=pointer]:
+                  - /url: /design
+              - listitem [ref=e853]:
+                - link "Code" [ref=e854] [cursor=pointer]:
+                  - /url: /code
+              - listitem [ref=e855]:
+                - link "Collaboration" [ref=e856] [cursor=pointer]:
+                  - /url: /collaboration
+              - listitem [ref=e857]:
+                - link "Integrations & API" [ref=e858] [cursor=pointer]:
+                  - /url: /integrations-api
+              - listitem [ref=e859]:
+                - link "Self-host" [ref=e860] [cursor=pointer]:
+                  - /url: /self-host
+              - listitem [ref=e861]:
+                - link "Features" [ref=e862] [cursor=pointer]:
+                  - /url: /features
+              - listitem [ref=e863]:
+                - link "Pricing" [ref=e864] [cursor=pointer]:
+                  - /url: /pricing
+          - generic [ref=e865]:
+            - heading "Legal" [level=4] [ref=e866]
+            - list [ref=e867]:
+              - listitem [ref=e868]:
+                - link "Terms & conditions" [ref=e869] [cursor=pointer]:
+                  - /url: /terms
+              - listitem [ref=e870]:
+                - link "Privacy policy" [ref=e871] [cursor=pointer]:
+                  - /url: /privacy
+              - listitem [ref=e872]:
+                - link "Cookie policy" [ref=e873] [cursor=pointer]:
+                  - /url: /cookie
+              - listitem [ref=e874]:
+                - link "Data processing agreement" [ref=e875] [cursor=pointer]:
+                  - /url: /dpa
+              - listitem [ref=e876]:
+                - link "Security and Compliance" [ref=e877] [cursor=pointer]:
+                  - /url: /security-and-compliance
+              - listitem
+        - generic [ref=e878]:
+          - generic [ref=e879]:
+            - heading "Company" [level=4] [ref=e880]
+            - list [ref=e881]:
+              - listitem [ref=e882]:
+                - link "About" [ref=e883] [cursor=pointer]:
+                  - /url: /about
+              - listitem [ref=e884]:
+                - link "Blog" [ref=e885] [cursor=pointer]:
+                  - /url: https://penpot.app/blog
+              - listitem [ref=e886]:
+                - link "Wall of love" [ref=e887] [cursor=pointer]:
+                  - /url: /wall-of-love
+              - listitem [ref=e888]:
+                - link "Penpot Fest" [ref=e889] [cursor=pointer]:
+                  - /url: /penpotfest
+              - listitem [ref=e890]:
+                - link "Careers" [ref=e891] [cursor=pointer]:
+                  - /url: /careers
+              - listitem [ref=e892]:
+                - link "Media Kit" [ref=e893] [cursor=pointer]:
+                  - /url: /media-kit
+          - generic [ref=e894]:
+            - heading "Resources" [level=4] [ref=e895]
+            - list [ref=e896]:
+              - listitem [ref=e897]:
+                - link "Penpot UI Design Course" [ref=e898] [cursor=pointer]:
+                  - /url: https://penpot.app/courses
+              - listitem [ref=e899]:
+                - link "Plugins" [ref=e900] [cursor=pointer]:
+                  - /url: /penpothub/plugins
+              - listitem [ref=e901]:
+                - link "Libraries & templates" [ref=e902] [cursor=pointer]:
+                  - /url: /penpothub/libraries-templates
+              - listitem [ref=e903]:
+                - link "Learning center" [ref=e904] [cursor=pointer]:
+                  - /url: /learning-center
+              - listitem [ref=e905]:
+                - link "Tutorials" [ref=e906] [cursor=pointer]:
+                  - /url: https://www.youtube.com/playlist?list=PLgcCPfOv5v54WpXhHmNO7T-YC7AE-SRsr
+              - listitem [ref=e907]:
+                - link "Community" [ref=e908] [cursor=pointer]:
+                  - /url: https://community.penpot.app/
+              - listitem [ref=e909]:
+                - link "Dev diaries" [ref=e910] [cursor=pointer]:
+                  - /url: /dev-diaries
+              - listitem [ref=e911]:
+                - link "Help center" [ref=e912] [cursor=pointer]:
+                  - /url: https://help.penpot.app/
+        - generic [ref=e913]:
+          - generic [ref=e914]:
+            - heading "Use Cases" [level=4] [ref=e915]
+            - list [ref=e916]:
+              - listitem [ref=e917]:
+                - link "Wireframing" [ref=e918] [cursor=pointer]:
+                  - /url: /design/wireframing
+              - listitem [ref=e919]:
+                - link "Prototyping" [ref=e920] [cursor=pointer]:
+                  - /url: /design/prototyping
+              - listitem [ref=e921]:
+                - link "UX design" [ref=e922] [cursor=pointer]:
+                  - /url: /design/ux-design
+              - listitem [ref=e923]:
+                - link "Design tool" [ref=e924] [cursor=pointer]:
+                  - /url: /design/design-tool
+              - listitem [ref=e925]:
+                - link "Collaborative UI design" [ref=e926] [cursor=pointer]:
+                  - /url: /design/collaborative-UI-design-software
+          - generic [ref=e927]:
+            - heading "Key features" [level=4] [ref=e928]
+            - list [ref=e929]:
+              - listitem [ref=e930]:
+                - link "Design Systems" [ref=e931] [cursor=pointer]:
+                  - /url: /design/design-systems
+              - listitem [ref=e932]:
+                - link "Responsive Layouts" [ref=e933] [cursor=pointer]:
+                  - /url: /design/layout
+              - listitem [ref=e934]:
+                - link "Design Tokens" [ref=e935] [cursor=pointer]:
+                  - /url: /collaboration/design-tokens
+              - listitem [ref=e936]:
+                - link "MCP Server" [ref=e937] [cursor=pointer]:
+                  - /url: /penpot-mcp-server
+          - generic [ref=e938]:
+            - heading "Compare Penpot" [level=4] [ref=e939]
+            - list [ref=e940]:
+              - listitem [ref=e941]:
+                - link "Penpot vs Figma" [ref=e942] [cursor=pointer]:
+                  - /url: /penpot-vs-figma
+              - listitem [ref=e943]:
+                - link "Penpot vs Adobe XD" [ref=e944] [cursor=pointer]:
+                  - /url: /penpot-vs-adobexd
+              - listitem [ref=e945]:
+                - link "Penpot vs Canva" [ref=e946] [cursor=pointer]:
+                  - /url: /penpot-vs-canva
+              - listitem [ref=e947]:
+                - link "Penpot vs Sketch" [ref=e948] [cursor=pointer]:
+                  - /url: /penpot-vs-sketch
+      - generic [ref=e949]:
+        - generic [ref=e950]:
+          - link "Kaleidos" [ref=e951] [cursor=pointer]:
+            - /url: https://kaleidos.net
+          - text: © 2019-present | Made with LOVE and
+          - link "Open Source" [ref=e952] [cursor=pointer]:
+            - /url: https://opensource.org
+        - generic [ref=e957]:
+          - link "GitHub" [ref=e958] [cursor=pointer]:
+            - /url: https://github.com/penpot
+            - generic [ref=e959]:
+              - img [ref=e960]
+              - img "GitHub" [ref=e962]
+          - link "Reddit" [ref=e963] [cursor=pointer]:
+            - /url: https://www.reddit.com/r/Penpot/
+            - generic [ref=e964]:
+              - img [ref=e965]
+              - img "Reddit" [ref=e967]
+          - link "Youtube" [ref=e968] [cursor=pointer]:
+            - /url: https://www.youtube.com/@Penpot
+            - generic [ref=e969]:
+              - img [ref=e970]
+              - img "Youtube" [ref=e972]
+          - link "Linkedin" [ref=e973] [cursor=pointer]:
+            - /url: https://www.linkedin.com/company/penpot/
+            - generic [ref=e974]:
+              - img [ref=e975]
+              - img "Linkedin" [ref=e977]
+          - link "Bluesky" [ref=e978] [cursor=pointer]:
+            - /url: https://bsky.app/profile/penpot.app
+            - generic [ref=e979]:
+              - img [ref=e980]
+              - img "Bluesky" [ref=e982]
+          - link "Mastodon" [ref=e983] [cursor=pointer]:
+            - /url: https://fosstodon.org/@penpot/
+            - generic [ref=e984]:
+              - img [ref=e985]
+              - img "Mastodon" [ref=e987]
+          - link "Instagram" [ref=e988] [cursor=pointer]:
+            - /url: https://instagram.com/penpot.app
+            - generic [ref=e989]:
+              - img [ref=e990]
+              - img "Instagram" [ref=e992]
+          - link "Twitter" [ref=e993] [cursor=pointer]:
+            - /url: https://twitter.com/penpotapp
+            - generic [ref=e994]:
+              - img [ref=e995]
+              - img "Twitter" [ref=e997]
+  - generic [ref=e307]:
+    - generic [ref=e308]:
+      - text: This website uses first-party and third-party cookies to enhance navigation, analyze traffic, and personalize content. You can accept all, reject them, or customize their use.
+      - link "Cookie Policy" [ref=e309] [cursor=pointer]:
+        - /url: https://penpot.app/cookie
+      - text: .
+    - generic [ref=e310]:
+      - button "Accept all" [ref=e311]
+      - button "Reject all" [ref=e312]
+      - button "Customize cookies" [ref=e313]
+  - alert [ref=e314]: Penpot | Free Open-Source Design & Prototyping For Teams

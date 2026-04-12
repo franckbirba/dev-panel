@@ -1,0 +1,32 @@
+#cloud-config
+# Services node (10.0.0.2) — Docker stack
+package_update: true
+package_upgrade: true
+packages: [curl, git, wget, ca-certificates, gnupg, ufw]
+
+runcmd:
+  # Docker
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable docker && systemctl start docker
+
+  # Deploy user
+  - useradd -m -s /bin/bash -G docker deploy || true
+  - mkdir -p /home/deploy/.ssh
+  - cp /root/.ssh/authorized_keys /home/deploy/.ssh/
+  - chown -R deploy:deploy /home/deploy/.ssh
+  - chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+
+  # Project dirs
+  - mkdir -p /home/deploy/dev-panel/{storage,traefik}
+  - chown -R deploy:deploy /home/deploy/dev-panel
+
+  # Firewall — public: SSH/HTTP/HTTPS, private network: all
+  - ufw default deny incoming && ufw default allow outgoing
+  - ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
+  - ufw allow from 10.0.0.0/24
+  - ufw --force enable
+
+  # SSH hardening
+  - sed -i '/^#\?PermitRootLogin/c\PermitRootLogin no' /etc/ssh/sshd_config
+  - sed -i '/^#\?PasswordAuthentication/c\PasswordAuthentication no' /etc/ssh/sshd_config
+  - systemctl restart sshd

@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # TRAEFIK — Reverse proxy with Let's Encrypt
+  # ============================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Redirect HTTP → HTTPS
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - devpanel_net
+    labels:
+      # Dashboard auth (basic auth)
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.devpanl.dev`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
+
+  # ============================================================================
+  # REDIS — BullMQ backend (shared with monitoring stack)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: devpanel-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================================
+  # DEVPANEL API — Main application
+  # ============================================================================
+  devpanel:
+    build:
+      context: /home/deploy/dev-panel
+      dockerfile: Dockerfile
+    container_name: devpanel-api
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      ALLOWED_ORIGINS: https://devpanl.dev
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      ENABLE_MONITORING: "true"
+      ENABLE_BULLMQ: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SHELLY_TELEGRAM_WEBHOOK: ${SHELLY_TELEGRAM_WEBHOOK}
+      PENPOT_URL: ${PENPOT_URL}
+      AFFINE_URL: ${AFFINE_URL}
+    volumes:
+      - ../storage:/app/storage
+      - ../dist:/app/dist
+    networks:
+      - devpanel_net
+    depends_on:
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.devpanel.rule=Host(`devpanl.dev`)"
+      - "traefik.http.routers.devpanel.entrypoints=websecure"
+      - "traefik.http.routers.devpanel.tls=true"
+      - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
+
+volumes:
+  traefik-certs:
+  redis-data:
+
+networks:
+  devpanel_net:
+    external: true

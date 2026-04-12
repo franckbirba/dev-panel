@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "affine": {
+      "command": "affine-mcp",
+      "args": [],
+      "env": {
+        "AFFINE_BASE_URL": "http://localhost:3010",
+        "AFFINE_API_TOKEN": "ut_6FB-7WSYH1e-meD9rkE0mUqmOPmhedNWC4uMPVr69jg",
+        "AFFINE_WORKSPACE_ID": "9ba536be-bf23-4cbf-87e4-56c7afac6731"
+      }
+    }
+  }
+}

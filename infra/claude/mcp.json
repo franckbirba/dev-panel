@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "affine": {
+      "command": "npx",
+      "args": ["-y", "affine-mcp-server@latest"],
+      "env": {
+        "AFFINE_BASE_URL": "http://10.0.0.2:3010"
+      },
+      "note": "AFFINE_API_TOKEN + AFFINE_WORKSPACE_ID from deploy user env"
+    },
+    "penpot": {
+      "command": "npx",
+      "args": ["-y", "@penpot/mcp@latest"],
+      "env": {
+        "PENPOT_BASE_URL": "http://10.0.0.2:9001"
+      },
+      "note": "Penpot MCP — PENPOT_ACCESS_TOKEN from deploy user env"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/github-mcp@latest"],
+      "note": "GITHUB_TOKEN from deploy user env"
+    }
+  }
+}

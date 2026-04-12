@@ -1,0 +1,45 @@
+#cloud-config
+
+# Hetzner VPS bootstrap script
+# Installs: claude-cli, gh (GitHub CLI), openclaw, docker
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - git
+  - wget
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Install Docker
+  - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  - sh /tmp/get-docker.sh
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker root
+
+  # Install GitHub CLI
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+  - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+  - apt update
+  - apt install -y gh
+
+  # Install Claude CLI
+  - curl -fsSL https://raw.githubusercontent.com/anthropics/claude-cli/main/install.sh | bash
+
+  # Install openclaw (assuming it's available via npm/global install)
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+  - npm install -g openclaw || echo "openclaw installation failed or not available"
+
+  # Clean up
+  - rm /tmp/get-docker.sh
+  - apt-get clean
+
+final_message: "System setup complete. Docker, gh, claude-cli, and openclaw installed."

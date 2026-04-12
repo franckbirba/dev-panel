@@ -9,12 +9,13 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,7 +44,33 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Deploy to VPS
+  deploy-services:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy configs to services node
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            mkdir -p ~/dev-panel/traefik
+
+      - name: Copy compose and traefik configs
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "docker-compose.prod.yml,infra/traefik.yml,infra/dynamic.yml"
+          target: ~/dev-panel/
+          strip_components: 0
+
+      - name: Pull and restart services
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -51,8 +78,47 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd ~/dev-panel
+            cp infra/traefik.yml traefik/traefik.yml
+            cp infra/dynamic.yml traefik/dynamic.yml
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             sleep 5
             docker exec devpanel-api curl -sf http://localhost:3030/api/health || (echo "Health check failed!" && exit 1)
             docker image prune -f
+
+  deploy-agents:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy Claude configs to agents node
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_AGENTS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "infra/claude/settings.json,infra/claude/mcp.json"
+          target: ~/deploy-tmp/
+          strip_components: 0
+
+      - name: Install configs and verify connectivity
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_AGENTS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            # Claude Code settings
+            mkdir -p ~/.claude ~/dev-panel
+            cp ~/deploy-tmp/infra/claude/settings.json ~/.claude/settings.json
+            cp ~/deploy-tmp/infra/claude/mcp.json ~/dev-panel/.mcp.json
+            rm -rf ~/deploy-tmp
+
+            # Update Claude Code and OpenClaw
+            npm update -g @anthropic-ai/claude-code openclaw 2>/dev/null || true
+
+            # Verify connectivity to services node
+            curl -sf http://10.0.0.2:3030/api/health || echo "⚠️ DevPanel API unreachable"
+            curl -sf http://10.0.0.2:3010/ || echo "⚠️ AFFiNE unreachable"

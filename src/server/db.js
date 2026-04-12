@@ -147,6 +147,17 @@ export function initProjectDatabase(storagePath, projectId) {
     END;
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL CHECK(action IN ('created', 'published', 'rejected', 'synced', 'updated')),
+      ticket_id INTEGER,
+      detail TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity_log(created_at);
+  `);
+
   // Cache the database connection
   projectDbs.set(projectId, db);
 
@@ -331,6 +342,22 @@ export function getStats(storagePath, projectId) {
   });
 
   return stats;
+}
+
+export function logActivity(storagePath, projectId, { action, ticketId, detail }) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(
+    'INSERT INTO activity_log (action, ticket_id, detail) VALUES (?, ?, ?)'
+  );
+  return stmt.run(action, ticketId || null, detail || null);
+}
+
+export function listActivity(storagePath, projectId, limit = 50) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(
+    'SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?'
+  );
+  return stmt.all(limit);
 }
 
 // ============================================================================

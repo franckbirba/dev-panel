@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "affine_workspace_9ba536be-bf23-4cbf-87e4-56c7afac6731": {
+      "type": "streamable-http",
+      "url": "https://affine.lan/api/workspaces/9ba536be-bf23-4cbf-87e4-56c7afac6731/mcp",
+      "note": "Read docs from AFFiNE workspace \"FBI\"",
+      "headers": {
+        "Authorization": "Bearer ut_PLgvpr1_1peDXE6silzkTe1Wrxw9fAqfrxDtQ3bhvQQ"
+      }
+    }
+  }
+}

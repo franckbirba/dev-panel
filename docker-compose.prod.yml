@@ -32,6 +32,274 @@ services:
     networks:
       - traefik
 
+  penpot-frontend:
+    image: penpotapp/frontend:latest
+    container_name: penpot-frontend
+    restart: unless-stopped
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    volumes:
+      - penpot_assets:/opt/data/assets
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.penpot.rule=Host(`devpanl.dev`) && PathPrefix(`/penpot`)"
+      - "traefik.http.routers.penpot.entrypoints=websecure"
+      - "traefik.http.routers.penpot.tls=true"
+      - "traefik.http.routers.penpot.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.penpot.middlewares=penpot-stripprefix,security-headers@file"
+      - "traefik.http.middlewares.penpot-stripprefix.stripprefix.prefixes=/penpot"
+      - "traefik.http.services.penpot.loadbalancer.server.port=8080"
+    networks:
+      - traefik
+      - penpot
+
+  penpot-backend:
+    image: penpotapp/backend:latest
+    container_name: penpot-backend
+    restart: unless-stopped
+    depends_on:
+      affine-postgres:
+        condition: service_healthy
+      penpot-redis:
+        condition: service_started
+    volumes:
+      - penpot_assets:/opt/data/assets
+    environment:
+      - PENPOT_FLAGS=enable-registration enable-login-with-password disable-email-verification enable-smtp enable-prepl-server disable-secure-session-cookies
+      - PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY}
+      - PENPOT_PUBLIC_URI=https://devpanl.dev/penpot
+      - PENPOT_DATABASE_URI=postgresql://affine-postgres/penpot
+      - PENPOT_DATABASE_USERNAME=${AFFINE_DB_USERNAME}
+      - PENPOT_DATABASE_PASSWORD=${AFFINE_DB_PASSWORD}
+      - PENPOT_REDIS_URI=redis://penpot-redis/0
+      - PENPOT_ASSETS_STORAGE_BACKEND=assets-fs
+      - PENPOT_STORAGE_ASSETS_FS_DIRECTORY=/opt/data/assets
+      - PENPOT_TELEMETRY_ENABLED=false
+      - PENPOT_SMTP_DEFAULT_FROM=${PENPOT_SMTP_FROM:-no-reply@devpanl.dev}
+      - PENPOT_SMTP_DEFAULT_REPLY_TO=${PENPOT_SMTP_REPLY_TO:-no-reply@devpanl.dev}
+      - PENPOT_SMTP_HOST=${PENPOT_SMTP_HOST}
+      - PENPOT_SMTP_PORT=${PENPOT_SMTP_PORT:-587}
+      - PENPOT_SMTP_TLS=${PENPOT_SMTP_TLS:-true}
+      - PENPOT_SMTP_SSL=${PENPOT_SMTP_SSL:-false}
+      - PENPOT_SMTP_USERNAME=${PENPOT_SMTP_USERNAME}
+      - PENPOT_SMTP_PASSWORD=${PENPOT_SMTP_PASSWORD}
+    networks:
+      - traefik
+      - penpot
+      - affine
+
+  penpot-exporter:
+    image: penpotapp/exporter:latest
+    container_name: penpot-exporter
+    restart: unless-stopped
+    environment:
+      - PENPOT_PUBLIC_URI=http://penpot-frontend:8080
+    networks:
+      - penpot
+
+  penpot-redis:
+    image: redis:7
+    container_name: penpot-redis
+    restart: unless-stopped
+    networks:
+      - penpot
+
+  affine:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: affine-server
+    restart: unless-stopped
+    depends_on:
+      affine-redis:
+        condition: service_healthy
+      affine-postgres:
+        condition: service_healthy
+      affine-migration:
+        condition: service_completed_successfully
+    volumes:
+      - affine_storage:/root/.affine/storage
+      - affine_config:/root/.affine/config
+    environment:
+      - REDIS_SERVER_HOST=affine-redis
+      - DATABASE_URL=postgresql://${AFFINE_DB_USERNAME}:${AFFINE_DB_PASSWORD}@affine-postgres:5432/${AFFINE_DB_NAME:-affine}
+      - AFFINE_INDEXER_ENABLED=false
+      - AFFINE_SERVER_HOST=devpanl.dev
+      - AFFINE_SERVER_HTTPS=true
+      - AFFINE_SERVER_PATH=/affine
+      - AFFINE_SERVER_ID=${AFFINE_SERVER_ID}
+      - MAILER_HOST=${AFFINE_SMTP_HOST}
+      - MAILER_PORT=${AFFINE_SMTP_PORT:-587}
+      - MAILER_USER=${AFFINE_SMTP_USER}
+      - MAILER_PASSWORD=${AFFINE_SMTP_PASSWORD}
+      - MAILER_SENDER=${AFFINE_SMTP_SENDER:-no-reply@devpanl.dev}
+      - MAILER_IGNORE_TLS=${AFFINE_SMTP_IGNORE_TLS:-false}
+    labels:
+      - "traefik.enable=true"
+      # HTTP router (API + MCP)
+      - "traefik.http.routers.affine.rule=Host(`devpanl.dev`) && PathPrefix(`/affine`)"
+      - "traefik.http.routers.affine.entrypoints=websecure"
+      - "traefik.http.routers.affine.tls=true"
+      - "traefik.http.routers.affine.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.affine.middlewares=affine-stripprefix,security-headers@file"
+      - "traefik.http.middlewares.affine-stripprefix.stripprefix.prefixes=/affine"
+      - "traefik.http.services.affine.loadbalancer.server.port=3010"
+      # WebSocket router (sync + collaboration)
+      - "traefik.http.routers.affine-ws.rule=Host(`devpanl.dev`) && PathPrefix(`/affine/socket.io`)"
+      - "traefik.http.routers.affine-ws.entrypoints=websecure"
+      - "traefik.http.routers.affine-ws.tls=true"
+      - "traefik.http.routers.affine-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.affine-ws.middlewares=affine-stripprefix"
+      - "traefik.http.routers.affine-ws.service=affine"
+      - "traefik.http.routers.affine-ws.priority=20"
+    networks:
+      - traefik
+      - affine
+
+  affine-migration:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: affine-migration
+    command: ['sh', '-c', 'node ./scripts/self-host-predeploy.js']
+    depends_on:
+      affine-postgres:
+        condition: service_healthy
+      affine-redis:
+        condition: service_healthy
+    volumes:
+      - affine_storage:/root/.affine/storage
+      - affine_config:/root/.affine/config
+    environment:
+      - REDIS_SERVER_HOST=affine-redis
+      - DATABASE_URL=postgresql://${AFFINE_DB_USERNAME}:${AFFINE_DB_PASSWORD}@affine-postgres:5432/${AFFINE_DB_NAME:-affine}
+      - AFFINE_INDEXER_ENABLED=false
+    networks:
+      - affine
+
+  affine-redis:
+    image: redis:7
+    container_name: affine-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - affine
+
+  affine-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: affine-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - affine_postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${AFFINE_DB_USERNAME}
+      - POSTGRES_PASSWORD=${AFFINE_DB_PASSWORD}
+      - POSTGRES_DB=${AFFINE_DB_NAME:-affine}
+      - POSTGRES_INITDB_ARGS=--data-checksums
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', "${AFFINE_DB_USERNAME}", '-d', "${AFFINE_DB_NAME:-affine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - affine
+      - agents
+
+  affine-postgres-init:
+    image: pgvector/pgvector:pg16
+    container_name: affine-postgres-init
+    restart: "no"
+    depends_on:
+      affine-postgres:
+        condition: service_healthy
+    environment:
+      - PGHOST=affine-postgres
+      - PGUSER=${AFFINE_DB_USERNAME}
+      - PGPASSWORD=${AFFINE_DB_PASSWORD}
+      - PGDATABASE=${AFFINE_DB_NAME:-affine}
+    command: >
+      sh -c "
+      psql -c 'CREATE EXTENSION IF NOT EXISTS vector;' &&
+      psql -c 'CREATE DATABASE penpot;' || true &&
+      psql -c '
+        CREATE TABLE IF NOT EXISTS agent_memory (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          agent_type TEXT NOT NULL,
+          context_type TEXT NOT NULL,
+          embedding vector(1536),
+          content JSONB NOT NULL,
+          metadata JSONB,
+          created_at TIMESTAMP DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_embedding
+        ON agent_memory USING ivfflat (embedding vector_cosine_ops)
+        WITH (lists = 100);
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_type
+        ON agent_memory(agent_type, context_type);
+      '
+      "
+    networks:
+      - affine
+
+  # BullMQ + Redis for agent queues
+  redis:
+    image: redis:7-alpine
+    container_name: bullmq-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agents
+
+  # BullMQ Board (optional web UI)
+  bullmq-board:
+    image: deadly0/bull-board:latest
+    container_name: bullmq-board
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - BULL_PREFIX=bull
+    depends_on:
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bullmq.rule=Host(`devpanl.dev`) && PathPrefix(`/bullmq`)"
+      - "traefik.http.routers.bullmq.entrypoints=websecure"
+      - "traefik.http.routers.bullmq.tls=true"
+      - "traefik.http.routers.bullmq.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.bullmq.middlewares=bullmq-stripprefix,bullmq-auth,security-headers@file"
+      - "traefik.http.middlewares.bullmq-stripprefix.stripprefix.prefixes=/bullmq"
+      - "traefik.http.middlewares.bullmq-auth.basicauth.users=${BULLMQ_BOARD_AUTH}"
+      - "traefik.http.services.bullmq.loadbalancer.server.port=3000"
+    networks:
+      - traefik
+      - agents
+
 networks:
   traefik:
     name: traefik
+  penpot:
+    name: penpot
+  affine:
+    name: affine
+  agents:
+    name: agents
+
+volumes:
+  penpot_assets:
+  affine_postgres:
+  affine_storage:
+  affine_config:
+  redis_data:

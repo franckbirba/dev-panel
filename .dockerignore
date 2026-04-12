@@ -1,8 +1,12 @@
-.git
 node_modules
+.git
+.env
+.env.*
 storage
-infra
+*.log
+.DS_Store
+dist
 docs
-.env*
+infra
 *.md
-.github
+!README.md

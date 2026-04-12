@@ -21,9 +21,13 @@ import {
   upsertMilestone,
   listMilestones,
   listPendingClarifications,
-  answerClarification
+  answerClarification,
+  logActivity,
+  listActivity
 } from './db.js';
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones } from './github.js';
+import { addClient, broadcast } from './sse.js';
+import { publishTicket, rejectTicket } from './services.js';
 
 // ============================================================================
 // MIDDLEWARE - API Key Auth
@@ -110,9 +114,222 @@ export function createRouter(config = {}) {
   // PUBLIC ENDPOINTS (No auth)
   // ============================================================================
 
-  // Health check
+  // Health check — basic
   router.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Health check — detailed (admin only)
+  router.get('/health/detailed', authenticateAdmin, async (req, res) => {
+    const { getHealthStatus } = await import('./monitoring.js');
+    const health = await getHealthStatus(storagePath);
+
+    res.status(health.status === 'down' ? 503 : 200).json(health);
+  });
+
+  // Queue health
+  router.get('/health/queues', authenticateAdmin, async (req, res) => {
+    try {
+      const { getAllQueuesHealth } = await import('./bullmq.js');
+      const health = await getAllQueuesHealth();
+
+      res.status(health.status === 'critical' ? 503 : 200).json(health);
+    } catch (error) {
+      res.status(500).json({ error: error.message, status: 'unknown' });
+    }
+  });
+
+  // Dead Letter Queue
+  router.get('/admin/dlq', authenticateAdmin, async (req, res) => {
+    try {
+      const { getDLQJobs } = await import('./bullmq.js');
+      const jobs = await getDLQJobs();
+
+      res.json({ count: jobs.length, jobs });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Retry DLQ job
+  router.post('/admin/dlq/:jobId/retry', authenticateAdmin, async (req, res) => {
+    try {
+      const { retryFromDLQ } = await import('./bullmq.js');
+      const newJob = await retryFromDLQ(req.params.jobId);
+
+      res.json({ message: 'Job retried', job_id: newJob.id });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // QUEUE MONITORING ENDPOINTS
+  // ============================================================================
+
+  // Queue name validation middleware
+  async function resolveQueue(req, res, next) {
+    const { resolveQueueName } = await import('./bullmq.js');
+    const fullName = resolveQueueName(req.params.name);
+    if (!fullName) {
+      return res.status(404).json({ error: `Unknown queue: ${req.params.name}` });
+    }
+    req.queueName = fullName;
+    next();
+  }
+
+  // List all queues with counts (project auth)
+  router.get('/queues', authenticateProject, async (req, res) => {
+    try {
+      const { getAllQueuesHealth } = await import('./bullmq.js');
+      const health = await getAllQueuesHealth();
+      res.json(health);
+    } catch (error) {
+      if (error.message?.includes('ECONNREFUSED') || error.message?.includes('NOAUTH')) {
+        return res.status(503).json({ error: 'Redis unavailable', status: 'unreachable' });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // List jobs in a queue (project auth)
+  router.get('/queues/:name/jobs', authenticateProject, resolveQueue, async (req, res) => {
+    try {
+      const { getQueueJobs } = await import('./bullmq.js');
+      const { status = 'waiting', start = '0', limit = '50' } = req.query;
+      const jobs = await getQueueJobs(req.queueName, status, parseInt(start), parseInt(limit));
+      res.json({ queue: req.queueName, status, jobs });
+    } catch (error) {
+      if (error.message?.includes('ECONNREFUSED')) {
+        return res.status(503).json({ error: 'Redis unavailable' });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get job detail (project auth)
+  router.get('/queues/:name/jobs/:id', authenticateProject, resolveQueue, async (req, res) => {
+    try {
+      const { getJobDetail } = await import('./bullmq.js');
+      const job = await getJobDetail(req.queueName, req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: `Job ${req.params.id} not found` });
+      }
+      res.json(job);
+    } catch (error) {
+      if (error.message?.includes('ECONNREFUSED')) {
+        return res.status(503).json({ error: 'Redis unavailable' });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Pause queue (admin auth)
+  router.post('/queues/:name/pause', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      await queue.pause();
+      res.json({ message: `Queue ${req.queueName} paused` });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resume queue (admin auth)
+  router.post('/queues/:name/resume', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      await queue.resume();
+      res.json({ message: `Queue ${req.queueName} resumed` });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Clean queue (admin auth)
+  router.post('/queues/:name/clean', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      const { grace = '0', status = 'completed', limit = '100' } = req.body;
+      const removed = await queue.clean(parseInt(grace), parseInt(limit), status);
+      res.json({ message: `Cleaned ${removed.length} ${status} jobs`, removed: removed.length });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Retry a failed job (admin auth)
+  router.post('/queues/:name/jobs/:id/retry', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      const job = await queue.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: `Job ${req.params.id} not found` });
+      }
+      await job.retry();
+      res.json({ message: `Job ${req.params.id} retried` });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Remove a job (admin auth)
+  router.delete('/queues/:name/jobs/:id', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      const job = await queue.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: `Job ${req.params.id} not found` });
+      }
+      await job.remove();
+      res.json({ message: `Job ${req.params.id} removed` });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Promote a delayed job (admin auth)
+  router.post('/queues/:name/jobs/:id/promote', authenticateAdmin, resolveQueue, async (req, res) => {
+    try {
+      const { getQueue } = await import('./bullmq.js');
+      const queue = getQueue(req.queueName);
+      const job = await queue.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: `Job ${req.params.id} not found` });
+      }
+      await job.promote();
+      res.json({ message: `Job ${req.params.id} promoted` });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Metrics (Prometheus-compatible)
+  router.get('/metrics', async (req, res) => {
+    const { getMetrics } = await import('./monitoring.js');
+    const metrics = await getMetrics(storagePath);
+
+    // Convert to Prometheus text format
+    let output = '';
+    output += `# HELP devpanel_uptime_seconds Process uptime\n`;
+    output += `# TYPE devpanel_uptime_seconds gauge\n`;
+    output += `devpanel_uptime_seconds ${metrics.process.uptime_seconds}\n\n`;
+
+    output += `# HELP devpanel_memory_rss_bytes Resident set size\n`;
+    output += `# TYPE devpanel_memory_rss_bytes gauge\n`;
+    output += `devpanel_memory_rss_bytes ${metrics.process.memory_rss_bytes}\n\n`;
+
+    output += `# HELP devpanel_memory_heap_used_bytes Heap used\n`;
+    output += `# TYPE devpanel_memory_heap_used_bytes gauge\n`;
+    output += `devpanel_memory_heap_used_bytes ${metrics.process.memory_heap_used_bytes}\n\n`;
+
+    res.set('Content-Type', 'text/plain; version=0.0.4');
+    res.send(output);
   });
 
   // ============================================================================
@@ -347,6 +564,13 @@ export function createRouter(config = {}) {
         created_by
       });
 
+      logActivity(storagePath, req.project.id, {
+        action: 'created',
+        ticketId,
+        detail: `${type}: ${title}`,
+      });
+      broadcast('ticket:created', { id: ticketId, type, title });
+
       res.status(201).json({
         id: ticketId,
         message: 'Ticket created successfully',
@@ -476,6 +700,62 @@ export function createRouter(config = {}) {
       });
     } catch (error) {
       console.error('Error getting stats:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Activity feed
+  router.get('/activity', authenticateProject, (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 50;
+      const activity = listActivity(storagePath, req.project.id, limit);
+      res.json(activity);
+    } catch (error) {
+      console.error('Error listing activity:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // SSE events stream
+  router.get('/events', authenticateProject, (req, res) => {
+    addClient(res);
+  });
+
+  // Publish ticket to GitHub
+  router.post('/tickets/:id/publish', authenticateProject, async (req, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const { title, labels, assignee } = req.body;
+      const fs = await import('fs');
+      let githubConfig = {};
+      try {
+        const config = JSON.parse(fs.readFileSync('.devpanelrc.json', 'utf-8'));
+        githubConfig = config.github || {};
+      } catch (e) {
+        // No config file, rely on env vars
+      }
+      const issue = await publishTicket(storagePath, req.project.id, ticketId, {
+        githubConfig,
+        title,
+        labels,
+        assignee,
+      });
+      res.json({ message: 'Ticket published', issue: { number: issue.number, url: issue.html_url } });
+    } catch (error) {
+      console.error('Error publishing ticket:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Reject ticket
+  router.post('/tickets/:id/reject', authenticateProject, (req, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const { reason } = req.body;
+      const result = rejectTicket(storagePath, req.project.id, ticketId, reason);
+      res.json(result);
+    } catch (error) {
+      console.error('Error rejecting ticket:', error);
       res.status(500).json({ error: error.message });
     }
   });

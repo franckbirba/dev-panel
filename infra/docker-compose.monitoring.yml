@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # UPTIME KUMA — Self-hosted monitoring
+  # ============================================================================
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    # NO PUBLIC PORT - access via Traefik only
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uptime.rule=Host(`status.devpanl.dev`)"
+      - "traefik.http.routers.uptime.entrypoints=websecure"
+      - "traefik.http.routers.uptime.tls=true"
+      - "traefik.http.routers.uptime.tls.certresolver=letsencrypt"
+      - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+
+  # Redis is now defined in main docker-compose.yml (shared)
+
+  # ============================================================================
+  # BULL BOARD — BullMQ dashboard
+  # ============================================================================
+  bull-board:
+    image: deadly0/bull-board:latest
+    container_name: devpanel-bull-board
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BULL_PREFIX: devpanel
+    # Redis is in main compose, external dependency
+    # NO PUBLIC PORT - access via Traefik only
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bullboard.rule=Host(`queues.devpanl.dev`)"
+      - "traefik.http.routers.bullboard.entrypoints=websecure"
+      - "traefik.http.routers.bullboard.tls=true"
+      - "traefik.http.routers.bullboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
+      # Basic auth for Bull Board
+      - "traefik.http.routers.bullboard.middlewares=bullboard-auth"
+      - "traefik.http.middlewares.bullboard-auth.basicauth.users=${TRAEFIK_AUTH}"
+
+  # ============================================================================
+  # PENPOT HEALTH CHECK (external service)
+  # ============================================================================
+  penpot-monitor:
+    image: curlimages/curl:latest
+    container_name: penpot-monitor
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "
+      while true; do
+        curl -f ${PENPOT_URL:-http://penpot.local}/health || echo 'Penpot down';
+        sleep 60;
+      done
+      "
+    networks:
+      - devpanel_net
+
+  # ============================================================================
+  # AFFINE HEALTH CHECK (external service)
+  # ============================================================================
+  affine-monitor:
+    image: curlimages/curl:latest
+    container_name: affine-monitor
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "
+      while true; do
+        curl -f ${AFFINE_URL:-http://affine.local}/api/health || echo 'AFFiNE down';
+        sleep 60;
+      done
+      "
+    networks:
+      - devpanel_net
+
+volumes:
+  uptime-kuma-data:
+
+networks:
+  devpanel_net:
+    external: true
