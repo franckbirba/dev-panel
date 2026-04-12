@@ -50,7 +50,7 @@ export function InboxView({ apiUrl, apiKey, filter, refreshKey }) {
   const pendingCount = tickets.filter((t) => t.status === "pending").length;
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Ticket list panel */}
       <div className="w-[420px] border-r border-border bg-surface flex flex-col">
         {/* List header with counters */}

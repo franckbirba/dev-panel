@@ -109,7 +109,7 @@ export function SettingsView({ apiUrl, apiKey }) {
   ];
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Sidebar */}
       <div className="w-[220px] border-r border-border bg-surface flex flex-col">
         <div className="px-4 pt-4 pb-2">
