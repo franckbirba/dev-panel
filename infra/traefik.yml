@@ -24,6 +24,7 @@ providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
+    httpClientTimeout: "300"
   file:
     filename: "/etc/traefik/dynamic.yml"
     watch: true
