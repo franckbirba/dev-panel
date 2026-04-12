@@ -1,4 +1,34 @@
 http:
+  # ============================================================================
+  # ROUTERS
+  # ============================================================================
+  routers:
+    affine:
+      rule: "Host(`affine.devpanl.dev`)"
+      entryPoints:
+        - websecure
+      service: affine
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - affine-auth
+        - security-headers
+
+  # ============================================================================
+  # SERVICES — external backends proxied by Traefik
+  # ============================================================================
+  services:
+    affine:
+      loadBalancer:
+        servers:
+          # TODO: set to your AFFiNE internal URL
+          # Same node:   http://127.0.0.1:3010
+          # Agents node: http://10.0.0.3:3010
+          - url: "http://127.0.0.1:3010"
+
+  # ============================================================================
+  # MIDDLEWARES
+  # ============================================================================
   middlewares:
     security-headers:
       headers:
@@ -8,3 +38,9 @@ http:
         forceSTSHeader: true
         stsSeconds: 31536000
         stsIncludeSubdomains: true
+
+    affine-auth:
+      basicAuth:
+        # Same credentials as Traefik dashboard
+        # Generate with: htpasswd -nb admin yourpassword
+        usersFile: "/etc/traefik/.htpasswd"

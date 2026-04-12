@@ -1,5 +1,5 @@
 api:
-  dashboard: false
+  dashboard: true
 
 entryPoints:
   web:
@@ -11,14 +11,12 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
-    http:
-      tls: {}
 
 certificatesResolvers:
   letsencrypt:
     acme:
       email: franckbirba@gmail.com
-      storage: /etc/traefik/acme.json
+      storage: /letsencrypt/acme.json
       httpChallenge:
         entryPoint: web
 
