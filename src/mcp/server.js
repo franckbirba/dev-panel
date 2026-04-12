@@ -11,7 +11,9 @@ import {
   updateTicket,
   searchDocs,
   getStats,
-  getDocStats
+  getDocStats,
+  listMessages,
+  addMessage
 } from '../server/db.js';
 
 const STORAGE_PATH = process.env.DEVPANEL_STORAGE || './storage';
@@ -122,14 +124,35 @@ server.tool(
 );
 
 server.tool(
-  'ask_clarification',
-  'Ask the admin a clarification question about a ticket',
+  'get_messages',
+  'Get the conversation thread for a ticket',
+  {
+    project: z.string().describe('Project name'),
+    ticket_id: z.number().describe('Ticket ID')
+  },
+  async ({ project, ticket_id }) => {
+    const proj = getProjectByName(project);
+    if (!proj) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+    }
+
+    initProjectDatabase(STORAGE_PATH, proj.id);
+    const messages = listMessages(STORAGE_PATH, proj.id, ticket_id);
+
+    return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
+  }
+);
+
+server.tool(
+  'post_message',
+  'Post a message to a ticket conversation thread (ask questions, report progress, etc.)',
   {
     project: z.string().describe('Project name'),
     ticket_id: z.number().describe('Ticket ID'),
-    question: z.string().describe('The clarification question')
+    content: z.string().describe('Message content'),
+    author: z.string().default('shelly').describe('Author name')
   },
-  async ({ project, ticket_id, question }) => {
+  async ({ project, ticket_id, content, author }) => {
     const proj = getProjectByName(project);
     if (!proj) {
       return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
@@ -141,20 +164,13 @@ server.tool(
       return { content: [{ type: 'text', text: `Ticket #${ticket_id} not found` }], isError: true };
     }
 
-    const context = ticket.context || {};
-    if (!context.clarifications) context.clarifications = [];
-    context.clarifications.push({
-      question,
-      asked_at: new Date().toISOString(),
-      answer: null
+    addMessage(STORAGE_PATH, proj.id, ticket_id, {
+      role: 'agent',
+      author,
+      content
     });
 
-    updateTicket(STORAGE_PATH, proj.id, ticket_id, {
-      context: JSON.stringify(context),
-      status: 'pending'
-    });
-
-    return { content: [{ type: 'text', text: `Clarification question posted on ticket #${ticket_id}. Waiting for admin response.` }] };
+    return { content: [{ type: 'text', text: `Message posted on ticket #${ticket_id} by ${author}` }] };
   }
 );
 
