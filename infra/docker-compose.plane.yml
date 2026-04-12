@@ -26,6 +26,14 @@ services:
       - plane-api
     networks:
       - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-admin.rule=Host(`plane.devpanl.dev`) && PathPrefix(`/god-mode`)"
+      - "traefik.http.routers.plane-admin.entrypoints=websecure"
+      - "traefik.http.routers.plane-admin.tls=true"
+      - "traefik.http.routers.plane-admin.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.plane-admin.priority=20"
+      - "traefik.http.services.plane-admin.loadbalancer.server.port=3000"
 
   plane-space:
     image: makeplane/plane-space:stable
@@ -35,6 +43,14 @@ services:
       - plane-api
     networks:
       - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-space.rule=Host(`plane.devpanl.dev`) && PathPrefix(`/spaces`)"
+      - "traefik.http.routers.plane-space.entrypoints=websecure"
+      - "traefik.http.routers.plane-space.tls=true"
+      - "traefik.http.routers.plane-space.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.plane-space.priority=20"
+      - "traefik.http.services.plane-space.loadbalancer.server.port=3000"
 
   plane-live:
     image: makeplane/plane-live:stable
