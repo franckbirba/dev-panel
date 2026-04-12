@@ -111,6 +111,22 @@ export async function fetchRepoDocs({ owner, repo }) {
   return docs;
 }
 
+export async function fetchIssueComments({ owner, repo, issue_number, since }) {
+  const params = { owner, repo, issue_number, per_page: 100 };
+  if (since) params.since = since;
+
+  const { data } = await octokit.rest.issues.listComments(params);
+
+  return data.map(c => ({
+    id: c.id,
+    author: c.user?.login,
+    body: c.body,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    html_url: c.html_url
+  }));
+}
+
 export function formatTicketAsIssue(ticket, config = {}) {
   const { title, description, context, type, created_by, screenshot_path } = ticket;
 

@@ -27,7 +27,7 @@ import {
   listMessages,
   addMessage
 } from './db.js';
-import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones } from './github.js';
+import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetchIssueComments } from './github.js';
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 
@@ -805,6 +805,52 @@ export function createRouter(config = {}) {
       res.json(result);
     } catch (error) {
       console.error('Error rejecting ticket:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Sync GitHub comments into message thread
+  router.post('/tickets/:id/sync-comments', authenticateProject, async (req, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = getTicket(storagePath, req.project.id, ticketId);
+      if (!ticket) {
+        return res.status(404).json({ error: 'Ticket not found' });
+      }
+      if (!ticket.github_issue_number) {
+        return res.status(400).json({ error: 'Ticket has no linked GitHub issue' });
+      }
+
+      const project = req.project;
+      if (!project.github_token) {
+        return res.status(400).json({ error: 'No GitHub token configured' });
+      }
+
+      initGitHub(project.github_token);
+      const comments = await fetchIssueComments({
+        owner: project.github_owner,
+        repo: project.github_repo,
+        issue_number: ticket.github_issue_number
+      });
+
+      const { getMessageByGithubCommentId } = await import('./db.js');
+      let synced = 0;
+      for (const comment of comments) {
+        const existing = getMessageByGithubCommentId(storagePath, project.id, comment.id);
+        if (!existing) {
+          addMessage(storagePath, project.id, ticketId, {
+            role: 'system',
+            author: comment.author,
+            content: comment.body,
+            github_comment_id: comment.id
+          });
+          synced++;
+        }
+      }
+
+      res.json({ synced, total_comments: comments.length });
+    } catch (error) {
+      console.error('Error syncing comments:', error);
       res.status(500).json({ error: error.message });
     }
   });
