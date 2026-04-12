@@ -28,8 +28,8 @@ COPY --from=base /app/bin ./bin
 COPY --from=base /app/src ./src
 COPY --from=base /app/templates ./templates
 
-# Copy built dashboard from host (not from base stage, as it's built locally)
-COPY ./dist ./dist
+# dist/ is mounted as volume in docker-compose (../dist:/app/dist)
+# Do NOT COPY it here — .dockerignore excludes it
 
 # Create storage directory
 RUN mkdir -p /app/storage && chown -R node:node /app/storage

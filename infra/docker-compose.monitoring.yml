@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================================================
   # UPTIME KUMA — Self-hosted monitoring

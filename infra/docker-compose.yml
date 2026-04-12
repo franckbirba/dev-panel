@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================================================
   # TRAEFIK — Reverse proxy with Let's Encrypt
@@ -123,7 +121,7 @@ services:
   # AFFINE — Documentation & knowledge base
   # ============================================================================
   affine:
-    image: ghcr.io/toeverything/affine-graphql:stable
+    image: ghcr.io/toeverything/affine-graphql:latest
     container_name: devpanel-affine
     restart: unless-stopped
     environment:
