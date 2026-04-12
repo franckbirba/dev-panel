@@ -72,8 +72,8 @@ services:
       PENPOT_URL: ${PENPOT_URL}
       AFFINE_URL: ${AFFINE_URL}
     volumes:
-      - ../storage:/app/storage
-      - ../dist:/app/dist
+      - ./storage:/app/storage
+      - ./dist:/app/dist
     networks:
       - devpanel_net
     depends_on:
