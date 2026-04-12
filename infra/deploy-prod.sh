@@ -77,6 +77,7 @@ ${SCP_CMD} .env.production ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/.env
 # Deploy Docker Compose files
 ${SCP_CMD} infra/docker-compose.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 ${SCP_CMD} infra/docker-compose.monitoring.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
+${SCP_CMD} infra/docker-compose.plane.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
 
 # Deploy Traefik config
 ${SCP_CMD} infra/traefik.yml ${DEPLOY_USER}@${SERVICES_NODE}:${PROJECT_DIR}/
@@ -115,6 +116,9 @@ docker compose up -d
 
 # Start monitoring stack
 docker compose -f docker-compose.monitoring.yml up -d
+
+# Start Plane stack
+docker compose -f docker-compose.plane.yml up -d
 
 # Wait for services to be healthy
 sleep 10
@@ -169,7 +173,8 @@ echo "✅ Deployment complete!"
 echo ""
 echo "Access URLs:"
 echo "  • DevPanel:     https://devpanl.dev"
-echo "  • AFFiNE:       https://devpanl.dev/affine"
+echo "  • AFFiNE:       https://affine.devpanl.dev"
+echo "  • Plane:        https://plane.devpanl.dev"
 echo "  • Traefik:      https://traefik.devpanl.dev"
 echo "  • Uptime Kuma:  https://status.devpanl.dev"
 echo "  • Bull Board:   https://queues.devpanl.dev"

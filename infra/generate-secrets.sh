@@ -80,6 +80,10 @@ AFFINE_URL=http://affine:3010
 
 # AFFiNE database
 AFFINE_DB_PASSWORD=$(openssl rand -hex 16)
+
+# Plane
+PLANE_DB_PASSWORD=$(openssl rand -hex 16)
+PLANE_SECRET_KEY=$(openssl rand -hex 32)
 EOF
 
 echo ""
