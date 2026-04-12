@@ -37,7 +37,7 @@ services:
     image: redis:7-alpine
     container_name: devpanel-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
     networks:
@@ -121,7 +121,7 @@ services:
   # AFFINE — Documentation & knowledge base
   # ============================================================================
   affine:
-    image: ghcr.io/toeverything/affine-graphql:latest
+    image: ghcr.io/toeverything/affine:latest
     container_name: devpanel-affine
     restart: unless-stopped
     environment:
