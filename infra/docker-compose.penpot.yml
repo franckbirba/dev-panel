@@ -1,0 +1,125 @@
+services:
+  # ============================================================================
+  # PENPOT — Self-hosted design tool
+  # ============================================================================
+  penpot-frontend:
+    image: penpotapp/frontend:2.4.2
+    container_name: penpot-frontend
+    restart: unless-stopped
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    volumes:
+      - penpot-assets:/opt/data/assets
+      - penpot-plugins:/var/www/app/plugins
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.penpot.rule=Host(`penpot.devpanl.dev`)"
+      - "traefik.http.routers.penpot.entrypoints=websecure"
+      - "traefik.http.routers.penpot.tls=true"
+      - "traefik.http.routers.penpot.tls.certresolver=letsencrypt"
+      - "traefik.http.services.penpot.loadbalancer.server.port=8080"
+
+  penpot-backend:
+    image: penpotapp/backend:2.4.2
+    container_name: penpot-backend
+    restart: unless-stopped
+    depends_on:
+      penpot-postgres:
+        condition: service_healthy
+      penpot-redis:
+        condition: service_healthy
+    volumes:
+      - penpot-assets:/opt/data/assets
+    environment:
+      PENPOT_FLAGS: enable-registration enable-login-with-password disable-email-verification enable-prepl-server disable-secure-session-cookies
+      PENPOT_SECRET_KEY: ${PENPOT_SECRET_KEY}
+      PENPOT_PUBLIC_URI: https://penpot.devpanl.dev
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: ${PENPOT_DB_PASSWORD}
+      PENPOT_REDIS_URI: redis://penpot-redis/0
+      PENPOT_ASSETS_STORAGE_BACKEND: assets-fs
+      PENPOT_STORAGE_ASSETS_FS_DIRECTORY: /opt/data/assets
+      PENPOT_TELEMETRY_ENABLED: "false"
+    networks:
+      - devpanel_net
+
+  penpot-exporter:
+    image: penpotapp/exporter:2.4.2
+    container_name: penpot-exporter
+    restart: unless-stopped
+    environment:
+      PENPOT_PUBLIC_URI: http://penpot-frontend:8080
+    networks:
+      - devpanel_net
+
+  penpot-postgres:
+    image: postgres:15-alpine
+    container_name: penpot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: ${PENPOT_DB_PASSWORD}
+      POSTGRES_DB: penpot
+    volumes:
+      - penpot-pgdata:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U penpot"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  penpot-redis:
+    image: redis:7-alpine
+    container_name: penpot-redis
+    restart: unless-stopped
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Penpot MCP Server — bridge between Claude Code and Penpot plugin
+  penpot-mcp:
+    image: ghcr.io/franckbirba/penpot-mcp:latest
+    container_name: penpot-mcp
+    restart: unless-stopped
+    environment:
+      PENPOT_BASE_URL: https://penpot.devpanl.dev
+      PENPOT_MCP_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_REMOTE_MODE: "true"
+      PENPOT_MCP_WEBSOCKET_URL: wss://penpot-mcp.devpanl.dev
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.penpot-mcp.rule=Host(`penpot-mcp.devpanl.dev`)"
+      - "traefik.http.routers.penpot-mcp.entrypoints=websecure"
+      - "traefik.http.routers.penpot-mcp.tls=true"
+      - "traefik.http.routers.penpot-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.penpot-mcp.service=penpot-mcp-http"
+      - "traefik.http.services.penpot-mcp-http.loadbalancer.server.port=4401"
+      # WebSocket for plugin communication
+      - "traefik.http.routers.penpot-mcp-ws.rule=Host(`penpot-mcp.devpanl.dev`) && HeadersRegexp(`Connection`, `(?i)upgrade`)"
+      - "traefik.http.routers.penpot-mcp-ws.entrypoints=websecure"
+      - "traefik.http.routers.penpot-mcp-ws.tls=true"
+      - "traefik.http.routers.penpot-mcp-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.penpot-mcp-ws.priority=20"
+      - "traefik.http.routers.penpot-mcp-ws.service=penpot-mcp-ws"
+      - "traefik.http.services.penpot-mcp-ws.loadbalancer.server.port=4402"
+
+volumes:
+  penpot-assets:
+  penpot-plugins:
+  penpot-pgdata:
+
+networks:
+  devpanel_net:
+    external: true

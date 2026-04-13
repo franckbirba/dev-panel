@@ -9,6 +9,9 @@
         "PLANE_BASE_URL": "https://plane.devpanl.dev"
       }
     },
+    "penpot": {
+      "url": "https://penpot-mcp.devpanl.dev/mcp"
+    },
     "affine": {
       "command": "affine-mcp",
       "args": [],

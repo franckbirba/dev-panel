@@ -3,6 +3,7 @@ name: Deploy to Production
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -14,8 +15,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,33 +43,86 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  deploy-services:
+  deploy:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy configs to services node
+      - name: Generate .env on server
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: >-
+            ADMIN_API_KEY,GITHUB_TOKEN_DEPLOY,TRAEFIK_AUTH,
+            AFFINE_DB_PASSWORD,PLANE_DB_PASSWORD,PLANE_SECRET_KEY,
+            PLANE_MINIO_ROOT_USER,PLANE_MINIO_ROOT_PASSWORD,
+            PENPOT_SECRET_KEY,PENPOT_DB_PASSWORD,
+            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
           script: |
-            mkdir -p ~/dev-panel/traefik
+            mkdir -p ~/dev-panel/nginx ~/dev-panel/traefik
 
-      - name: Copy compose and traefik configs
+            cat > ~/dev-panel/.env << 'ENVEOF'
+            NODE_ENV=production
+            DOMAIN=devpanel.dev
+            ACME_EMAIL=franckbirba@gmail.com
+            ADMIN_API_KEY=$ADMIN_API_KEY
+            ALLOWED_ORIGINS=https://devpanl.dev
+            TRAEFIK_AUTH=$TRAEFIK_AUTH
+            GITHUB_TOKEN=$GITHUB_TOKEN_DEPLOY
+            ENABLE_MONITORING=true
+            ENABLE_BULLMQ=true
+            REDIS_HOST=redis
+            REDIS_PORT=6379
+            SHELLY_TELEGRAM_WEBHOOK=
+            TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
+            TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
+            PENPOT_URL=
+            AFFINE_URL=http://affine:3010
+            AFFINE_DB_PASSWORD=$AFFINE_DB_PASSWORD
+            PLANE_DB_PASSWORD=$PLANE_DB_PASSWORD
+            PLANE_SECRET_KEY=$PLANE_SECRET_KEY
+            PLANE_MINIO_ROOT_USER=$PLANE_MINIO_ROOT_USER
+            PLANE_MINIO_ROOT_PASSWORD=$PLANE_MINIO_ROOT_PASSWORD
+            PENPOT_SECRET_KEY=$PENPOT_SECRET_KEY
+            PENPOT_DB_PASSWORD=$PENPOT_DB_PASSWORD
+            ENVEOF
+        env:
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+          GITHUB_TOKEN_DEPLOY: ${{ secrets.GH_DEPLOY_TOKEN }}
+          TRAEFIK_AUTH: ${{ secrets.TRAEFIK_AUTH }}
+          AFFINE_DB_PASSWORD: ${{ secrets.AFFINE_DB_PASSWORD }}
+          PLANE_DB_PASSWORD: ${{ secrets.PLANE_DB_PASSWORD }}
+          PLANE_SECRET_KEY: ${{ secrets.PLANE_SECRET_KEY }}
+          PLANE_MINIO_ROOT_USER: ${{ secrets.PLANE_MINIO_ROOT_USER }}
+          PLANE_MINIO_ROOT_PASSWORD: ${{ secrets.PLANE_MINIO_ROOT_PASSWORD }}
+          PENPOT_SECRET_KEY: ${{ secrets.PENPOT_SECRET_KEY }}
+          PENPOT_DB_PASSWORD: ${{ secrets.PENPOT_DB_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Deploy configs
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "docker-compose.prod.yml,infra/traefik.yml,infra/dynamic.yml"
-          target: ~/dev-panel/
+          source: >-
+            infra/docker-compose.yml,
+            infra/docker-compose.plane.yml,
+            infra/docker-compose.penpot.yml,
+            infra/docker-compose.monitoring.yml,
+            infra/traefik.yml,
+            infra/dynamic.yml,
+            infra/nginx/spa.conf,
+            Dockerfile
+          target: ~/deploy-tmp/
           strip_components: 0
 
-      - name: Pull and restart services
+      - name: Move configs and start services
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -78,22 +130,43 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd ~/dev-panel
-            cp infra/traefik.yml traefik/traefik.yml
-            cp infra/dynamic.yml traefik/dynamic.yml
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            sleep 5
-            docker exec devpanel-api curl -sf http://localhost:3030/api/health || (echo "Health check failed!" && exit 1)
+
+            # Move configs from deploy-tmp
+            cp ~/deploy-tmp/infra/docker-compose.yml .
+            cp ~/deploy-tmp/infra/docker-compose.plane.yml .
+            cp ~/deploy-tmp/infra/docker-compose.penpot.yml .
+            cp ~/deploy-tmp/infra/docker-compose.monitoring.yml .
+            cp ~/deploy-tmp/infra/traefik.yml traefik/
+            cp ~/deploy-tmp/infra/dynamic.yml traefik/
+            cp ~/deploy-tmp/infra/nginx/spa.conf nginx/
+            cp ~/deploy-tmp/Dockerfile .
+            rm -rf ~/deploy-tmp
+
+            # Pull and start all stacks
+            docker compose pull
+            docker compose build devpanel
+            docker compose up -d --remove-orphans
+            docker compose -f docker-compose.plane.yml up -d
+            docker compose -f docker-compose.penpot.yml up -d
+            docker compose -f docker-compose.monitoring.yml up -d
+
+            # Wait and verify
+            sleep 15
+            docker compose ps
+            docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
+
+            # Cleanup
             docker image prune -f
 
   deploy-agents:
     needs: build
     runs-on: ubuntu-latest
+    if: vars.DEPLOY_AGENTS == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy Claude configs to agents node
+      - name: Deploy Claude configs
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_AGENTS_HOST }}
@@ -103,22 +176,15 @@ jobs:
           target: ~/deploy-tmp/
           strip_components: 0
 
-      - name: Install configs and verify connectivity
+      - name: Install configs
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_AGENTS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            # Claude Code settings
             mkdir -p ~/.claude ~/dev-panel
             cp ~/deploy-tmp/infra/claude/settings.json ~/.claude/settings.json
             cp ~/deploy-tmp/infra/claude/mcp.json ~/dev-panel/.mcp.json
             rm -rf ~/deploy-tmp
-
-            # Update Claude Code and OpenClaw
             npm update -g @anthropic-ai/claude-code openclaw 2>/dev/null || true
-
-            # Verify connectivity to services node
-            curl -sf http://10.0.0.2:3030/api/health || echo "⚠️ DevPanel API unreachable"
-            curl -sf http://10.0.0.2:3010/ || echo "⚠️ AFFiNE unreachable"
