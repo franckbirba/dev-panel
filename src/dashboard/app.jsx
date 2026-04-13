@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Router, Route, Switch, useLocation } from "wouter";
 import "./app.css";
 import { TabBar } from "@/components/tab-bar";
 import { CommandDock } from "@/components/command-dock";
@@ -9,8 +8,16 @@ import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
 
+// Derive initial tab from URL
+function getInitialTab() {
+  const path = window.location.pathname;
+  if (path.includes("/queues")) return "queues";
+  if (path.includes("/settings")) return "settings";
+  return "inbox";
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState("inbox");
+  const [activeTab, setActiveTab] = useState(getInitialTab);
   const [filter, setFilter] = useState(null);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("devpanel_api_key") || "");
   const [sseConnected, setSseConnected] = useState(false);
@@ -21,15 +28,14 @@ function App() {
   const sseRef = useRef(null);
 
   const apiUrl = window.location.origin;
-  const [, navigate] = useLocation();
 
   function handleTabChange(tab) {
-    if (tab === "queues") {
-      navigate("/queues");
-    } else {
-      setActiveTab(tab);
-      navigate("/");
-    }
+    setActiveTab(tab);
+    // Update URL for bookmarking without full navigation
+    const path = tab === "queues" ? "/dashboard/queues"
+      : tab === "settings" ? "/dashboard/settings"
+      : "/dashboard/";
+    window.history.replaceState(null, "", path);
   }
 
   function handleApiKeySubmit(e) {
@@ -98,7 +104,6 @@ function App() {
         setRefreshKey((k) => k + 1);
       });
 
-      // Queue health SSE
       es.addEventListener("queue:update", (e) => {
         const data = JSON.parse(e.data);
         setQueueHealth(data);
@@ -138,45 +143,28 @@ function App() {
     : {};
 
   return (
-    <Router base="/dashboard">
-      <Switch>
-        <Route path="/queues">
-          <div className="flex flex-col h-screen bg-background">
-            <TabBar
-              activeTab="queues"
-              onTabChange={handleTabChange}
-              stats={tabStats}
-              activeFilter={filter}
-              onFilterChange={setFilter}
-            />
-            <div className="flex-1 overflow-hidden">
-              <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />
-            </div>
-          </div>
-        </Route>
-        <Route>
-          <div className="flex flex-col h-screen bg-background">
-            <TabBar
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
-              stats={tabStats}
-              activeFilter={filter}
-              onFilterChange={setFilter}
-            />
-            <div className="flex-1 overflow-hidden">
-              {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
-              {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
-              {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
-            </div>
-            <CommandDock
-              projectName={stats?.project}
-              sseConnected={sseConnected}
-              ticketCount={stats?.stats?.total}
-            />
-          </div>
-        </Route>
-      </Switch>
-    </Router>
+    <div className="flex flex-col h-screen bg-background">
+      <TabBar
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        stats={tabStats}
+        activeFilter={filter}
+        onFilterChange={setFilter}
+      />
+      <div className="flex-1 overflow-hidden">
+        {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
+        {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
+        {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
+        {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
+      </div>
+      {activeTab !== "queues" && (
+        <CommandDock
+          projectName={stats?.project}
+          sseConnected={sseConnected}
+          ticketCount={stats?.stats?.total}
+        />
+      )}
+    </div>
   );
 }
 

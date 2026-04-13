@@ -1,5 +1,3 @@
-import { useLocation } from "wouter";
-
 export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange }) {
   const pendingCount = stats?.pending || 0;
   const bugCount = stats?.bugs || 0;

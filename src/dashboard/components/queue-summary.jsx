@@ -1,6 +1,6 @@
 import { StatusChip } from "@/components/status-chip";
 import { Badge } from "@/components/ui/badge";
-import { Link } from "wouter";
+// Link removed — navigation handled by parent tab state
 
 const statusStyles = {
   healthy: "healthy",
@@ -65,9 +65,9 @@ export function QueueSummary({ queueHealth }) {
         <h3 className="text-foreground text-[13px] font-semibold tracking-wide uppercase">Queues</h3>
         <div className="flex-1 h-px bg-border/50" />
         <StatusChip type={statusStyles[queueHealth.status] || "pending"} label={queueHealth.status} />
-        <Link to="/queues" className="text-info text-[11px] font-mono hover:underline cursor-pointer">
-          Open full view →
-        </Link>
+        <span className="text-info text-[11px] font-mono cursor-default">
+          See Queues tab →
+        </span>
       </div>
       <div className="flex flex-col">
         {(queueHealth.queues || []).map((q) => (
