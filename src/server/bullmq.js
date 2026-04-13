@@ -21,7 +21,15 @@ const QUEUES = {
   tickets: 'devpanel-tickets',
   github_sync: 'devpanel-github-sync',
   notifications: 'devpanel-notifications',
-  dlq: 'devpanel-dead-letter' // Dead Letter Queue
+  agents: 'devpanel-agents',
+  dlq: 'devpanel-dead-letter'
+};
+
+const PRIORITY_MAP = {
+  p0: 1,   // urgent
+  p1: 5,   // high
+  p2: 10,  // normal
+  p3: 20   // low
 };
 
 /**
@@ -330,4 +338,4 @@ export function resolveQueueName(name) {
   return match ? match[1] : null;
 }
 
-export { QUEUES };
+export { QUEUES, PRIORITY_MAP };
