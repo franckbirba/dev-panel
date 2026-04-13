@@ -128,18 +128,14 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
           {/* Data */}
           <div className="mt-4">
             <span className="text-muted-foreground text-[11px] font-mono font-semibold uppercase tracking-wide">Data</span>
-            <pre className="mt-2 p-3 bg-background rounded-lg text-[11px] font-mono text-foreground/80 whitespace-pre-wrap wrap-break-word">
-              {JSON.stringify(job.data, null, 2)}
-            </pre>
+            <pre className="mt-2 p-3 bg-background rounded-lg text-[11px] font-mono text-foreground/80 whitespace-pre-wrap wrap-break-word">{JSON.stringify(job.data, null, 2)}</pre>
           </div>
 
           {/* Stacktrace */}
           {job.stacktrace && job.stacktrace.length > 0 && (
             <div className="mt-4">
               <span className="text-error text-[11px] font-mono font-semibold uppercase tracking-wide">Stacktrace</span>
-              <pre className="mt-2 p-3 bg-error/5 border border-error/20 rounded-lg text-[11px] font-mono text-error/80 overflow-x-auto whitespace-pre-wrap">
-                {job.stacktrace.join("\n")}
-              </pre>
+              <pre className="mt-2 p-3 bg-error/5 border border-error/20 rounded-lg text-[11px] font-mono text-error/80 whitespace-pre-wrap wrap-break-word">{job.stacktrace.join("\n")}</pre>
             </div>
           )}
 
@@ -155,9 +151,7 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
           {job.return_value != null && (
             <div className="mt-4">
               <span className="text-success text-[11px] font-mono font-semibold uppercase tracking-wide">Return Value</span>
-              <pre className="mt-2 p-3 bg-success/5 border border-success/20 rounded-lg text-[11px] font-mono text-success/80 whitespace-pre-wrap wrap-break-word">
-                {JSON.stringify(job.return_value, null, 2)}
-              </pre>
+              <pre className="mt-2 p-3 bg-success/5 border border-success/20 rounded-lg text-[11px] font-mono text-success/80 whitespace-pre-wrap wrap-break-word">{JSON.stringify(job.return_value, null, 2)}</pre>
             </div>
           )}
         </div>
