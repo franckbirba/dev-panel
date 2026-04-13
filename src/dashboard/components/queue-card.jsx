@@ -36,15 +36,17 @@ export function QueueCard({ queue, selected, onSelect, apiUrl, adminKey }) {
     setActing(false);
   }
 
+  const hasActivity = (c.waiting || 0) + (c.active || 0) + (c.delayed || 0) + (c.failed || 0) > 0;
+
   return (
     <button
       onClick={() => onSelect(shortName)}
-      className={`card-glow rounded-xl p-5 text-left cursor-pointer transition-all ${
+      className={`card-glow rounded-xl p-3 text-left cursor-pointer transition-all shrink-0 min-w-[200px] ${
         selected ? "ring-2 ring-ring/60" : "hover:ring-1 hover:ring-ring/30"
       }`}
     >
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-foreground text-sm font-mono font-semibold">{shortName}</span>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-foreground text-[12px] font-mono font-semibold truncate">{shortName}</span>
         <div className="flex-1" />
         <StatusChip type={statusStyles[queue.status] || "pending"} label={queue.status} />
         {queue.paused && (
@@ -53,11 +55,11 @@ export function QueueCard({ queue, selected, onSelect, apiUrl, adminKey }) {
           </Badge>
         )}
       </div>
-      <div className="grid grid-cols-5 gap-2">
-        {countEntries.map(({ key, label, color }) => (
-          <div key={key} className="flex flex-col items-center bg-secondary/50 rounded-lg py-2">
-            <span className={`text-lg font-bold ${color}`}>{c[key] || 0}</span>
-            <span className="text-muted-foreground/60 text-[9px] font-mono mt-0.5">{label}</span>
+      <div className="flex gap-2">
+        {countEntries.filter(({ key }) => hasActivity || key === "waiting" || key === "active" || key === "failed").map(({ key, label, color }) => (
+          <div key={key} className="flex flex-col items-center bg-secondary/50 rounded-md py-1.5 px-2 min-w-[36px]">
+            <span className={`text-sm font-bold ${color}`}>{c[key] || 0}</span>
+            <span className="text-muted-foreground/60 text-[8px] font-mono">{label}</span>
           </div>
         ))}
       </div>

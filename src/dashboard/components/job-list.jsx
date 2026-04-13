@@ -52,8 +52,8 @@ export function JobList({ queueName, apiUrl, apiKey, onSelectJob }) {
   }, [queueName, activeState, apiUrl, apiKey]);
 
   return (
-    <div className="card-glow rounded-xl p-5">
-      <Tabs value={activeState} onValueChange={setActiveState}>
+    <div className="card-glow rounded-xl p-5 h-full flex flex-col overflow-hidden">
+      <Tabs value={activeState} onValueChange={setActiveState} className="flex flex-col flex-1 min-h-0">
         <TabsList variant="line">
           {JOB_STATES.map((state) => (
             <TabsTrigger key={state} value={state} className="text-[12px] font-mono capitalize">
@@ -63,7 +63,7 @@ export function JobList({ queueName, apiUrl, apiKey, onSelectJob }) {
         </TabsList>
         {JOB_STATES.map((state) => (
           <TabsContent key={state} value={state}>
-            <ScrollArea className="max-h-[400px]">
+            <ScrollArea className="flex-1 min-h-0">
               {loading ? (
                 <div className="flex items-center justify-center py-8">
                   <span className="text-muted-foreground/50 text-xs font-mono">Loading...</span>
