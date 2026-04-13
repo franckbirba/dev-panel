@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
 import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
+import { registerCrons } from './crons.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -216,6 +217,9 @@ worker.on('error', (err) => {
 console.log(`[Worker] Starting on ${REDIS_HOST}:${REDIS_PORT} with concurrency ${CONCURRENCY}`);
 console.log(`[Worker] Project root: ${PROJECT_ROOT}`);
 console.log(`[Worker] Mode file: ${MODE_FILE}`);
+
+// Register crons
+registerCrons().catch(err => console.error('[Crons] Registration failed:', err));
 
 // Export for api.js
 export { activeProcesses, worker, getMode };
