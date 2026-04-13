@@ -51,6 +51,9 @@ export function createServer(storagePath = './storage') {
   // Routes
   app.use('/api', createRouter(config));
 
+  // Root redirect to dashboard
+  app.get('/', (req, res) => res.redirect('/dashboard'));
+
   // Dashboard SPA
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const dashboardDistDir = path.join(__dirname, '..', '..', 'dist', 'dashboard');
