@@ -71,8 +71,8 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
 
   return (
     <div className="card-glow rounded-xl p-5">
-      <div className="flex items-center gap-3 mb-4">
-        <h3 className="text-foreground text-sm font-mono font-semibold">Job #{job.id}</h3>
+      <div className="flex items-center gap-3 mb-4 min-w-0">
+        <h3 className="text-foreground text-sm font-mono font-semibold truncate shrink-0">{job.name || `Job #${job.id}`}</h3>
         <StatusChip type={statusStyles[job.status] || "pending"} label={job.status} />
         <div className="flex-1" />
         {adminKey && (
