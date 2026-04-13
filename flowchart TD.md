@@ -2,7 +2,7 @@
 flowchart TD
 %% ─── INPUTS ───────────────────────────────────────────────────────────────
 FRANCK(["👤 Franck<br/>(Telegram)"])
-USERS(["👥 Users<br/>(DevPanel)"])
+USERS(["👥 Users<br/>(DevPanel Widget)"])
 
 %% ─── HUB ──────────────────────────────────────────────────────────────────
 SHELLY["🦞 SHELLY<br/>OpenClaw Hub<br/>─────────────<br/>Triage & Orchestration"]
@@ -10,9 +10,11 @@ SHELLY["🦞 SHELLY<br/>OpenClaw Hub<br/>─────────────
 %% ─── SOURCES DE CONTEXTE ──────────────────────────────────────────────────
 AFFINE[("📚 AFFiNE<br/>Specs · ADRs<br/>Docs conception<br/>Sprint status")]
 PENPOT[("🎨 Penpot<br/>Maquettes<br/>Design tokens<br/>Frames status")]
-DEVPANEL[("📋 DevPanel<br/>Tâches · Bugs<br/>Feature requests<br/>Statuts agents")]
+PLANE[("✈️ Plane<br/>Work items · Cycles<br/>Modules · Pages<br/>Sprints · Backlog")]
+DEVPANEL[("📋 DevPanel<br/>Bug reports<br/>Feature requests<br/>(user-facing widget)")]
 GITHUB[("🐙 GitHub<br/>Issues · PRs<br/>Reviews · CI")]
 PGVECTOR[("🧠 pgvector<br/>Mémoire sémantique<br/>Décisions passées")]
+MINIO[("📦 MinIO<br/>Assets · Uploads<br/>Screenshots")]
 
 %% ─── BULLMQ ────────────────────────────────────────────────────────────────
 BULLMQ{{"⚡ BullMQ<br/>Queues"}}
@@ -38,14 +40,15 @@ VAL_SECU{"⚠️ Valide<br/>Modèle sécu"}
 %% ─── INPUTS → SHELLY ───────────────────────────────────────────────────────
 FRANCK -->|"message toute la journée"| SHELLY
 USERS -->|"bug / feature request"| DEVPANEL
-DEVPANEL -->|"MCP : nouveau ticket"| SHELLY
+DEVPANEL -->|"API : nouveau ticket"| SHELLY
 
 %% ─── SHELLY ↔ SOURCES ──────────────────────────────────────────────────────
 SHELLY <-->|"MCP read/write"| AFFINE
 SHELLY <-->|"MCP read"| PENPOT
-SHELLY <-->|"MCP read/write"| DEVPANEL
+SHELLY <-->|"MCP read/write"| PLANE
 SHELLY <-->|"MCP read/write"| GITHUB
 SHELLY <-->|"query/store"| PGVECTOR
+SHELLY -->|"DevPanel API"| DEVPANEL
 
 %% ─── SHELLY → BULLMQ ───────────────────────────────────────────────────────
 SHELLY -->|"enqueue job\nselon type"| BULLMQ
@@ -61,7 +64,7 @@ BULLMQ -->|"secu:check<br/>bloquant"| SECU
 
 %% ─── AGENTS ↔ SOURCES ──────────────────────────────────────────────────────
 PM <-->|"MCP"| AFFINE
-PM <-->|"MCP"| DEVPANEL
+PM <-->|"MCP"| PLANE
 PM -->|"MCP"| GITHUB
 
 ARCHITECT <-->|"MCP write ADR"| AFFINE
@@ -72,7 +75,7 @@ DESIGNER <-->|"MCP read specs"| AFFINE
 
 BUILDER <-->|"MCP read specs"| AFFINE
 BUILDER <-->|"MCP read frames"| PENPOT
-BUILDER <-->|"MCP update"| DEVPANEL
+BUILDER <-->|"MCP update"| PLANE
 BUILDER -->|"PR"| GITHUB
 
 REVIEWER <-->|"MCP"| GITHUB
@@ -80,15 +83,16 @@ REVIEWER <-->|"MCP read"| AFFINE
 REVIEWER <-->|"MCP read"| PENPOT
 
 QA <-->|"MCP"| GITHUB
-QA <-->|"MCP update"| DEVPANEL
+QA <-->|"MCP update"| PLANE
 
 SECU <-->|"MCP"| AFFINE
-SECU <-->|"Permify API"| DEVPANEL
+SECU <-->|"Permify API"| PLANE
 
 %% ─── CLAUDE CODE ────────────────────────────────────────────────────────────
-CLAUDECODE <-->|"MCP : affine<br/>penpot · github<br/>devpanel"| SHELLY
+CLAUDECODE <-->|"MCP : affine<br/>penpot · plane<br/>github"| SHELLY
 CLAUDECODE <-->|"read/write"| AFFINE
 CLAUDECODE <-->|"read frames"| PENPOT
+CLAUDECODE <-->|"work items"| PLANE
 CLAUDECODE -->|"PR / commit"| GITHUB
 
 %% ─── LOOPS DESIGN ───────────────────────────────────────────────────────────
@@ -114,9 +118,12 @@ VAL_SECU -->|"🔴 ping Telegram"| FRANCK
 
 %% ─── FIN DE LOOP ────────────────────────────────────────────────────────────
 REVIEWER -->|"approved"| BULLMQ
-QA -->|"tests OK"| DEVPANEL
+QA -->|"tests OK"| PLANE
 QA -->|"notifie user"| USERS
 QA -->|"✅ done"| FRANCK
+
+%% ─── INFRA ──────────────────────────────────────────────────────────────────
+PLANE <-->|"presigned URLs"| MINIO
 
 %% ─── STYLES ─────────────────────────────────────────────────────────────────
 classDef hub fill:#1a1a2e,color:#e94560,stroke:#e94560,stroke-width:2px,font-weight:bold
@@ -126,12 +133,14 @@ classDef queue fill:#e94560,color:#fff,stroke:#c73652,font-weight:bold
 classDef agent fill:#16213e,color:#a8dadc,stroke:#457b9d
 classDef validation fill:#f4a261,color:#1a1a2e,stroke:#e76f51,font-weight:bold
 classDef code fill:#2d6a4f,color:#95d5b2,stroke:#52b788
+classDef storage fill:#264653,color:#e9c46a,stroke:#2a9d8f
 
 class SHELLY hub
 class FRANCK,USERS human
-class AFFINE,PENPOT,DEVPANEL,GITHUB,PGVECTOR source
+class AFFINE,PENPOT,PLANE,DEVPANEL,GITHUB,PGVECTOR source
 class BULLMQ queue
 class PM,ARCHITECT,DESIGNER,BUILDER,REVIEWER,QA,SECU agent
 class VAL_CONCEPTION,VAL_MAQUETTE,VAL_ARCHI,VAL_SECU validation
 class CLAUDECODE code
+class MINIO storage
 ```

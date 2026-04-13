@@ -1,5 +1,14 @@
 {
   "mcpServers": {
+    "plane": {
+      "command": "uvx",
+      "args": ["--python", "3.12", "plane-mcp-server", "stdio"],
+      "env": {
+        "PLANE_API_KEY": "plane_api_e0f73340ecb248f6a51a1e39a6b880cd",
+        "PLANE_WORKSPACE_SLUG": "devpanl",
+        "PLANE_BASE_URL": "https://plane.devpanl.dev"
+      }
+    },
     "affine": {
       "command": "affine-mcp",
       "args": [],
