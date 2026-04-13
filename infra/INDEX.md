@@ -64,6 +64,7 @@ docker-compose.yml:
 
 **Quick links:**
 - 📖 [Main Guide](docs/README.md)
+- 🏗️ [Architecture Diagrams](docs/ARCHITECTURE.md)
 - 🚀 [Migration Guide](docs/MIGRATION.md)
 - ✅ [Pre-Deploy Checklist](docs/CHECKLIST.md)
 
@@ -151,10 +152,11 @@ make deploy-monitoring # Deploy monitoring only
 Read in this order:
 
 1. **[docs/README.md](docs/README.md)** — Complete infrastructure guide
-2. **[docs/MIGRATION.md](docs/MIGRATION.md)** — If migrating from old setup
-3. **[docs/CHECKLIST.md](docs/CHECKLIST.md)** — Before every deploy
-4. **[docs/SECRETS-GUIDE.md](docs/SECRETS-GUIDE.md)** — Secret management
-5. **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Security hardening
+2. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — Full architecture diagrams
+3. **[docs/MIGRATION.md](docs/MIGRATION.md)** — If migrating from old setup
+4. **[docs/CHECKLIST.md](docs/CHECKLIST.md)** — Before every deploy
+5. **[docs/SECRETS-GUIDE.md](docs/SECRETS-GUIDE.md)** — Secret management
+6. **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Security hardening
 
 ## 🔧 Key Files
 
