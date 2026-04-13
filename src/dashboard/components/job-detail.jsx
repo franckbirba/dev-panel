@@ -70,8 +70,8 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
   }
 
   return (
-    <div className="card-glow rounded-xl p-5">
-      <div className="flex items-center gap-3 mb-4 min-w-0">
+    <div className="card-glow rounded-xl p-5 max-h-[70vh] flex flex-col overflow-hidden">
+      <div className="flex items-center gap-3 mb-4 min-w-0 shrink-0">
         <h3 className="text-foreground text-sm font-mono font-semibold truncate shrink-0">{job.name || `Job #${job.id}`}</h3>
         <StatusChip type={statusStyles[job.status] || "pending"} label={job.status} />
         <div className="flex-1" />
@@ -95,7 +95,7 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-sm cursor-pointer">x</button>
       </div>
 
-      <ScrollArea className="max-h-[60vh]">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col">
           <DetailRow label="Name">{job.name}</DetailRow>
           <DetailRow label="Attempts">
