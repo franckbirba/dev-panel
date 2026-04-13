@@ -201,7 +201,7 @@ dev-panel exposes an MCP server for AI assistants (Claude Code, Cursor, etc.):
 
 ## Production Deployment
 
-Complete production infrastructure with Traefik, Let's Encrypt, AFFiNE, Plane, Penpot, and monitoring. See **[infra/README.md](infra/README.md)** for full docs.
+Complete production infrastructure with Traefik, Let's Encrypt, AFFiNE, Plane, Penpot, and monitoring. See **[infra/docs/README.md](infra/docs/README.md)** for full docs.
 
 ### Quick Deploy
 

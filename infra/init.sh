@@ -74,10 +74,11 @@ ENVEOF
 # ── Generate htpasswd for Traefik (only in production) ──────────────────────
 
 if [ "$MODE" = "production" ]; then
-  HTPASSWD_FILE="infra/.htpasswd"
+  HTPASSWD_FILE="infra/config/.htpasswd"
   if [ ! -f "$HTPASSWD_FILE" ]; then
     HTPASSWD_USER="${TRAEFIK_USER:-admin}"
     HTPASSWD_PASS="${TRAEFIK_PASS:-$(openssl rand -base64 12)}"
+    mkdir -p infra/config
     echo "$HTPASSWD_USER:$(openssl passwd -apr1 "$HTPASSWD_PASS")" > "$HTPASSWD_FILE"
     echo "✓ Created $HTPASSWD_FILE (user: $HTPASSWD_USER, pass: $HTPASSWD_PASS)"
   fi

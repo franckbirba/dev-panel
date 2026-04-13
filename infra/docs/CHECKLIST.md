@@ -166,14 +166,14 @@ Run this before deploying to catch issues early.
   grep "make deploy-all" README.md
   ```
 
-- [ ] **infra/README.md complete**
+- [ ] **infra/docs/README.md complete**
   ```bash
-  wc -l infra/README.md  # Should be ~197
+  wc -l infra/docs/README.md  # Should be ~197
   ```
 
 - [ ] **Migration guide exists**
   ```bash
-  ls -lh infra/MIGRATION.md
+  ls -lh infra/docs/MIGRATION.md
   ```
 
 ## Run All Checks

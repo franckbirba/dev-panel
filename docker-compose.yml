@@ -37,9 +37,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-certs:/letsencrypt
-      - ./infra/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./infra/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      - ./infra/.htpasswd:/etc/traefik/.htpasswd:ro
+      - ./infra/config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/config/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./infra/config/.htpasswd:/etc/traefik/.htpasswd:ro
     networks:
       - devpanel_net
     labels:

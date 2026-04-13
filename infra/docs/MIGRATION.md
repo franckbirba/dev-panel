@@ -15,7 +15,7 @@
 - **1 docker-compose.yml** with profiles (`core`, `plane`, `penpot`, `monitoring`, `all`)
 - **1 init script** (`infra/init.sh`) — idempotent, preserves secrets
 - **1 Makefile** — all commands in one place
-- **1 README** (`infra/README.md`) — complete docs
+- **1 README** (`infra/docs/README.md`) — complete docs
 - **Build locally → push to GHCR → pull in prod** — no more building on server
 - **Same .env schema everywhere** — init.sh works for local and production
 - **GitHub Action reuses Makefile** — no duplication
@@ -46,7 +46,7 @@ git push origin main    # Auto-builds + deploys
 ### New Files
 - `Makefile` — deployment automation
 - `infra/init.sh` — unified .env generator
-- `infra/README.md` — complete infra docs
+- `infra/docs/README.md` — complete infra docs
 - `.env.example` — clean template
 - `docker-compose.yml` (replaced) — unified compose with profiles
 
@@ -155,6 +155,6 @@ A: Merged into `docker-compose.yml` with profiles. Use `--profile` flag.
 ## Support
 
 If stuck, check:
-- `infra/README.md` — complete reference
+- `infra/docs/README.md` — complete reference
 - `make help` — all available commands
 - Old `.bak` files — reference for what worked before
