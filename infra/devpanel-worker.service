@@ -1,0 +1,32 @@
+[Unit]
+Description=DevPanel Agent Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/projects/dev-panel
+ExecStart=/usr/bin/node src/worker/index.js
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Environment
+Environment=NODE_ENV=production
+Environment=REDIS_HOST=77.42.46.87
+Environment=REDIS_PORT=6379
+Environment=WORKER_CONCURRENCY=3
+Environment=WORKER_API_PORT=3099
+Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devpanel-worker
+
+[Install]
+WantedBy=multi-user.target
