@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Router, Route, Switch } from "wouter";
+import { Router, Route, Switch, useLocation } from "wouter";
 import "./app.css";
 import { TabBar } from "@/components/tab-bar";
 import { CommandDock } from "@/components/command-dock";
@@ -21,6 +21,16 @@ function App() {
   const sseRef = useRef(null);
 
   const apiUrl = window.location.origin;
+  const [, navigate] = useLocation();
+
+  function handleTabChange(tab) {
+    if (tab === "queues") {
+      navigate("/queues");
+    } else {
+      setActiveTab(tab);
+      navigate("/");
+    }
+  }
 
   function handleApiKeySubmit(e) {
     e.preventDefault();
@@ -131,13 +141,24 @@ function App() {
     <Router base="/dashboard">
       <Switch>
         <Route path="/queues">
-          <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />
+          <div className="flex flex-col h-screen bg-background">
+            <TabBar
+              activeTab="queues"
+              onTabChange={handleTabChange}
+              stats={tabStats}
+              activeFilter={filter}
+              onFilterChange={setFilter}
+            />
+            <div className="flex-1 overflow-hidden">
+              <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />
+            </div>
+          </div>
         </Route>
         <Route>
           <div className="flex flex-col h-screen bg-background">
             <TabBar
               activeTab={activeTab}
-              onTabChange={setActiveTab}
+              onTabChange={handleTabChange}
               stats={tabStats}
               activeFilter={filter}
               onFilterChange={setFilter}

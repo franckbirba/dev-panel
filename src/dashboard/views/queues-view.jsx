@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "wouter";
 import { QueueCard } from "@/components/queue-card";
 import { JobList } from "@/components/job-list";
 import { JobDetail } from "@/components/job-detail";
@@ -14,26 +13,18 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
   const isUnreachable = !queueHealth || queueHealth.status === "unreachable";
 
   return (
-    <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <div className="flex items-center h-12 border-b border-border bg-surface px-4 gap-4">
-        <Link to="/" className="text-muted-foreground hover:text-foreground text-sm font-mono cursor-pointer">
-          ← Dashboard
-        </Link>
-        <span className="text-border text-[10px]">·</span>
-        <h1 className="text-foreground text-[13px] font-semibold tracking-wide">Queue Monitor</h1>
-        <div className="flex-1" />
-        <div className="flex items-center gap-1.5">
-          <span className={`w-1 h-1 rounded-full ${sseConnected ? "bg-success animate-pulse" : "bg-error"}`} />
-          <span className="text-muted-foreground/40 text-[10px] font-mono">
-            {sseConnected ? "live" : "disconnected"}
-          </span>
+    <ScrollArea className="h-full">
+      <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
+        <div className="flex items-center gap-3">
+          <h2 className="text-foreground text-[13px] font-semibold tracking-wide uppercase">Queue Monitor</h2>
+          <div className="flex-1 h-px bg-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? "bg-success animate-pulse" : "bg-error"}`} />
+            <span className="text-muted-foreground/40 text-[10px] font-mono">
+              {sseConnected ? "live" : "disconnected"}
+            </span>
+          </div>
         </div>
-      </div>
-
-      {/* Content */}
-      <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">
           {isUnreachable ? (
             <div className="card-glow rounded-xl p-12">
               <div className="empty-state flex flex-col items-center justify-center gap-3 rounded-lg">
@@ -80,8 +71,7 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
               )}
             </>
           )}
-        </div>
-      </ScrollArea>
-    </div>
+      </div>
+    </ScrollArea>
   );
 }

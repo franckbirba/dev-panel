@@ -95,7 +95,7 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-sm cursor-pointer">x</button>
       </div>
 
-      <ScrollArea className="max-h-[500px]">
+      <ScrollArea className="max-h-[60vh]">
         <div className="flex flex-col">
           <DetailRow label="Name">{job.name}</DetailRow>
           <DetailRow label="Attempts">

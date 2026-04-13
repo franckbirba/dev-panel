@@ -1,3 +1,5 @@
+import { useLocation } from "wouter";
+
 export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange }) {
   const pendingCount = stats?.pending || 0;
   const bugCount = stats?.bugs || 0;
@@ -6,6 +8,7 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
   const tabs = [
     { id: "inbox", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },
+    { id: "queues", label: "Queues" },
     { id: "settings", label: "Settings" },
   ];
 
