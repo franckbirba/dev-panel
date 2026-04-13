@@ -7,6 +7,38 @@
       "headers": {
         "Authorization": "Bearer ut_PLgvpr1_1peDXE6silzkTe1Wrxw9fAqfrxDtQ3bhvQQ"
       }
+    },
+    "plane": {
+      "command": "uvx",
+      "args": ["--python", "3.12", "plane-mcp-server"],
+      "env": {
+        "PLANE_BASE_URL": "https://plane.devpanl.dev",
+        "PLANE_WORKSPACE_SLUG": "devpanl"
+      },
+      "note": "Plane project management — create work items, manage sprints, track issues"
+    },
+    "penpot": {
+      "type": "streamable-http",
+      "url": "https://penpot-mcp.devpanl.dev/mcp",
+      "note": "Penpot design tool — read design tokens, mockups, extract component specs"
+    },
+    "dev-panel": {
+      "command": "node",
+      "args": ["/Users/franckbirba/DEV/dev-panel/src/mcp/server.js"],
+      "note": "DevPanel bug tracking — list tickets, update status, ask clarifications"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@automatalabs/mcp-server-playwright"],
+      "note": "Playwright browser automation — run E2E tests, take screenshots, interact with UI"
+    },
+    "obsidian": {
+      "command": "npx",
+      "args": ["-y", "@marekmarek/mcp-obsidian"],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/Users/franckbirba/DEV/Obsidian Vault"
+      },
+      "note": "Obsidian vault access — read/write notes, search knowledge base"
     }
   }
 }
