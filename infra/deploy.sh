@@ -30,7 +30,9 @@ $SSH $USER@$HOST "docker info > /dev/null 2>&1" || { echo "❌ Docker not reacha
 
 # Ensure .env exists on server
 $SSH $USER@$HOST "test -f $DIR/.env" || {
-  echo "❌ No .env on server. Run GitHub Actions deploy first, or create manually."
+  echo "⚠️  No .env on server. Generating from template..."
+  $SSH $USER@$HOST "cd $DIR && bash infra/gen-env.sh"
+  echo "⚠️  Review $DIR/.env on server and fill in missing secrets before continuing."
   exit 1
 }
 
