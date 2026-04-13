@@ -15,6 +15,35 @@ import {
   listMessages,
   addMessage
 } from '../server/db.js';
+import { Queue } from 'bullmq';
+import { createRequire as createRequireMcp } from 'module';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+
+const requireMcp = createRequireMcp(import.meta.url);
+const RedisMcp = requireMcp('ioredis');
+
+const REDIS_HOST = process.env.REDIS_HOST || '77.42.46.87';
+const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
+const MODE_FILE = process.env.MODE_FILE || join(process.env.HOME || '/home/deploy', '.shelly-mode.json');
+const WORKER_API = process.env.WORKER_API || 'http://localhost:3099';
+
+const PRIORITY_MAP = { p0: 1, p1: 5, p2: 10, p3: 20 };
+
+let agentsQueue = null;
+function getAgentsQueue() {
+  if (!agentsQueue) {
+    agentsQueue = new Queue('devpanel-agents', {
+      connection: new RedisMcp({
+        host: REDIS_HOST,
+        port: REDIS_PORT,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false
+      })
+    });
+  }
+  return agentsQueue;
+}
 
 const STORAGE_PATH = process.env.DEVPANEL_STORAGE || './storage';
 
@@ -198,6 +227,148 @@ server.tool(
     };
 
     return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+  }
+);
+
+server.tool(
+  'enqueue_job',
+  'Enqueue a job for an agent in the BullMQ queue',
+  {
+    agent: z.enum(['builder', 'reviewer', 'pm', 'designer', 'architect', 'qa']).describe('Agent type'),
+    task_id: z.string().describe('Task ID from Plane (e.g. DEVPA-42)'),
+    task_title: z.string().describe('Task title'),
+    task_description: z.string().default('').describe('Task description'),
+    skills: z.array(z.string()).default([]).describe('Skill names to inject'),
+    priority: z.enum(['p0', 'p1', 'p2', 'p3']).default('p2').describe('Job priority'),
+    branch: z.string().optional().describe('Git branch name'),
+    source: z.enum(['telegram', 'dashboard', 'cron']).default('telegram')
+  },
+  async ({ agent, task_id, task_title, task_description, skills, priority, branch, source }) => {
+    try {
+      const queue = getAgentsQueue();
+      const job = await queue.add(`${agent}:${task_id}`, {
+        agent,
+        task: {
+          id: task_id,
+          title: task_title,
+          description: task_description,
+          branch: branch || `feat/${task_id.toLowerCase()}`
+        },
+        skills,
+        priority,
+        source,
+        requested_by: 'shelly'
+      }, {
+        priority: PRIORITY_MAP[priority] || 10,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        timeout: 1800000
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ job_id: job.id, agent, task_id, priority, message: `Job enqueued: ${agent}:${task_id} (priority ${priority})` }, null, 2)
+        }]
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `Error enqueuing job: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'list_jobs',
+  'List jobs in the agents queue by status',
+  {
+    status: z.enum(['waiting', 'active', 'completed', 'failed', 'delayed']).default('active'),
+    limit: z.number().default(10)
+  },
+  async ({ status, limit }) => {
+    try {
+      const queue = getAgentsQueue();
+      const jobs = await queue.getJobs([status], 0, limit - 1);
+      const result = jobs.map(job => ({
+        id: job.id,
+        name: job.name,
+        agent: job.data?.agent,
+        task_id: job.data?.task?.id,
+        priority: job.opts?.priority,
+        attempts: job.attemptsMade,
+        created: job.timestamp ? new Date(job.timestamp).toISOString() : null
+      }));
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `Error listing jobs: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'cancel_job',
+  'Cancel a waiting job or kill an active job',
+  {
+    job_id: z.string().describe('BullMQ job ID')
+  },
+  async ({ job_id }) => {
+    try {
+      const queue = getAgentsQueue();
+      const job = await queue.getJob(job_id);
+      if (!job) {
+        return { content: [{ type: 'text', text: `Job ${job_id} not found` }], isError: true };
+      }
+      const state = await job.getState();
+      if (state === 'active') {
+        try {
+          const resp = await fetch(`${WORKER_API}/kill/${job_id}`, { method: 'POST' });
+          if (resp.ok) {
+            return { content: [{ type: 'text', text: `Job ${job_id} kill signal sent` }] };
+          }
+          return { content: [{ type: 'text', text: `Worker API error: ${resp.status}` }], isError: true };
+        } catch {
+          return { content: [{ type: 'text', text: `Cannot reach worker API at ${WORKER_API}` }], isError: true };
+        }
+      }
+      await job.remove();
+      return { content: [{ type: 'text', text: `Job ${job_id} removed (was ${state})` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `Error cancelling job: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'set_mode',
+  'Switch Shelly between autonomous and collaborative mode',
+  {
+    mode: z.enum(['autonomous', 'collaborative']).describe('Operating mode')
+  },
+  async ({ mode }) => {
+    const state = {
+      mode,
+      since: new Date().toISOString(),
+      morning_review: mode === 'collaborative' ? [] : (
+        existsSync(MODE_FILE)
+          ? JSON.parse(readFileSync(MODE_FILE, 'utf8')).morning_review || []
+          : []
+      )
+    };
+    writeFileSync(MODE_FILE, JSON.stringify(state, null, 2));
+    return { content: [{ type: 'text', text: `Mode set to ${mode}` }] };
+  }
+);
+
+server.tool(
+  'get_mode',
+  'Get current Shelly operating mode and morning review log',
+  {},
+  async () => {
+    let state = { mode: 'collaborative', since: null, morning_review: [] };
+    try {
+      if (existsSync(MODE_FILE)) {
+        state = JSON.parse(readFileSync(MODE_FILE, 'utf8'));
+      }
+    } catch { /* ignore */ }
+    return { content: [{ type: 'text', text: JSON.stringify(state, null, 2) }] };
   }
 );
 
