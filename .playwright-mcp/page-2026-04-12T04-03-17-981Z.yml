@@ -1,5 +1,0 @@
-- generic [ref=e4]:
-  - heading "DevPanel" [level=2] [ref=e5]
-  - paragraph [ref=e6]: Enter your API key to access the dashboard.
-  - textbox "dp_..." [active] [ref=e7]
-  - button "Connect" [ref=e8]
