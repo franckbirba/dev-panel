@@ -223,3 +223,6 @@ registerCrons().catch(err => console.error('[Crons] Registration failed:', err))
 
 // Export for api.js
 export { activeProcesses, worker, getMode };
+
+// Start worker API server
+import('./api.js').catch(err => console.error('[Worker API] Failed to start:', err));
