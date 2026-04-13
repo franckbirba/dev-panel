@@ -30,6 +30,7 @@ import {
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetchIssueComments } from './github.js';
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
+import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 
 // ============================================================================
 // MIDDLEWARE - API Key Auth
@@ -308,6 +309,59 @@ export function createRouter(config = {}) {
       res.json({ message: `Job ${req.params.id} promoted` });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // JOB ENQUEUE (Dashboard)
+  // ============================================================================
+
+  router.post('/api/jobs', authenticateAdmin, async (req, res) => {
+    try {
+      const { agent, task_id, task_title, task_description, skills, priority, branch, source } = req.body;
+
+      if (!agent || !task_id || !task_title) {
+        return res.status(400).json({ error: 'Required: agent, task_id, task_title' });
+      }
+
+      const queue = getQueue(QUEUES.agents);
+      const job = await queue.add(`${agent}:${task_id}`, {
+        agent,
+        task: {
+          id: task_id,
+          title: task_title,
+          description: task_description || '',
+          branch: branch || `feat/${task_id.toLowerCase()}`
+        },
+        skills: skills || [],
+        priority: priority || 'p2',
+        source: source || 'dashboard',
+        requested_by: 'dashboard'
+      }, {
+        priority: PRIORITY_MAP[priority] || PRIORITY_MAP.p2,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        timeout: 1800000
+      });
+
+      res.json({ job_id: job.id, agent, task_id, priority: priority || 'p2' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // JOB KILL (Dashboard -> Worker API proxy)
+  // ============================================================================
+
+  router.post('/api/jobs/:id/kill', authenticateAdmin, async (req, res) => {
+    const workerApi = process.env.WORKER_API || 'http://62.238.0.167:3099';
+    try {
+      const resp = await fetch(`${workerApi}/kill/${req.params.id}`, { method: 'POST' });
+      const data = await resp.json();
+      res.status(resp.status).json(data);
+    } catch (err) {
+      res.status(502).json({ error: `Cannot reach worker: ${err.message}` });
     }
   });
 
