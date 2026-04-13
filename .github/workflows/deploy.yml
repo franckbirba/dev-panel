@@ -10,90 +10,86 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha
-            type=raw,value=latest
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-  deploy:
-    needs: build
+  deploy-core:
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Generate .env on server
-        uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@v4
+      - uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "infra/*,docker-compose.yml,Makefile"
+          target: ~/dev-panel/
+          strip_components: 0
+      - uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
           envs: >-
-            ADMIN_API_KEY,GITHUB_TOKEN_DEPLOY,TRAEFIK_AUTH,
+            ADMIN_API_KEY,GITHUB_TOKEN_DEPLOY,
             AFFINE_DB_PASSWORD,PLANE_DB_PASSWORD,PLANE_SECRET_KEY,
             PLANE_MINIO_ROOT_USER,PLANE_MINIO_ROOT_PASSWORD,
             PENPOT_SECRET_KEY,PENPOT_DB_PASSWORD,
-            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
+            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,TRAEFIK_USER,TRAEFIK_PASS
           script: |
-            mkdir -p ~/dev-panel/nginx ~/dev-panel/traefik
+            cd ~/dev-panel
 
-            cat > ~/dev-panel/.env << 'ENVEOF'
-            NODE_ENV=production
-            DOMAIN=devpanel.dev
-            ACME_EMAIL=franckbirba@gmail.com
-            ADMIN_API_KEY=$ADMIN_API_KEY
-            ALLOWED_ORIGINS=https://devpanl.dev
-            TRAEFIK_AUTH=$TRAEFIK_AUTH
-            GITHUB_TOKEN=$GITHUB_TOKEN_DEPLOY
-            ENABLE_MONITORING=true
-            ENABLE_BULLMQ=true
-            REDIS_HOST=redis
-            REDIS_PORT=6379
-            SHELLY_TELEGRAM_WEBHOOK=
-            TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-            TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
-            PENPOT_URL=
-            AFFINE_URL=http://affine:3010
-            AFFINE_DB_PASSWORD=$AFFINE_DB_PASSWORD
-            PLANE_DB_PASSWORD=$PLANE_DB_PASSWORD
-            PLANE_SECRET_KEY=$PLANE_SECRET_KEY
-            PLANE_MINIO_ROOT_USER=$PLANE_MINIO_ROOT_USER
-            PLANE_MINIO_ROOT_PASSWORD=$PLANE_MINIO_ROOT_PASSWORD
-            PENPOT_SECRET_KEY=$PENPOT_SECRET_KEY
-            PENPOT_DB_PASSWORD=$PENPOT_DB_PASSWORD
-            ENVEOF
+            # Export secrets for init.sh
+            export ADMIN_API_KEY="$ADMIN_API_KEY"
+            export GITHUB_TOKEN="$GITHUB_TOKEN_DEPLOY"
+            export AFFINE_DB_PASSWORD="$AFFINE_DB_PASSWORD"
+            export PLANE_DB_PASSWORD="$PLANE_DB_PASSWORD"
+            export PLANE_SECRET_KEY="$PLANE_SECRET_KEY"
+            export PLANE_MINIO_ROOT_USER="$PLANE_MINIO_ROOT_USER"
+            export PLANE_MINIO_ROOT_PASSWORD="$PLANE_MINIO_ROOT_PASSWORD"
+            export PENPOT_SECRET_KEY="$PENPOT_SECRET_KEY"
+            export PENPOT_DB_PASSWORD="$PENPOT_DB_PASSWORD"
+            export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
+            export TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+            export TRAEFIK_USER="$TRAEFIK_USER"
+            export TRAEFIK_PASS="$TRAEFIK_PASS"
+
+            # Initialize .env.production
+            bash infra/init.sh production
+
+            # Deploy core stack
+            docker compose pull
+            docker compose --profile core up -d
+            docker compose --profile plane up -d
+            docker compose --profile penpot up -d
+            docker compose --profile monitoring up -d
+
+            # Health check
+            sleep 15
+            docker compose ps
+            docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
+
+            # Cleanup
+            docker image prune -f
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
           GITHUB_TOKEN_DEPLOY: ${{ secrets.GH_DEPLOY_TOKEN }}
-          TRAEFIK_AUTH: ${{ secrets.TRAEFIK_AUTH }}
           AFFINE_DB_PASSWORD: ${{ secrets.AFFINE_DB_PASSWORD }}
           PLANE_DB_PASSWORD: ${{ secrets.PLANE_DB_PASSWORD }}
           PLANE_SECRET_KEY: ${{ secrets.PLANE_SECRET_KEY }}
@@ -103,88 +99,5 @@ jobs:
           PENPOT_DB_PASSWORD: ${{ secrets.PENPOT_DB_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-      - name: Deploy configs
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: >-
-            infra/docker-compose.yml,
-            infra/docker-compose.plane.yml,
-            infra/docker-compose.penpot.yml,
-            infra/docker-compose.monitoring.yml,
-            infra/traefik.yml,
-            infra/dynamic.yml,
-            infra/nginx/spa.conf,
-            Dockerfile
-          target: ~/deploy-tmp/
-          strip_components: 0
-
-      - name: Move configs and start services
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cd ~/dev-panel
-
-            # Move configs from deploy-tmp
-            cp ~/deploy-tmp/infra/docker-compose.yml .
-            cp ~/deploy-tmp/infra/docker-compose.plane.yml .
-            cp ~/deploy-tmp/infra/docker-compose.penpot.yml .
-            cp ~/deploy-tmp/infra/docker-compose.monitoring.yml .
-            cp ~/deploy-tmp/infra/traefik.yml traefik/
-            cp ~/deploy-tmp/infra/dynamic.yml traefik/
-            cp ~/deploy-tmp/infra/nginx/spa.conf nginx/
-            cp ~/deploy-tmp/Dockerfile .
-            rm -rf ~/deploy-tmp
-
-            # Pull and start all stacks
-            docker compose pull
-            docker compose build devpanel
-            docker compose up -d --remove-orphans
-            docker compose -f docker-compose.plane.yml up -d
-            docker compose -f docker-compose.penpot.yml up -d
-            docker compose -f docker-compose.monitoring.yml up -d
-
-            # Wait and verify
-            sleep 15
-            docker compose ps
-            docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
-
-            # Cleanup
-            docker image prune -f
-
-  deploy-agents:
-    needs: build
-    runs-on: ubuntu-latest
-    if: vars.DEPLOY_AGENTS == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy Claude configs
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_AGENTS_HOST }}
-          username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "infra/claude/settings.json,infra/claude/mcp.json"
-          target: ~/deploy-tmp/
-          strip_components: 0
-
-      - name: Install configs
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_AGENTS_HOST }}
-          username: deploy
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            mkdir -p ~/.claude ~/dev-panel
-            cp ~/deploy-tmp/infra/claude/settings.json ~/.claude/settings.json
-            cp ~/deploy-tmp/infra/claude/mcp.json ~/dev-panel/.mcp.json
-            rm -rf ~/deploy-tmp
-            npm update -g @anthropic-ai/claude-code openclaw 2>/dev/null || true
+          TRAEFIK_USER: ${{ secrets.TRAEFIK_USER }}
+          TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}

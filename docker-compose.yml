@@ -1,23 +1,488 @@
-name: dev-panel
-
+# ============================================================================
+# dev-panel — Unified docker-compose with profiles
+# Profiles:
+#   core       → traefik, redis, devpanel, postgres, affine
+#   plane      → plane stack (web, api, db, minio)
+#   penpot     → penpot stack (frontend, backend, db)
+#   monitoring → uptime-kuma, bull-board
+#   all        → everything
+# ============================================================================
 services:
-  api:
-    build: .
-    container_name: devpanel-api
+  # ══════════════════════════════════════════════════════════════════════════
+  # CORE STACK
+  # ══════════════════════════════════════════════════════════════════════════
+
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    profiles: [core, all]
     restart: unless-stopped
-    networks: [default, ajira_net]
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--log.level=WARN"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+      - ./infra/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./infra/.htpasswd:/etc/traefik/.htpasswd:ro
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.devpanl.dev`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+
+  redis:
+    image: redis:7-alpine
+    container_name: devpanel-redis
+    profiles: [core, all]
+    restart: unless-stopped
+    ports:
+      - "${VPS_HOST:-127.0.0.1}:6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  devpanel:
+    image: ghcr.io/franckbirba/dev-panel:latest
+    container_name: devpanel-api
+    profiles: [core, all]
+    restart: unless-stopped
+    env_file:
+      - path: .env.production
+        required: false
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      ALLOWED_ORIGINS: https://devpanl.dev
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      ENABLE_MONITORING: "true"
+      ENABLE_BULLMQ: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     volumes:
       - ./storage:/app/storage
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - ./dist:/app/dist
+    networks:
+      - devpanel_net
+    depends_on:
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
     labels:
-      - traefik.enable=true
-      - traefik.docker.network=ajira_net
-      - traefik.http.routers.devpanel-api.rule=Host(`devpanel.lan`)
-      - traefik.http.routers.devpanel-api.tls=true
-      - traefik.http.services.devpanel-api.loadbalancer.server.port=3030
+      - "traefik.enable=true"
+      - "traefik.http.routers.devpanel.rule=Host(`devpanl.dev`)"
+      - "traefik.http.routers.devpanel.entrypoints=websecure"
+      - "traefik.http.routers.devpanel.tls=true"
+      - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: devpanel-postgres
+    profiles: [core, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: affine
+      POSTGRES_PASSWORD: ${AFFINE_DB_PASSWORD}
+      POSTGRES_DB: affine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U affine"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  affine-migration:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: devpanel-affine-migration
+    profiles: [core, all]
+    volumes:
+      - affine-config:/root/.affine/config
+      - affine-storage:/root/.affine/storage
+    command: ['sh', '-c', 'node ./scripts/self-host-predeploy.js']
+    environment:
+      REDIS_SERVER_HOST: redis
+      DATABASE_URL: postgresql://affine:${AFFINE_DB_PASSWORD}@postgres:5432/affine
+      AFFINE_INDEXER_ENABLED: "false"
+    networks:
+      - devpanel_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  affine:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: devpanel-affine
+    profiles: [core, all]
+    restart: unless-stopped
+    environment:
+      REDIS_SERVER_HOST: redis
+      DATABASE_URL: postgresql://affine:${AFFINE_DB_PASSWORD}@postgres:5432/affine
+      AFFINE_INDEXER_ENABLED: "false"
+      AFFINE_SERVER_EXTERNAL_URL: "https://affine.devpanl.dev"
+    volumes:
+      - affine-config:/root/.affine/config
+      - affine-storage:/root/.affine/storage
+    networks:
+      - devpanel_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      affine-migration:
+        condition: service_completed_successfully
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.affine.rule=Host(`affine.devpanl.dev`)"
+      - "traefik.http.routers.affine.entrypoints=websecure"
+      - "traefik.http.routers.affine.tls=true"
+      - "traefik.http.routers.affine.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.affine.middlewares=affine-auth"
+      - "traefik.http.services.affine.loadbalancer.server.port=3010"
+      - "traefik.http.middlewares.affine-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PLANE STACK
+  # ══════════════════════════════════════════════════════════════════════════
+
+  plane-web:
+    image: makeplane/plane-frontend:stable
+    container_name: plane-web
+    profiles: [plane, all]
+    restart: unless-stopped
+    depends_on: [plane-api]
+    volumes:
+      - ./infra/nginx/spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane.rule=Host(`plane.devpanl.dev`)"
+      - "traefik.http.routers.plane.entrypoints=websecure"
+      - "traefik.http.routers.plane.tls=true"
+      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane.loadbalancer.server.port=3000"
+
+  plane-api:
+    image: makeplane/plane-backend:stable
+    container_name: plane-api
+    profiles: [plane, all]
+    restart: unless-stopped
+    command: ./bin/docker-entrypoint-api.sh
+    environment:
+      DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
+      REDIS_URL: redis://plane-redis:6379
+      SECRET_KEY: ${PLANE_SECRET_KEY}
+      WEB_URL: https://plane.devpanl.dev
+      AWS_ACCESS_KEY_ID: ${PLANE_MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${PLANE_MINIO_ROOT_PASSWORD}
+      AWS_S3_BUCKET_NAME: plane-uploads
+      AWS_S3_ENDPOINT_URL: https://minio.devpanl.dev
+    depends_on:
+      plane-db:
+        condition: service_healthy
+      plane-migrator:
+        condition: service_completed_successfully
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-api.rule=Host(`plane.devpanl.dev`) && (PathPrefix(`/api`) || PathPrefix(`/auth`))"
+      - "traefik.http.routers.plane-api.entrypoints=websecure"
+      - "traefik.http.routers.plane-api.tls=true"
+      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
+
+  plane-migrator:
+    image: makeplane/plane-backend:stable
+    container_name: plane-migrator
+    profiles: [plane, all]
+    restart: "no"
+    command: ./bin/docker-entrypoint-migrator.sh
+    environment:
+      DATABASE_URL: postgresql://plane:${PLANE_DB_PASSWORD}@plane-db:5432/plane
+      SECRET_KEY: ${PLANE_SECRET_KEY}
+    depends_on:
+      plane-db:
+        condition: service_healthy
+    networks:
+      - devpanel_net
+
+  plane-db:
+    image: postgres:15.7-alpine
+    container_name: plane-db
+    profiles: [plane, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: plane
+      POSTGRES_PASSWORD: ${PLANE_DB_PASSWORD}
+      POSTGRES_DB: plane
+    volumes:
+      - plane-pgdata:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plane"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  plane-redis:
+    image: redis:7-alpine
+    container_name: plane-redis
+    profiles: [plane, all]
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - plane-redisdata:/data
+    networks:
+      - devpanel_net
+
+  plane-minio:
+    image: minio/minio:latest
+    container_name: plane-minio
+    profiles: [plane, all]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${PLANE_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${PLANE_MINIO_ROOT_PASSWORD}
+    volumes:
+      - plane-minio-data:/data
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-minio.rule=Host(`minio.devpanl.dev`)"
+      - "traefik.http.routers.plane-minio.entrypoints=websecure"
+      - "traefik.http.routers.plane-minio.tls=true"
+      - "traefik.http.routers.plane-minio.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-minio.loadbalancer.server.port=9000"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # PENPOT STACK
+  # ══════════════════════════════════════════════════════════════════════════
+
+  penpot-frontend:
+    image: penpotapp/frontend:2.4.2
+    container_name: penpot-frontend
+    profiles: [penpot, all]
+    restart: unless-stopped
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    volumes:
+      - penpot-assets:/opt/data/assets
+      - penpot-plugins:/var/www/app/plugins
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.penpot.rule=Host(`penpot.devpanl.dev`)"
+      - "traefik.http.routers.penpot.entrypoints=websecure"
+      - "traefik.http.routers.penpot.tls=true"
+      - "traefik.http.routers.penpot.tls.certresolver=letsencrypt"
+      - "traefik.http.services.penpot.loadbalancer.server.port=8080"
+
+  penpot-backend:
+    image: penpotapp/backend:2.4.2
+    container_name: penpot-backend
+    profiles: [penpot, all]
+    restart: unless-stopped
+    depends_on:
+      penpot-postgres:
+        condition: service_healthy
+      penpot-redis:
+        condition: service_healthy
+    volumes:
+      - penpot-assets:/opt/data/assets
+    environment:
+      PENPOT_FLAGS: enable-registration enable-login-with-password disable-email-verification enable-prepl-server disable-secure-session-cookies
+      PENPOT_SECRET_KEY: ${PENPOT_SECRET_KEY}
+      PENPOT_PUBLIC_URI: https://penpot.devpanl.dev
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: ${PENPOT_DB_PASSWORD}
+      PENPOT_REDIS_URI: redis://penpot-redis/0
+      PENPOT_ASSETS_STORAGE_BACKEND: assets-fs
+      PENPOT_STORAGE_ASSETS_FS_DIRECTORY: /opt/data/assets
+      PENPOT_TELEMETRY_ENABLED: "false"
+    networks:
+      - devpanel_net
+
+  penpot-exporter:
+    image: penpotapp/exporter:2.4.2
+    container_name: penpot-exporter
+    profiles: [penpot, all]
+    restart: unless-stopped
+    environment:
+      PENPOT_PUBLIC_URI: http://penpot-frontend:8080
+    networks:
+      - devpanel_net
+
+  penpot-redis:
+    image: redis:7-alpine
+    container_name: penpot-redis
+    profiles: [penpot, all]
+    restart: unless-stopped
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  penpot-postgres:
+    image: postgres:15-alpine
+    container_name: penpot-postgres
+    profiles: [penpot, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: ${PENPOT_DB_PASSWORD}
+      POSTGRES_DB: penpot
+    volumes:
+      - penpot-pgdata:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U penpot"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Penpot MCP Server — bridge between Claude Code and Penpot plugin
+  penpot-mcp:
+    image: ghcr.io/franckbirba/penpot-mcp:latest
+    container_name: penpot-mcp
+    profiles: [penpot, all]
+    restart: unless-stopped
+    environment:
+      PENPOT_BASE_URL: https://penpot.devpanl.dev
+      PENPOT_MCP_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_REMOTE_MODE: "true"
+      PENPOT_MCP_WEBSOCKET_URL: wss://penpot-mcp.devpanl.dev
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.penpot-mcp.rule=Host(`penpot-mcp.devpanl.dev`)"
+      - "traefik.http.routers.penpot-mcp.entrypoints=websecure"
+      - "traefik.http.routers.penpot-mcp.tls=true"
+      - "traefik.http.routers.penpot-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.penpot-mcp.service=penpot-mcp-http"
+      - "traefik.http.services.penpot-mcp-http.loadbalancer.server.port=4401"
+      # WebSocket for plugin communication
+      - "traefik.http.routers.penpot-mcp-ws.rule=Host(`penpot-mcp.devpanl.dev`) && HeadersRegexp(`Connection`, `(?i)upgrade`)"
+      - "traefik.http.routers.penpot-mcp-ws.entrypoints=websecure"
+      - "traefik.http.routers.penpot-mcp-ws.tls=true"
+      - "traefik.http.routers.penpot-mcp-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.penpot-mcp-ws.priority=20"
+      - "traefik.http.routers.penpot-mcp-ws.service=penpot-mcp-ws"
+      - "traefik.http.services.penpot-mcp-ws.loadbalancer.server.port=4402"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MONITORING STACK
+  # ══════════════════════════════════════════════════════════════════════════
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    profiles: [monitoring, all]
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uptime.rule=Host(`status.devpanl.dev`)"
+      - "traefik.http.routers.uptime.entrypoints=websecure"
+      - "traefik.http.routers.uptime.tls=true"
+      - "traefik.http.routers.uptime.tls.certresolver=letsencrypt"
+      - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+
+  bull-board:
+    image: deadly0/bull-board:latest
+    container_name: devpanel-bull-board
+    profiles: [monitoring, all]
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BULL_PREFIX: devpanel
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bullboard.rule=Host(`queues.devpanl.dev`)"
+      - "traefik.http.routers.bullboard.entrypoints=websecure"
+      - "traefik.http.routers.bullboard.tls=true"
+      - "traefik.http.routers.bullboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
+      - "traefik.http.routers.bullboard.middlewares=bullboard-auth"
+      - "traefik.http.middlewares.bullboard-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+
+# ══════════════════════════════════════════════════════════════════════════
+# VOLUMES & NETWORKS
+# ══════════════════════════════════════════════════════════════════════════
+
+volumes:
+  traefik-certs:
+  redis-data:
+  postgres-data:
+  affine-config:
+  affine-storage:
+  plane-pgdata:
+  plane-redisdata:
+  plane-minio-data:
+  penpot-assets:
+  penpot-plugins:
+  penpot-pgdata:
+  uptime-kuma-data:
 
 networks:
-  ajira_net:
-    external: true
-    name: ajira_net
+  devpanel_net:
+    driver: bridge

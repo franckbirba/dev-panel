@@ -201,47 +201,50 @@ dev-panel exposes an MCP server for AI assistants (Claude Code, Cursor, etc.):
 
 ## Production Deployment
 
-### Docker
+Complete production infrastructure with Traefik, Let's Encrypt, AFFiNE, Plane, Penpot, and monitoring. See **[infra/README.md](infra/README.md)** for full docs.
+
+### Quick Deploy
 
 ```bash
-docker build -t dev-panel .
-docker run -p 3030:3030 -v ./storage:/app/storage dev-panel
+# Local: build image
+make build
+make push
+
+# Production: deploy everything
+make deploy-all
 ```
 
-### Docker Compose with Traefik + Let's Encrypt
+### Or deploy via GitHub Actions
 
-The repo includes a production-ready setup:
+Push to `main` → auto-builds → pushes to GHCR → deploys to VPS.
+
+### Manual Setup
 
 ```bash
-# On your VPS
-git clone https://github.com/franckbirba/dev-panel.git
-cd dev-panel
-cp .env.example .env    # Configure GITHUB_TOKEN, ADMIN_API_KEY, ALLOWED_ORIGINS
-mkdir -p traefik && cp infra/traefik.yml infra/dynamic.yml traefik/
-touch traefik/acme.json && chmod 600 traefik/acme.json
-docker compose -f docker-compose.prod.yml up -d
+# 1. Initialize .env
+make init
+
+# 2. Fill in secrets
+vim .env  # GITHUB_TOKEN, TELEGRAM_BOT_TOKEN, etc.
+
+# 3. Deploy
+make deploy-core       # Core only (traefik, devpanel, affine)
+make deploy-plane      # Add Plane project management
+make deploy-penpot     # Add Penpot design tool
+make deploy-monitoring # Add monitoring stack
 ```
 
-### CI/CD
+### Services
 
-Push to `main` triggers GitHub Actions to build the Docker image, push to GHCR, and deploy to VPS via SSH.
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | GitHub token for repo sync |
-| `ADMIN_API_KEY` | Yes (prod) | Admin API key for project management |
-| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins (default: `*`) |
-| `NODE_ENV` | No | `production` or `development` |
-
-### VPS Bootstrap
-
-```bash
-bash infra/setup-vps.sh
-```
-
-Sets up Docker, deploy user, UFW firewall (22/80/443), SSH hardening, and unattended upgrades.
+| Service | URL | Description |
+|---------|-----|-------------|
+| DevPanel | https://devpanl.dev | Main app |
+| AFFiNE | https://affine.devpanl.dev | Docs & knowledge base |
+| Plane | https://plane.devpanl.dev | Project management |
+| Penpot | https://penpot.devpanl.dev | Design tool |
+| Traefik | https://traefik.devpanl.dev | Reverse proxy dashboard |
+| Uptime Kuma | https://status.devpanl.dev | Service monitoring |
+| Bull Board | https://queues.devpanl.dev | Job queue dashboard |
 
 ## Package Exports
 
