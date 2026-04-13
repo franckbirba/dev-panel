@@ -51,9 +51,6 @@ export function createServer(storagePath = './storage') {
   // Routes
   app.use('/api', createRouter(config));
 
-  // Root redirect to dashboard
-  app.get('/', (req, res) => res.redirect('/dashboard'));
-
   // Dashboard SPA
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const dashboardDistDir = path.join(__dirname, '..', '..', 'dist', 'dashboard');
@@ -61,8 +58,11 @@ export function createServer(storagePath = './storage') {
   // Serve built dashboard assets with fallthrough
   app.use('/dashboard', express.static(dashboardDistDir, { fallthrough: true }));
 
-  // SPA fallback — serve index.html for all /dashboard/* routes (only if static didn't match)
+  // SPA fallback — serve index.html for all /dashboard/* routes and root
   app.get('/dashboard/*', (req, res) => {
+    res.sendFile(path.join(dashboardDistDir, 'index.html'));
+  });
+  app.get('/', (req, res) => {
     res.sendFile(path.join(dashboardDistDir, 'index.html'));
   });
 
