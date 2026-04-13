@@ -45,7 +45,7 @@ services:
       - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
       # Basic auth for Bull Board
       - "traefik.http.routers.bullboard.middlewares=bullboard-auth"
-      - "traefik.http.middlewares.bullboard-auth.basicauth.users=${TRAEFIK_AUTH}"
+      - "traefik.http.middlewares.bullboard-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
 
   # ============================================================================
   # PENPOT HEALTH CHECK (external service)
