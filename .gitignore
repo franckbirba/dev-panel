@@ -4,4 +4,5 @@ storage/
 .DS_Store
 .env
 .env.local
+.env.production
 .htpasswd
