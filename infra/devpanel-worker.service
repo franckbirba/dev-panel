@@ -1,23 +1,46 @@
 [Unit]
-Description=DevPanel BullMQ Worker
-After=docker.service
-Requires=docker.service
+Description=DevPanel Agent Worker (runs on agents node, spawns claude -p)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=deploy
-WorkingDirectory=/home/deploy/dev-panel
-Environment="NODE_ENV=production"
-Environment="REDIS_HOST=redis"
-Environment="REDIS_PORT=6379"
-Environment="PG_HOST=postgres"
-Environment="PG_PORT=5432"
-Environment="PG_USER=affine"
-Environment="PG_DATABASE=affine"
-EnvironmentFile=/home/deploy/dev-panel/.env.production
-ExecStart=/usr/bin/docker exec devpanel-api node /app/src/worker/index.js
+Group=deploy
+WorkingDirectory=/home/deploy/projects/dev-panel
+ExecStart=/usr/bin/node src/worker/index.js
 Restart=always
-RestartSec=10
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Runtime
+Environment=NODE_ENV=production
+Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
+Environment=WORKER_CONCURRENCY=3
+Environment=WORKER_API_PORT=3099
+Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+
+# Cross-node connectivity (services node exposes redis + postgres on LAN)
+Environment=REDIS_HOST=10.0.0.2
+Environment=REDIS_PORT=6379
+Environment=PG_HOST=10.0.0.2
+Environment=PG_PORT=5432
+Environment=PG_USER=affine
+Environment=PG_DATABASE=agent_memory
+Environment=AGENT_MEMORY_NAMESPACE=dev-panel
+Environment=VOYAGE_MODEL=voyage-code-3
+Environment=WORKER_EVENTS_URL=http://10.0.0.2:3030/api/admin/events/publish
+
+# Secrets come from a hand-managed file on the agents node (not CI-deployed):
+#   /home/deploy/projects/dev-panel/.env.agent
+# Required keys: PG_PASSWORD, VOYAGE_API_KEY, ADMIN_API_KEY
+EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devpanel-worker
 
 [Install]
 WantedBy=multi-user.target
