@@ -89,6 +89,14 @@ services:
       ENABLE_BULLMQ: "true"
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      PG_HOST: devpanel-postgres
+      PG_PORT: 5432
+      PG_USER: affine
+      PG_PASSWORD: ${AFFINE_DB_PASSWORD}
+      PG_DATABASE: agent_memory
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      VOYAGE_MODEL: voyage-code-3
+      AGENT_MEMORY_NAMESPACE: dev-panel
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist
