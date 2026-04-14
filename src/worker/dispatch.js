@@ -1,6 +1,6 @@
 // src/worker/dispatch.js
 import { loadWorkflows } from './engine.js';
-import { createInstance } from '../server/workflow-instances.js';
+import { createInstance, updateInstance } from '../server/workflow-instances.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 
 const WORKER_EVENTS_URL = process.env.WORKER_EVENTS_URL
@@ -56,20 +56,35 @@ export async function enqueueWorkflowStart({
       cycle_id: plane.cycle_id || null
     });
   } catch (e) {
-    if (/UNIQUE/.test(e.message)) return { ok: false, error: 'already_running' };
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return { ok: false, error: 'already_running' };
+    }
     throw e;
   }
 
   const opts = scheduled_for ? { delay: Math.max(0, scheduled_for - Date.now()) } : {};
-  const job = await _enqueue({
-    agent: firstAgent,
-    workflow,
-    workflow_instance_id: instance_id,
-    workflow_revision: 1,
-    plane,
-    work_item,
-    context
-  }, opts);
+  let job;
+  try {
+    job = await _enqueue({
+      agent: firstAgent,
+      workflow,
+      workflow_instance_id: instance_id,
+      workflow_revision: 1,
+      plane,
+      work_item,
+      context
+    }, opts);
+  } catch (err) {
+    // Rollback: mark this instance failed so a retry can land cleanly
+    // (the unique partial index excludes 'failed' from the active set).
+    try {
+      updateInstance(
+        { work_item_id: plane.work_item_id, workflow_name: workflow },
+        { status: 'failed' }
+      );
+    } catch { /* best-effort rollback */ }
+    return { ok: false, error: `enqueue_failed: ${err.message}` };
+  }
 
   publishEvent('workflow.started', {
     instance_id, work_item_id: plane.work_item_id, workflow, revision: 1

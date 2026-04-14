@@ -347,6 +347,9 @@ server.tool(
   }
 );
 
+// nextAuditTime assumes host timezone is Europe/Paris (spec §5.2).
+// On a non-Paris-TZ container this shifts by the UTC offset — revisit
+// if Europe/Paris scheduling becomes load-bearing.
 function nextAuditTime() {
   const now = new Date();
   const t = new Date(now);

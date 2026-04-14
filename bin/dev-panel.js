@@ -57,10 +57,16 @@ program
     if (action === 'dispatch') {
       if (!work_item_id) { console.error('work_item_id is required'); process.exit(2); }
       const { enqueueWorkflowStart } = await import('../src/worker/dispatch.js');
-      const out = await enqueueWorkflowStart({
-        workflow: opts.workflow,
-        plane: { work_item_id, module_id: opts.module, cycle_id: opts.cycle }
-      });
+      let out;
+      try {
+        out = await enqueueWorkflowStart({
+          workflow: opts.workflow,
+          plane: { work_item_id, module_id: opts.module, cycle_id: opts.cycle }
+        });
+      } catch (err) {
+        console.error(`dispatch failed: ${err.message}`);
+        process.exit(1);
+      }
       console.log(JSON.stringify(out, null, 2));
       process.exit(out.ok ? 0 : 1);
     }

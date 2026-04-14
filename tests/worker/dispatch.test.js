@@ -53,4 +53,22 @@ describe('enqueueWorkflowStart', () => {
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/unknown workflow/);
   });
+
+  it('rolls back the instance to failed when enqueue throws', async () => {
+    __setEnqueueForTests(vi.fn().mockRejectedValue(new Error('redis down')));
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-rollback' }
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/enqueue_failed/);
+    // The row should now be 'failed', so a follow-up dispatch can land fresh.
+    __setEnqueueForTests(vi.fn().mockResolvedValue({ id: 'retry-1' }));
+    const retry = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-rollback' }
+    });
+    expect(retry.ok).toBe(true);
+    expect(retry.instance_id).toBeGreaterThan(0);
+  });
 });
