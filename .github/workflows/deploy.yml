@@ -106,52 +106,7 @@ jobs:
           TRAEFIK_USER: ${{ secrets.TRAEFIK_USER }}
           TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}
 
-  deploy-agents:
-    needs: deploy-core
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_AGENTS_HOST }}
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          envs: >-
-            ADMIN_API_KEY,VOYAGE_API_KEY,AFFINE_DB_PASSWORD,
-            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
-          script: |
-            set -e
-
-            # Pull latest code and install deps as deploy user
-            su - deploy -c 'cd /home/deploy/projects/dev-panel && git pull --ff-only'
-            su - deploy -c 'cd /home/deploy/projects/dev-panel && npm install --production --silent'
-
-            # Regenerate .env.agent from CI secrets (chmod 600, deploy-owned)
-            cat > /home/deploy/projects/dev-panel/.env.agent <<ENVEOF
-            PG_PASSWORD=$AFFINE_DB_PASSWORD
-            VOYAGE_API_KEY=$VOYAGE_API_KEY
-            ADMIN_API_KEY=$ADMIN_API_KEY
-            TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-            TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
-            ENVEOF
-            chown deploy:deploy /home/deploy/projects/dev-panel/.env.agent
-            chmod 600 /home/deploy/projects/dev-panel/.env.agent
-
-            # Refresh systemd unit and restart worker
-            cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service \
-               /etc/systemd/system/devpanel-worker.service
-            systemctl daemon-reload
-            systemctl enable devpanel-worker
-            systemctl restart devpanel-worker
-
-            # Health check
-            sleep 3
-            systemctl is-active devpanel-worker && \
-              journalctl -u devpanel-worker --no-pager -n 5 -o cat | tail -5 || \
-              { echo "worker failed to start"; journalctl -u devpanel-worker --no-pager -n 20 -o cat | tail -20; exit 1; }
-        env:
-          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-          AFFINE_DB_PASSWORD: ${{ secrets.AFFINE_DB_PASSWORD }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  # deploy-agents intentionally omitted from CI — the agents-node firewall
+  # does not whitelist GitHub Actions runner IPs. Run scripts/deploy-agents.sh
+  # locally from a machine that has the hetzner-vps SSH key. Mirrors the
+  # equivalent CI step.
