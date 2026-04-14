@@ -3,6 +3,7 @@ import { QueueCard } from "@/components/queue-card";
 import { JobList } from "@/components/job-list";
 import { JobDetail } from "@/components/job-detail";
 import { useAdminEvents } from "../lib/use-admin-events.js";
+import { PipelinesPane } from "../components/PipelinesPane.jsx";
 
 export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
   const [selectedQueue, setSelectedQueue] = useState(null);
@@ -83,6 +84,12 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
           )}
         </>
       )}
+
+      {/* Pipelines pane */}
+      <section style={{ marginTop: '1.5rem', padding: '0 1.5rem' }}>
+        <h3 style={{ margin: '0 0 0.5rem' }}>Pipelines</h3>
+        <PipelinesPane adminKey={adminKey} />
+      </section>
 
       {/* Live Events pane */}
       <section style={{ marginTop: '1.5rem', padding: '0 1.5rem 1.5rem' }}>

@@ -915,7 +915,9 @@ export function createRouter(config = {}) {
   // ============================================================================
 
   function authenticateAdmin(req, res, next) {
-    const key = req.headers['x-admin-key'];
+    // Accept X-Admin-Key header, or ?key= query param as a fallback for
+    // GET-only clients (e.g. EventSource, which can't set custom headers).
+    const key = req.headers['x-admin-key'] || (req.method === 'GET' ? req.query?.key : null);
     const expected = process.env.ADMIN_API_KEY;
     if (!key || !expected || key.length !== expected.length ||
         !timingSafeEqual(Buffer.from(key), Buffer.from(expected))) {
@@ -934,6 +936,21 @@ export function createRouter(config = {}) {
     const { broadcastAdmin } = await import('./sse.js');
     broadcastAdmin(event, data || {});
     res.json({ ok: true });
+  });
+
+  router.get('/admin/workflows/instances', authenticateAdmin, async (req, res) => {
+    const { listActive, listByCycle } = await import('./workflow-instances.js');
+    const rows = req.query.cycle_id ? listByCycle(req.query.cycle_id) : listActive();
+    res.json({ instances: rows });
+  });
+
+  router.get('/admin/workflows/instances/:id', authenticateAdmin, async (req, res) => {
+    const { loadInstanceById } = await import('./workflow-instances.js');
+    const { listSteps } = await import('./jobs-log.js');
+    const instance = loadInstanceById(parseInt(req.params.id, 10));
+    if (!instance) return res.status(404).json({ error: 'not found' });
+    const steps = instance.last_job_id ? listSteps(instance.last_job_id) : [];
+    res.json({ instance, steps });
   });
 
   return router;
