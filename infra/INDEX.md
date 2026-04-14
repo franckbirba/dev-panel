@@ -67,6 +67,7 @@ docker-compose.yml:
 - 🏗️ [Architecture Diagrams](docs/ARCHITECTURE.md)
 - 🚀 [Migration Guide](docs/MIGRATION.md)
 - ✅ [Pre-Deploy Checklist](docs/CHECKLIST.md)
+- 🎭 [Playwright Setup](docs/PLAYWRIGHT-SETUP.md)
 
 ### `nginx/`
 **Purpose:** Nginx configs for SPA routing
@@ -112,6 +113,7 @@ bash scripts/bootstrap/setup-vps.sh
 - `backup-cron.sh` — Automated backups (cron job)
 - `monitoring-setup.sh` — Deploy Uptime Kuma + Bull Board
 - `install-penpot-mcp.sh` — Deploy Penpot MCP server
+- `install-playwright.sh` — Install Playwright + Chromium for QA automation (agents node)
 
 **Usage:**
 ```bash
@@ -120,6 +122,9 @@ bash scripts/maintenance/monitoring-setup.sh
 
 # Install Penpot MCP
 bash scripts/maintenance/install-penpot-mcp.sh
+
+# Install Playwright (on agents node)
+bash scripts/maintenance/install-playwright.sh
 ```
 
 ## 🚀 Quick Start
@@ -157,6 +162,7 @@ Read in this order:
 4. **[docs/CHECKLIST.md](docs/CHECKLIST.md)** — Before every deploy
 5. **[docs/SECRETS-GUIDE.md](docs/SECRETS-GUIDE.md)** — Secret management
 6. **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Security hardening
+7. **[docs/PLAYWRIGHT-SETUP.md](docs/PLAYWRIGHT-SETUP.md)** — QA automation setup (agents node)
 
 ## 🔧 Key Files
 
