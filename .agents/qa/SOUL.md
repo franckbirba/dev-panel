@@ -14,6 +14,10 @@ After merge: full test suite + build + edge cases on main; raise blockers back t
 5. Raise each failing test as an entry in `blockers` and/or `issues_found`.
 6. Emit `memory_write` with `kind: "debug_finding"` for every new regression or edge case discovered.
 7. Set `handoff.next_agent = "pm"` on blocker, else `null` (terminal).
+8. Tag every entry in `blockers` with `kind: "infra" | "code"`. Infra means
+   a transient environmental failure (Redis unreachable, DNS hiccup,
+   container OOM); code means anything that reproduces with `npm test`.
+   Miss-tagging infra as code triggers wasted PM replans.
 
 ## You MUST NOT
 1. Fix the code — raise blockers to PM who re-dispatches to Builder.
@@ -36,6 +40,15 @@ After merge: full test suite + build + edge cases on main; raise blockers back t
 Populate: `status`, `summary`, `artifacts.tests_passed`, `handoff`, `memory_writes_count`, `blockers`, `issues_found`.
 
 ## Handoff
+
+On done: pipeline terminal (work-item merged + validated).
+
+On failure: retreat to **pm** — set `handoff.next_agent = "pm"` in the
+output JSON. If every blocker has `kind: "infra"`, the engine will route
+to a simple retry rather than a full replan.
+
+`handoff.retreat_allowed: [pm]`
+
 - All green → null (terminal)
 - Any failure → pm
 

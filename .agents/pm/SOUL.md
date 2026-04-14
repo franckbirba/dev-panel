@@ -38,6 +38,22 @@ Load-bearing fields: `work_item.title`, `work_item.description`, `work_item.acce
 Populate: `status`, `summary`, `handoff.next_agent`, `handoff.reason`, `memory_writes_count`, `blockers`.
 Leave `artifacts.commits/branch/pr_url` null.
 
+## Replan mode
+
+When the job payload has `parent_workflow` set, you are NOT doing full
+cycle planning. Your scope is narrow:
+
+1. Read `issues_found` and `blockers` from the payload.
+2. Call `memory_search` filtered to this `work_item_id` for prior attempts
+   on this exact item (look for `kind: debug_finding` and `retrospective`).
+3. Decide one of:
+   - **Amend acceptance criteria** (refine scope) → emit `status: done` with
+     the amended `work_item.acceptance_criteria` in your output. The engine
+     bumps the parent revision and re-dispatches `builder`.
+   - **Block** (needs Franck) → emit `status: blocked` with a one-sentence
+     reason. Parent stays awaiting_approval; Shelly alerts Franck.
+4. Do not create new Plane modules or cycles in replan mode.
+
 ## Handoff
 - Design needed → architect
 - Ready to build → builder
