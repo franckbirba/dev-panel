@@ -15,6 +15,9 @@ import {
   listMessages,
   addMessage
 } from '../server/db.js';
+import { embed } from '../server/voyage.js';
+import { memoryInsert, memorySearchSql, memoryList } from '../server/pg.js';
+import { recordMemoryWrite } from '../server/jobs-log.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -369,6 +372,80 @@ server.tool(
       }
     } catch { /* ignore */ }
     return { content: [{ type: 'text', text: JSON.stringify(state, null, 2) }] };
+  }
+);
+
+server.tool(
+  'memory_write',
+  {
+    kind: z.enum(['decision', 'debug_finding', 'spec_note', 'handoff', 'retrospective', 'audit_finding']),
+    title: z.string().min(3).max(200),
+    content: z.string().min(10),
+    tags: z.array(z.string()).optional(),
+    module_id: z.string().optional(),
+    cycle_id: z.string().optional(),
+    work_item_id: z.string().optional()
+  },
+  async (args) => {
+    const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+    const agent    = process.env.AGENT_ROLE || 'unknown';
+    const jobId    = process.env.JOB_ID || null;
+    const embedding = await embed(`${args.title}\n\n${args.content}`);
+    const id = await memoryInsert({
+      namespace, agent, kind: args.kind,
+      title: args.title, content: args.content,
+      tags: args.tags || [],
+      module_id: args.module_id || null,
+      cycle_id: args.cycle_id || null,
+      work_item_id: args.work_item_id || null,
+      embedding
+    });
+    if (jobId) recordMemoryWrite(jobId, id);
+    return { content: [{ type: 'text', text: JSON.stringify({ id }) }] };
+  }
+);
+
+server.tool(
+  'memory_search',
+  {
+    query: z.string().min(2),
+    kind: z.string().optional(),
+    agent: z.string().optional(),
+    module_id: z.string().optional(),
+    limit: z.number().int().min(1).max(20).default(5)
+  },
+  async (args) => {
+    const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+    const embedding = await embed(args.query, { inputType: 'query' });
+    const rows = await memorySearchSql({
+      namespace, embedding,
+      kind: args.kind || null,
+      agent: args.agent || null,
+      module_id: args.module_id || null,
+      limit: args.limit
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+server.tool(
+  'memory_list',
+  {
+    kind: z.string().optional(),
+    agent: z.string().optional(),
+    module_id: z.string().optional(),
+    limit: z.number().int().min(1).max(50).default(20)
+  },
+  async (args) => {
+    const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+    const rows = await memoryList({
+      namespace,
+      kind: args.kind || null,
+      agent: args.agent || null,
+      module_id: args.module_id || null,
+      limit: args.limit
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
   }
 );
 
