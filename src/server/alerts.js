@@ -18,13 +18,7 @@ export async function sendTelegramAlert(alert) {
     return;
   }
 
-  const emoji = {
-    critical: '🚨',
-    warning: '⚠️',
-    info: 'ℹ️'
-  }[alert.severity] || '📢';
-
-  const message = `${emoji} *${alert.severity.toUpperCase()}*\n\n` +
+  const message = `*${alert.severity.toUpperCase()}*\n\n` +
     `*Component:* ${alert.component || 'system'}\n` +
     `*Message:* ${alert.message}\n` +
     `*Time:* ${alert.timestamp || new Date().toISOString()}\n` +
@@ -161,3 +155,52 @@ export class AlertManager {
  * Create default alert manager instance
  */
 export const alertManager = new AlertManager();
+
+// ============================================================================
+// notifyJob — plain-ASCII per-job notification used by the worker automation matrix
+// ============================================================================
+
+const STATUS_WORD = {
+  done: 'DONE',
+  blocked: 'BLOCKED',
+  failed: 'FAILED',
+  approved: 'APPROVED',
+  rejected: 'REJECTED'
+};
+
+let _debounceBuffer = [];
+let _debounceTimer = null;
+
+function _flushDebounce() {
+  const lines = _debounceBuffer.map(b => b.line).join('\n');
+  const metadataId = _debounceBuffer.map(b => b.job_id).filter(Boolean).join(',');
+  _debounceBuffer = [];
+  _debounceTimer = null;
+  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+  if (!url) return;
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: lines + (metadataId ? `\n<!-- job_ids:${metadataId} -->` : '')
+    })
+  }).catch(err => console.error('[Alerts] notifyJob fetch failed:', err.message));
+}
+
+export async function notifyJob({
+  job_id = null, agent, work_item_id, title, status,
+  duration_ms = null, extra = null, next_agent = null
+}) {
+  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+  if (!url) return;
+
+  const DEBOUNCE = parseInt(process.env.SHELLY_DEBOUNCE_MS ?? '5000', 10);
+  const word = STATUS_WORD[status] || String(status).toUpperCase();
+  const parts = [`[${agent}]`, `${work_item_id}${title ? ` "${title}"` : ''}`, word];
+  if (duration_ms != null) parts.push(`(${Math.round(duration_ms / 1000)}s${extra ? `, ${extra}` : ''})`);
+  else if (extra) parts.push(`(${extra})`);
+  parts.push(next_agent ? `  next: ${next_agent}` : `  next: -`);
+
+  _debounceBuffer.push({ job_id, line: parts.join('  ') });
+  if (!_debounceTimer) _debounceTimer = setTimeout(_flushDebounce, DEBOUNCE);
+}
