@@ -2,6 +2,8 @@
 Description=DevPanel Agent Worker (runs on agents node, spawns claude -p)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,8 +13,6 @@ WorkingDirectory=/home/deploy/projects/dev-panel
 ExecStart=/usr/bin/node src/worker/index.js
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Runtime
 Environment=NODE_ENV=production
@@ -31,7 +31,7 @@ Environment=PG_USER=affine
 Environment=PG_DATABASE=agent_memory
 Environment=AGENT_MEMORY_NAMESPACE=dev-panel
 Environment=VOYAGE_MODEL=voyage-code-3
-Environment=WORKER_EVENTS_URL=http://10.0.0.2:3030/api/admin/events/publish
+Environment=WORKER_EVENTS_URL=https://devpanl.dev/api/admin/events/publish
 
 # Secrets come from a hand-managed file on the agents node (not CI-deployed):
 #   /home/deploy/projects/dev-panel/.env.agent

@@ -108,19 +108,24 @@ function spawnAgent(jobId, prompt) {
 // ============================================================================
 
 const worker = new Worker(QUEUES.agents, async (job) => {
-  const { agent, task, skills } = job.data;
-  console.log(`[Worker] Starting job ${job.id} — ${agent}:${task.id} (priority: ${job.opts.priority})`);
+  // Normalize jobData: guarantee job_id is set (legacy crons don't carry it),
+  // and preserve the legacy task.{id,title} shape as a fallback for buildPrompt
+  // / logs until all producers move to the new work_item shape.
+  const jobData = { job_id: job.id, ...job.data };
+  const { agent, task } = jobData;
+  const taskLabel = task?.id || jobData.plane?.work_item_id || job.id;
+  console.log(`[Worker] Starting job ${job.id} — ${agent}:${taskLabel} (priority: ${job.opts.priority})`);
 
-    if (job.data.agent === 'deploy') {
+    if (jobData.agent === 'deploy') {
       const { handleDeploy } = await import('./handlers/deploy.js');
       const startedAt = Date.now();
-      const result = await handleDeploy(job.data);
-      await runAutomation({ jobData: job.data, result, startedAt });
+      const result = await handleDeploy(jobData);
+      await runAutomation({ jobData, result, startedAt });
       return result;
     }
 
   // Build prompt
-  const prompt = buildPrompt(job.data);
+  const prompt = buildPrompt(jobData);
 
   const startedAt = Date.now();
 
@@ -129,7 +134,7 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     fetch(process.env.WORKER_EVENTS_URL || 'http://localhost:3030/api/admin/events/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Key': process.env.ADMIN_API_KEY },
-      body: JSON.stringify({ event: 'job.started', data: { job_id: job.id, agent: job.data.agent, work_item_id: job.data.plane?.work_item_id } })
+      body: JSON.stringify({ event: 'job.started', data: { job_id: jobData.job_id, agent: jobData.agent, work_item_id: jobData.plane?.work_item_id } })
     }).catch(() => {});
   }
 
@@ -139,25 +144,25 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // Parse result (strict: returns { ok, data } | { ok: false, error })
   const parsed = parseResult(output);
   if (!parsed.ok) {
-    logStep({ job_id: job.id, agent: job.data.agent, step: 'parseResult',
+    logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
               status: 'error', error: parsed.error });
     await notifyJob({
-      job_id: job.id, agent: job.data.agent,
-      work_item_id: job.data.plane?.work_item_id || job.data.task?.id,
-      title: job.data.work_item?.title,
+      job_id: jobData.job_id, agent: jobData.agent,
+      work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
+      title: jobData.work_item?.title || jobData.task?.title,
       status: 'failed',
       extra: `parseResult: ${parsed.error}`
     });
     throw new Error(`parseResult failed: ${parsed.error}`);
   }
-  logStep({ job_id: job.id, agent: job.data.agent, step: 'parseResult', status: 'ok' });
+  logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
 
-  await runAutomation({ jobData: job.data, result: parsed.data, startedAt });
+  await runAutomation({ jobData, result: parsed.data, startedAt });
 
   const result = {
     ...parsed.data,
     agent,
-    task_id: task.id,
+    task_id: task?.id || null,
     raw_length: output.length
   };
 
