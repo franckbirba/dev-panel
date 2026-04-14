@@ -111,6 +111,14 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   const { agent, task, skills } = job.data;
   console.log(`[Worker] Starting job ${job.id} — ${agent}:${task.id} (priority: ${job.opts.priority})`);
 
+    if (job.data.agent === 'deploy') {
+      const { handleDeploy } = await import('./handlers/deploy.js');
+      const startedAt = Date.now();
+      const result = await handleDeploy(job.data);
+      await runAutomation({ jobData: job.data, result, startedAt });
+      return result;
+    }
+
   // Build prompt
   const prompt = buildPrompt(job.data);
 
