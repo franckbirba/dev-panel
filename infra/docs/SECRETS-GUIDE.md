@@ -413,6 +413,7 @@ echo "  - AFFINE_URL (optional)"
 | `ADMIN_API_KEY` | ✅ | `openssl rand -hex 32` | 10 sec |
 | `TRAEFIK_AUTH` | ✅ | `htpasswd -nb admin pass` | 10 sec |
 | `GITHUB_TOKEN` | ✅ | GitHub Settings | 2 min |
+| `VOYAGE_API_KEY` | ✅ | VoyageAI Dashboard | 2 min |
 | `SHELLY_TELEGRAM_WEBHOOK` | ⚠️ | BotFather + Shelly | 5 min |
 | `PENPOT_URL` | ❌ | Votre URL Penpot | 10 sec |
 | `AFFINE_URL` | ❌ | Votre URL AFFiNE | 10 sec |

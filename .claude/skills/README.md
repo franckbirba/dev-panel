@@ -144,6 +144,13 @@ From `.claude/mcp.json`:
       "env": {
         "OBSIDIAN_VAULT_PATH": "/Users/franckbirba/DEV/Obsidian Vault"
       }
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "VOYAGE_API_KEY": "${VOYAGE_API_KEY}"
+      }
     }
   }
 }

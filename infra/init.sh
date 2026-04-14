@@ -46,6 +46,9 @@ ALLOWED_ORIGINS=https://devpanl.dev
 ADMIN_API_KEY=$(existing_or_new ADMIN_API_KEY)
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 
+# AI/Memory
+VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
+
 # Monitoring
 ENABLE_MONITORING=true
 ENABLE_BULLMQ=true

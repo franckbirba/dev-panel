@@ -39,6 +39,14 @@
         "OBSIDIAN_VAULT_PATH": "/Users/franckbirba/DEV/Obsidian Vault"
       },
       "note": "Obsidian vault access — read/write notes, search knowledge base"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "VOYAGE_API_KEY": "${VOYAGE_API_KEY}"
+      },
+      "note": "Team memory with VoyageAI embeddings — store and retrieve context, decisions, and learnings"
     }
   }
 }
