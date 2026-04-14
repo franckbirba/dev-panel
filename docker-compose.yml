@@ -112,7 +112,7 @@ services:
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: devpanel-postgres
     profiles: [core, all]
     restart: unless-stopped
