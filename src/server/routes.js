@@ -915,8 +915,8 @@ export function createRouter(config = {}) {
   // ============================================================================
 
   function authenticateAdmin(req, res, next) {
-    // Accept X-Admin-Key header, or ?key= query param as a fallback for
-    // GET-only clients (e.g. EventSource, which can't set custom headers).
+    // Fallback: EventSource cannot set headers. Accept ?key= for GETs ONLY so
+    // state-changing requests (POST/PATCH/DELETE) still require a header.
     const key = req.headers['x-admin-key'] || (req.method === 'GET' ? req.query?.key : null);
     const expected = process.env.ADMIN_API_KEY;
     if (!key || !expected || key.length !== expected.length ||

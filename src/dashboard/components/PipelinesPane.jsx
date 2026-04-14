@@ -35,16 +35,23 @@ export function PipelinesPane({ adminKey }) {
       'workflow.started':      () => refresh(),
       'workflow.transitioned': () => refresh(),
       'workflow.finished':     (p) => {
-        refresh();
-        // terminal rows fade out after 30s
+        // server's listActive() already drops terminal rows; the fade is just a
+        // brief visual cue that shows before refresh() clears the row
         setFadingIds(s => new Set(s).add(p.instance_id));
-        setTimeout(() => {
-          setInstances(rows => rows.filter(r => r.id !== p.instance_id || r.status === 'failed' || r.status === 'exhausted'));
-        }, 30000);
+        refresh();
       }
     });
     return unsub;
   }, [adminKey]);
+
+  // Keep fadingIds bounded: prune ids that no longer appear in instances
+  useEffect(() => {
+    const liveIds = new Set(instances.map(r => r.id));
+    setFadingIds(s => {
+      const next = new Set([...s].filter(id => liveIds.has(id)));
+      return next.size === s.size ? s : next;
+    });
+  }, [instances]);
 
   if (!adminKey) return <div className="text-sm text-gray-400">Paste admin key to view pipelines.</div>;
   if (!instances.length) return <div className="text-sm text-gray-400">No active pipelines.</div>;
@@ -57,10 +64,10 @@ export function PipelinesPane({ adminKey }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-live="polite">
       {[...byCycle.entries()].map(([cycle, rows]) => (
         <section key={cycle}>
-          <h3 className="text-sm font-semibold text-gray-600 mb-1">Cycle: {cycle}</h3>
+          <h4 className="text-sm font-semibold text-gray-600 mb-1">Cycle: {cycle}</h4>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-gray-500">
