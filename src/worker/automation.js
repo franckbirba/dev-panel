@@ -1,6 +1,8 @@
 // src/worker/automation.js
 import { logStep, countMemoryWrites } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
+import { loadWorkflows, triggerNext } from './engine.js';
+import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 
 const WORKER_EVENTS_URL = process.env.WORKER_EVENTS_URL || 'http://localhost:3030/api/admin/events/publish';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -16,6 +18,30 @@ async function publishEvent(event, data) {
   } catch (err) {
     console.error('[automation] publishEvent failed:', err.message);
   }
+}
+
+let _flows = null;
+function getFlows() {
+  if (!_flows) _flows = loadWorkflows();
+  return _flows;
+}
+
+// Replaceable for tests
+let _enqueue = async (payload) => {
+  const queue = getQueue(QUEUES.agents);
+  const prio = PRIORITY_MAP[payload.priority || 'p2'] || 10;
+  const name = `${payload.agent}:${payload.plane?.work_item_id || 'adhoc'}`;
+  return queue.add(name, payload, { priority: prio });
+};
+
+export function __setEnqueueForTests(fn) { _enqueue = fn; }
+
+// publishEvent above HTTP-POSTs to the services-node SSE publish endpoint;
+// worker and server are on different nodes in prod, so direct broadcast
+// would not cross the boundary. emitEvent is the fire-and-forget wrapper
+// the engine uses.
+function emitEvent(event, data) {
+  publishEvent(event, data).catch(() => {}); // SSE is best-effort
 }
 
 async function runStep(job_id, agent, step, fn) {
@@ -113,7 +139,11 @@ export async function runAutomation({ jobData, result, startedAt }) {
   await runStep(job_id, agent, 'memory.verify_writes',
     () => verifyMemoryWrites({ job_id, result }));
 
-  // workflow.trigger_next is a stub in Spec 1
-  logStep({ job_id, agent, step: 'workflow.trigger_next', status: 'stub',
-            error: result.handoff?.next_agent ? `would chain to ${result.handoff.next_agent}` : null });
+  await runStep(job_id, agent, 'workflow.trigger_next',
+    () => triggerNext({
+      jobData, result,
+      flows: getFlows(),
+      enqueue: _enqueue,
+      emit: emitEvent
+    }));
 }
