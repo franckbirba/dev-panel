@@ -174,12 +174,17 @@ describe('triggerNext — replan resume', () => {
 
   it('replan pm.done → bumps parent revision and re-enqueues first step of parent workflow', async () => {
     createInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item', current_step: 'qa' });
+    const parentRow = loadInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' });
     updateInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' },
                    { status: 'awaiting_approval', revision: 1 });
     const replanId = createInstance({
       work_item_id: 'wi-rs1', workflow_name: 'replan',
       current_step: 'pm',
-      metadata: { parent_workflow: 'work-item', parent_revision: 1 }
+      metadata: {
+        parent_workflow: 'work-item',
+        parent_revision: 1,
+        parent_instance_id: parentRow.id
+      }
     });
     enqueue.mockClear();
     await triggerNext({
