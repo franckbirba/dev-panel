@@ -1,0 +1,23 @@
+[Unit]
+Description=DevPanel BullMQ Worker
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/dev-panel
+Environment="NODE_ENV=production"
+Environment="REDIS_HOST=redis"
+Environment="REDIS_PORT=6379"
+Environment="PG_HOST=postgres"
+Environment="PG_PORT=5432"
+Environment="PG_USER=affine"
+Environment="PG_DATABASE=affine"
+EnvironmentFile=/home/deploy/dev-panel/.env.production
+ExecStart=/usr/bin/docker exec devpanel-api node /app/src/worker/index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

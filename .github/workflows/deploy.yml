@@ -38,7 +38,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: deploy
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "infra/*,docker-compose.yml,Makefile"
+          source: "infra/*,docker-compose.yml,Makefile,infra/devpanel-worker.service"
           target: ~/dev-panel/
           strip_components: 0
       - uses: appleboy/ssh-action@v1
@@ -81,10 +81,21 @@ jobs:
             docker compose --profile penpot up -d
             docker compose --profile monitoring up -d
 
+            # Install/restart worker service
+            if [ ! -f /etc/systemd/system/devpanel-worker.service ]; then
+              sudo mv ~/devpanel-worker.service /etc/systemd/system/
+              sudo systemctl daemon-reload
+              sudo systemctl enable devpanel-worker
+              sudo systemctl start devpanel-worker
+            else
+              sudo systemctl restart devpanel-worker
+            fi
+
             # Health check
             sleep 15
             docker compose ps
             docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
+            sudo systemctl status devpanel-worker --no-pager || echo "⚠️ Worker not running"
 
             # Cleanup
             docker image prune -f
