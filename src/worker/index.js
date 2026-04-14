@@ -7,6 +7,10 @@ import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
 import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
+import { runAutomation } from './automation.js';
+import { logStep } from '../server/jobs-log.js';
+import { notifyJob } from '../server/alerts.js';
+import { initMasterDatabase } from '../server/db.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -24,6 +28,8 @@ const connection = new Redis({
   maxRetriesPerRequest: null,
   enableReadyCheck: false
 });
+
+initMasterDatabase(process.env.DEVPANEL_STORAGE || './storage');
 
 // Active processes map: jobId -> { process, startedAt }
 const activeProcesses = new Map();
@@ -108,14 +114,44 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // Build prompt
   const prompt = buildPrompt(job.data);
 
+  const startedAt = Date.now();
+
+  // Emit job.started to admin SSE (non-blocking)
+  if (process.env.ADMIN_API_KEY) {
+    fetch(process.env.WORKER_EVENTS_URL || 'http://localhost:3030/api/admin/events/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': process.env.ADMIN_API_KEY },
+      body: JSON.stringify({ event: 'job.started', data: { job_id: job.id, agent: job.data.agent, work_item_id: job.data.plane?.work_item_id } })
+    }).catch(() => {});
+  }
+
   // Spawn agent
   const output = await spawnAgent(job.id, prompt);
 
-  // Parse result
-  const result = parseResult(output);
-  result.agent = agent;
-  result.task_id = task.id;
-  result.raw_length = output.length;
+  // Parse result (strict: returns { ok, data } | { ok: false, error })
+  const parsed = parseResult(output);
+  if (!parsed.ok) {
+    logStep({ job_id: job.id, agent: job.data.agent, step: 'parseResult',
+              status: 'error', error: parsed.error });
+    await notifyJob({
+      job_id: job.id, agent: job.data.agent,
+      work_item_id: job.data.plane?.work_item_id || job.data.task?.id,
+      title: job.data.work_item?.title,
+      status: 'failed',
+      extra: `parseResult: ${parsed.error}`
+    });
+    throw new Error(`parseResult failed: ${parsed.error}`);
+  }
+  logStep({ job_id: job.id, agent: job.data.agent, step: 'parseResult', status: 'ok' });
+
+  await runAutomation({ jobData: job.data, result: parsed.data, startedAt });
+
+  const result = {
+    ...parsed.data,
+    agent,
+    task_id: task.id,
+    raw_length: output.length
+  };
 
   console.log(`[Worker] Job ${job.id} completed — ${result.summary?.slice(0, 100)}`);
 
