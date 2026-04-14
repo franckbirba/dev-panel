@@ -1,0 +1,25 @@
+name: work-item
+description: Standard work-item pipeline — build, review, QA.
+max_revisions: 3
+on_exhaustion: block
+
+steps:
+  - agent: builder
+    on:
+      done:     { next: reviewer }
+      blocked:  { next: pm, workflow: replan }
+      failed:   { terminal: true }
+
+  - agent: reviewer
+    retreat_allowed: [builder]
+    on:
+      done:     { next: qa }
+      blocked:  { next: pm, workflow: replan }
+      failed:   { next: builder, when: reviewer_rejected_pr }
+
+  - agent: qa
+    retreat_allowed: [pm]
+    on:
+      done:     { terminal: true }
+      failed:   { next: pm, workflow: replan }
+      blocked:  { next: pm, workflow: replan }
