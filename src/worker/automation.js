@@ -20,6 +20,8 @@ async function publishEvent(event, data) {
   }
 }
 
+// Flows are loaded once per worker process; editing any YAML under
+// src/worker/workflows/ requires a worker restart to take effect.
 let _flows = null;
 function getFlows() {
   if (!_flows) _flows = loadWorkflows();

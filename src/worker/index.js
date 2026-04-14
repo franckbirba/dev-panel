@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
-import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
+import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { runAutomation } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
