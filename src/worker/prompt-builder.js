@@ -10,7 +10,11 @@ const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
  * @returns {string} Assembled prompt
  */
 export function buildPrompt(jobData) {
-  const { agent, task, skills = [] } = jobData;
+  const {
+    job_id, agent, mode = 'autonomous',
+    plane = {}, work_item = {}, context = {},
+    required_skills = [], allowed_mcp = [], memory_namespace = 'dev-panel'
+  } = jobData;
 
   const sections = [];
 
@@ -22,45 +26,64 @@ export function buildPrompt(jobData) {
     sections.push(`You are the ${agent} agent. Follow project conventions.`);
   }
 
-  // 2. Skills
-  if (skills.length > 0) {
-    const skillContents = skills
-      .map(skill => {
-        const skillPath = join(PROJECT_ROOT, '.claude', 'skills', `${skill}.md`);
-        if (existsSync(skillPath)) {
-          return readFileSync(skillPath, 'utf8');
-        }
-        return null;
-      })
-      .filter(Boolean);
-
-    if (skillContents.length > 0) {
-      sections.push('## Skills\n\n' + skillContents.join('\n\n---\n\n'));
+  // 2. Required skills
+  if (required_skills.length > 0) {
+    const skillBlocks = required_skills.map(slug => {
+      const path = slug.includes(':')
+        ? join(PROJECT_ROOT, '.claude', 'skills', slug.replace(':', '-') + '.md')
+        : join(PROJECT_ROOT, '.claude', 'skills', slug + '.md');
+      return existsSync(path) ? readFileSync(path, 'utf8') : null;
+    }).filter(Boolean);
+    if (skillBlocks.length) {
+      sections.push('## Skills (mandatory)\n\n' + skillBlocks.join('\n\n---\n\n'));
     }
   }
 
-  // 3. Task
+  // 3. Job context
   sections.push([
-    '## Task',
+    '## Job',
     '',
-    `**ID:** ${task.id}`,
-    `**Title:** ${task.title}`,
-    task.description ? `**Description:** ${task.description}` : '',
-    task.branch ? `**Branch:** ${task.branch}` : '',
-    task.builder_output ? `**Builder Output:** ${JSON.stringify(task.builder_output)}` : ''
+    `**job_id:** ${job_id}`,
+    `**mode:** ${mode}`,
+    `**plane.module_id:** ${plane.module_id || '-'}`,
+    `**plane.cycle_id:** ${plane.cycle_id || '-'}`,
+    `**plane.work_item_id:** ${plane.work_item_id || '-'}`,
+    '',
+    '### Work item',
+    `**Title:** ${work_item.title || ''}`,
+    work_item.description ? `**Description:** ${work_item.description}` : '',
+    work_item.acceptance_criteria ? `**Acceptance criteria:**\n${work_item.acceptance_criteria.map(c => `- ${c}`).join('\n')}` : '',
+    work_item.priority ? `**Priority:** ${work_item.priority}` : '',
+    '',
+    '### Context',
+    context.branch ? `**Branch:** ${context.branch}` : '',
+    context.github_issue_number ? `**GitHub issue:** #${context.github_issue_number}` : '',
+    context.devpanel_ticket_id ? `**DevPanel ticket:** ${context.devpanel_ticket_id}` : '',
+    context.parent_job_id ? `**Parent job:** ${context.parent_job_id}` : '',
+    context.previous_agent_output ? `**Previous agent output:**\n\`\`\`json\n${JSON.stringify(context.previous_agent_output, null, 2)}\n\`\`\`` : ''
   ].filter(Boolean).join('\n'));
 
-  // 4. Rules
+  // 4. Allowed MCP allowlist
+  if (allowed_mcp.length) {
+    sections.push('## Allowed MCP servers\n\n' + allowed_mcp.map(m => `- ${m}`).join('\n'));
+  }
+
+  // 5. Rules (output contract is non-negotiable)
   sections.push([
     '## Rules',
     '',
     `- Working directory: ${PROJECT_ROOT}`,
-    task.branch ? `- Work on branch: ${task.branch}` : '- Work on a new branch named after the task ID',
-    '- Never use git add -A or git add . — always add files explicitly',
-    '- When done, output a JSON summary on the LAST line of your response:',
-    '  ```json',
-    '  {"files_created": [], "files_modified": [], "tests_passed": true, "summary": "..."}',
-    '  ```'
+    `- Memory namespace: ${memory_namespace}`,
+    '- Never use `git add -A` or `git add .` — add files explicitly.',
+    '- You MUST call `memory_search` at the start (search the spec for how).',
+    '- You MUST call `memory_write` for each non-obvious decision before finishing.',
+    '- The LAST line of your response MUST be a single JSON object matching:',
+    '',
+    '```json',
+    '{"status":"done|blocked|failed","summary":"...","artifacts":{"files_created":[],"files_modified":[],"commits":[],"branch":null,"tests_passed":false,"pr_url":null},"handoff":{"next_agent":null,"reason":""},"memory_writes_count":0,"blockers":[],"issues_found":[]}',
+    '```',
+    '',
+    '- Any deviation from the JSON schema will fail the job.'
   ].join('\n'));
 
   return sections.join('\n\n---\n\n');
