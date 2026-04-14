@@ -59,7 +59,8 @@
     "radix-ui": "^1.4.3",
     "react-dom": "^19.2.5",
     "tailwind-merge": "^3.5.0",
-    "wouter": "^3.9.0"
+    "wouter": "^3.9.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
