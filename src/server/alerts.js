@@ -171,28 +171,49 @@ const STATUS_WORD = {
 let _debounceBuffer = [];
 let _debounceTimer = null;
 
+function _hasDestination() {
+  return Boolean(
+    process.env.SHELLY_TELEGRAM_WEBHOOK ||
+    (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID)
+  );
+}
+
+async function _sendText(text) {
+  // Preferred: a Shelly webhook that accepts `{ text }` and forwards.
+  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+  if (url) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    }).catch(err => console.error('[Alerts] webhook send failed:', err.message));
+  }
+  // Fallback: direct Telegram Bot API.
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat  = process.env.TELEGRAM_CHAT_ID;
+  if (token && chat) {
+    return fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text })
+    }).catch(err => console.error('[Alerts] telegram API send failed:', err.message));
+  }
+}
+
 function _flushDebounce() {
   const lines = _debounceBuffer.map(b => b.line).join('\n');
   const metadataId = _debounceBuffer.map(b => b.job_id).filter(Boolean).join(',');
   _debounceBuffer = [];
   _debounceTimer = null;
-  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
-  if (!url) return;
-  return fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text: lines + (metadataId ? `\n<!-- job_ids:${metadataId} -->` : '')
-    })
-  }).catch(err => console.error('[Alerts] notifyJob fetch failed:', err.message));
+  if (!_hasDestination()) return;
+  return _sendText(lines + (metadataId ? `\n<!-- job_ids:${metadataId} -->` : ''));
 }
 
 export async function notifyJob({
   job_id = null, agent, work_item_id, title, status,
   duration_ms = null, extra = null, next_agent = null
 }) {
-  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
-  if (!url) return;
+  if (!_hasDestination()) return;
 
   const DEBOUNCE = parseInt(process.env.SHELLY_DEBOUNCE_MS ?? '5000', 10);
   const word = STATUS_WORD[status] || String(status).toUpperCase();
