@@ -61,12 +61,16 @@ function logMorningReview(entry) {
 /**
  * Spawn claude -p and return the output
  */
-function spawnAgent(jobId, prompt) {
+function spawnAgent(jobId, prompt, agentRole = 'unknown') {
   return new Promise((resolve, reject) => {
     const proc = spawn('claude', ['-p', prompt, '--print', '--dangerously-skip-permissions'], {
       cwd: PROJECT_ROOT,
       env: {
         ...process.env,
+        // Propagate identity into the MCP subprocess so memory_write can
+        // record writes against this job and tag them with the agent role.
+        JOB_ID: jobId,
+        AGENT_ROLE: agentRole,
         PATH: [
           join(process.env.HOME || '/home/deploy', '.bun/bin'),
           join(process.env.HOME || '/home/deploy', '.local/bin'),
@@ -138,8 +142,8 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     }).catch(() => {});
   }
 
-  // Spawn agent
-  const output = await spawnAgent(job.id, prompt);
+  // Spawn agent (propagate job_id + agent role to MCP subprocess)
+  const output = await spawnAgent(jobData.job_id, prompt, jobData.agent);
 
   // Parse result (strict: returns { ok, data } | { ok: false, error })
   const parsed = parseResult(output);
@@ -184,8 +188,10 @@ const worker = new Worker(QUEUES.agents, async (job) => {
 worker.on('completed', async (job, result) => {
   const { agent, task, source } = job.data;
   const mode = getMode();
+  const taskId = task?.id || job.data.plane?.work_item_id || job.id;
+  const taskTitle = task?.title || job.data.work_item?.title;
 
-  console.log(`[Pipeline] ${agent}:${task.id} completed (mode: ${mode.mode})`);
+  console.log(`[Pipeline] ${agent}:${taskId} completed (mode: ${mode.mode})`);
 
   // Log for morning review if autonomous
   if (mode.mode === 'autonomous') {
@@ -193,14 +199,14 @@ worker.on('completed', async (job, result) => {
       type: 'completed',
       job_id: job.id,
       agent,
-      task_id: task.id,
-      task_title: task.title,
+      task_id: taskId,
+      task_title: taskTitle,
       summary: result?.summary || 'No summary'
     });
   }
 
   // Chain: builder (tests passed) -> reviewer
-  if (agent === 'builder' && result?.tests_passed && source !== 'pipeline') {
+  if (agent === 'builder' && result?.tests_passed && source !== 'pipeline' && task?.id) {
     const agentsQueue = getQueue(QUEUES.agents);
     await agentsQueue.add(`review:${task.id}`, {
       agent: 'reviewer',
@@ -218,7 +224,7 @@ worker.on('completed', async (job, result) => {
   }
 
   // Chain: reviewer approved (autonomous mode) -> log merge-ready
-  if (agent === 'reviewer' && source === 'pipeline') {
+  if (agent === 'reviewer' && source === 'pipeline' && task?.id) {
     if (mode.mode === 'autonomous') {
       logMorningReview({
         type: 'merge_ready',
@@ -237,8 +243,10 @@ worker.on('completed', async (job, result) => {
 worker.on('failed', (job, err) => {
   const { agent, task } = job.data;
   const mode = getMode();
+  const taskId = task?.id || job.data.plane?.work_item_id || job.id;
+  const taskTitle = task?.title || job.data.work_item?.title;
 
-  console.error(`[Worker] Job ${job.id} failed — ${agent}:${task.id}: ${err.message}`);
+  console.error(`[Worker] Job ${job.id} failed — ${agent}:${taskId}: ${err.message}`);
 
   // If max attempts reached, log for morning review
   if (job.attemptsMade >= (job.opts.attempts || 3)) {
@@ -247,8 +255,8 @@ worker.on('failed', (job, err) => {
         type: 'failed',
         job_id: job.id,
         agent,
-        task_id: task.id,
-        task_title: task.title,
+        task_id: taskId,
+        task_title: taskTitle,
         error: err.message
       });
     }
