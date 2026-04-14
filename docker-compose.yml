@@ -94,7 +94,7 @@ services:
       PG_USER: affine
       PG_PASSWORD: ${AFFINE_DB_PASSWORD}
       PG_DATABASE: agent_memory
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      # VOYAGE_API_KEY comes from env_file (.env.production) — do not override here
       VOYAGE_MODEL: voyage-code-3
       AGENT_MEMORY_NAMESPACE: dev-panel
     volumes:
