@@ -89,14 +89,8 @@ services:
       ENABLE_BULLMQ: "true"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      PG_HOST: devpanel-postgres
-      PG_PORT: 5432
-      PG_USER: affine
-      PG_PASSWORD: ${AFFINE_DB_PASSWORD}
-      PG_DATABASE: agent_memory
-      # VOYAGE_API_KEY comes from env_file (.env.production) — do not override here
-      VOYAGE_MODEL: voyage-code-3
-      AGENT_MEMORY_NAMESPACE: dev-panel
+      # PG_*, VOYAGE_*, AGENT_MEMORY_NAMESPACE all come from env_file (.env.production)
+      # — init.sh generates them in sync with AFFINE_DB_PASSWORD
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist

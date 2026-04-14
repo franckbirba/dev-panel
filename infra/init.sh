@@ -63,6 +63,15 @@ TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
 AFFINE_DB_PASSWORD=$(existing_or_new AFFINE_DB_PASSWORD)
 AFFINE_URL=http://affine:3010
 
+# Agent memory (pgvector on the shared devpanel-postgres container)
+PG_HOST=devpanel-postgres
+PG_PORT=5432
+PG_USER=affine
+PG_PASSWORD=$(existing_or_new AFFINE_DB_PASSWORD)
+PG_DATABASE=agent_memory
+AGENT_MEMORY_NAMESPACE=dev-panel
+VOYAGE_MODEL=voyage-code-3
+
 # Plane
 PLANE_DB_PASSWORD=$(existing_or_new PLANE_DB_PASSWORD)
 PLANE_SECRET_KEY=$(existing_or_new PLANE_SECRET_KEY)
