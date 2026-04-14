@@ -40,10 +40,6 @@ describe('workflow-instances', () => {
                    { status: 'done' });
     const id2 = createInstance({ work_item_id: 'wi-3', workflow_name: 'work-item', current_step: 'builder' });
     expect(id2).toBeGreaterThan(0);
-    // Flip the recreated wi-3 to done so the later 'lists active instances'
-    // assertion (which expects wi-3 absent) is consistent.
-    updateInstance({ work_item_id: 'wi-3', workflow_name: 'work-item' },
-                   { status: 'done' });
   });
 
   it('updates current_step, revision, status, last_event_at', () => {
@@ -57,10 +53,15 @@ describe('workflow-instances', () => {
   });
 
   it('lists active instances', () => {
+    // Seed a fresh row whose state we control, independent of prior tests.
+    createInstance({ work_item_id: 'wi-active', workflow_name: 'work-item', current_step: 'builder' });
+    createInstance({ work_item_id: 'wi-terminal', workflow_name: 'work-item', current_step: 'builder' });
+    updateInstance({ work_item_id: 'wi-terminal', workflow_name: 'work-item' },
+                   { status: 'done' });
     const rows = listActive();
     const ids = rows.map(r => r.work_item_id);
-    expect(ids).toContain('wi-1');
-    expect(ids).not.toContain('wi-3'); // wi-3 was flipped to done before wi-3 recreate
+    expect(ids).toContain('wi-active');
+    expect(ids).not.toContain('wi-terminal');
   });
 
   it('lists instances by cycle_id', () => {

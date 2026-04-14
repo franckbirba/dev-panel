@@ -45,7 +45,7 @@ export function updateInstance({ work_item_id, workflow_name }, patch) {
             exhausted_at=?, last_job_id=?, metadata=?
       WHERE id=?`
   ).run(fields.revision, fields.current_step, fields.status, fields.last_event_at,
-        fields.exhausted_at || null, fields.last_job_id || null,
+        fields.exhausted_at ?? null, fields.last_job_id ?? null,
         typeof fields.metadata === 'string' ? fields.metadata :
           (fields.metadata ? JSON.stringify(fields.metadata) : null),
         current.id);
