@@ -25,6 +25,20 @@ const CRON_JOBS = [
     },
     repeat: { pattern: '0 8 * * 1' },
     priority: PRIORITY_MAP.p2
+  },
+  {
+    name: 'deploy:nightly',
+    data: {
+      agent: 'deploy',
+      job_id: 'deploy-cron',
+      requested_by: 'cron:nightly',
+      source: 'cron'
+    },
+    repeat: {
+      pattern: process.env.DEPLOY_CRON || '0 3 * * *',
+      tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
+    },
+    priority: PRIORITY_MAP.p1
   }
 ];
 

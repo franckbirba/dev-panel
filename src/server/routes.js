@@ -909,5 +909,32 @@ export function createRouter(config = {}) {
     }
   });
 
+
+  // ============================================================================
+  // Admin SSE — used by the worker to stream job lifecycle events
+  // ============================================================================
+
+  function authenticateAdmin(req, res, next) {
+    const key = req.headers['x-admin-key'];
+    const expected = process.env.ADMIN_API_KEY;
+    if (!key || !expected || key.length !== expected.length ||
+        !timingSafeEqual(Buffer.from(key), Buffer.from(expected))) {
+      return res.status(401).json({ error: 'admin auth required' });
+    }
+    next();
+  }
+
+  router.get('/admin/events', authenticateAdmin, (req, res) => {
+    import('./sse.js').then(({ addAdminClient }) => addAdminClient(res));
+  });
+
+  router.post('/admin/events/publish', authenticateAdmin, express.json(), async (req, res) => {
+    const { event, data } = req.body || {};
+    if (!event || typeof event !== 'string') return res.status(400).json({ error: 'event required' });
+    const { broadcastAdmin } = await import('./sse.js');
+    broadcastAdmin(event, data || {});
+    res.json({ ok: true });
+  });
+
   return router;
 }

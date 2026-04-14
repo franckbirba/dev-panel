@@ -35,6 +35,25 @@ export function initMasterDatabase(storagePath = './storage') {
 
     CREATE INDEX IF NOT EXISTS idx_api_key ON projects(api_key);
     CREATE INDEX IF NOT EXISTS idx_name ON projects(name);
+
+    CREATE TABLE IF NOT EXISTS agent_job_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      step TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      duration_ms INTEGER,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ajl_job ON agent_job_log(job_id);
+    CREATE INDEX IF NOT EXISTS idx_ajl_time ON agent_job_log(timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_memory_writes (
+      job_id TEXT NOT NULL,
+      memory_id TEXT NOT NULL,
+      PRIMARY KEY (job_id, memory_id)
+    );
   `);
 
   return masterDb;

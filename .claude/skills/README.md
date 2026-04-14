@@ -61,7 +61,7 @@ This directory contains skills for Claude Code agents in the OpenClaw workflow (
 ---
 
 ### Reviewer Agent (`/agent-reviewer`)
-**Trigger**: `review:pr` (on push to PR)  
+**Trigger**: `review:pr` (on push to PR)
 **Tools**: GitHub MCP, AFFiNE MCP (read), Penpot MCP (read), Plane MCP
 
 **Flow**:
@@ -73,6 +73,21 @@ This directory contains skills for Claude Code agents in the OpenClaw workflow (
 6. Leave review on GitHub (approve or request changes)
 7. Update Plane work item
 8. Enqueue `qa:run` (if approved)
+
+---
+
+### QA Agent (`/agent-qa`)
+**Trigger**: `qa:run` (after PR merge or nightly cron)
+**Tools**: Playwright MCP, DevPanel API, Plane MCP, GitHub (comments)
+
+**Flow**:
+1. Run smoke tests (API health, widget render, form submission)
+2. Run E2E tests (complete bug report workflow, multi-project)
+3. Visual regression testing (screenshot comparison)
+4. Report results to Plane work item
+5. Create DevPanel bug tickets for failures
+6. Update GitHub PR with test status
+7. Notify PM agent if critical tests fail
 
 ---
 
@@ -91,29 +106,43 @@ All validation requests are sent via Telegram webhook (`SHELLY_TELEGRAM_WEBHOOK`
 
 ## MCP Server Configuration
 
-From `.mcp.json`:
+From `.claude/mcp.json`:
 
 ```json
 {
   "mcpServers": {
+    "affine_workspace_9ba536be-bf23-4cbf-87e4-56c7afac6731": {
+      "type": "streamable-http",
+      "url": "https://affine.lan/api/workspaces/9ba536be-bf23-4cbf-87e4-56c7afac6731/mcp",
+      "headers": {
+        "Authorization": "Bearer ut_PLgvpr1_1peDXE6silzkTe1Wrxw9fAqfrxDtQ3bhvQQ"
+      }
+    },
     "plane": {
       "command": "uvx",
-      "args": ["--python", "3.12", "plane-mcp-server", "stdio"],
+      "args": ["--python", "3.12", "plane-mcp-server"],
       "env": {
-        "PLANE_API_KEY": "plane_api_...",
-        "PLANE_WORKSPACE_SLUG": "devpanl",
-        "PLANE_BASE_URL": "https://plane.devpanl.dev"
+        "PLANE_BASE_URL": "https://plane.devpanl.dev",
+        "PLANE_WORKSPACE_SLUG": "devpanl"
       }
     },
     "penpot": {
+      "type": "streamable-http",
       "url": "https://penpot-mcp.devpanl.dev/mcp"
     },
-    "affine": {
-      "command": "affine-mcp",
+    "dev-panel": {
+      "command": "node",
+      "args": ["/Users/franckbirba/DEV/dev-panel/src/mcp/server.js"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@automatalabs/mcp-server-playwright"]
+    },
+    "obsidian": {
+      "command": "npx",
+      "args": ["-y", "@marekmarek/mcp-obsidian"],
       "env": {
-        "AFFINE_BASE_URL": "http://localhost:3010",
-        "AFFINE_API_TOKEN": "ut_...",
-        "AFFINE_WORKSPACE_ID": "9ba536be-bf23-..."
+        "OBSIDIAN_VAULT_PATH": "/Users/franckbirba/DEV/Obsidian Vault"
       }
     }
   }
@@ -124,14 +153,14 @@ From `.mcp.json`:
 
 ## BullMQ Job Queue
 
-Jobs (see `/infra/docker-compose.yml` for Redis config):
+Jobs (see `/docker-compose.yml` for Redis config):
 
-- `shelly:triage` → PM Agent (always runs)
+- `shelly:triage` → PM Agent (always runs on new DevPanel ticket)
 - `arch:review` → Architect Agent (on-demand, not yet implemented)
 - `design:sprint` → Designer Agent (on-demand)
 - `build:task` → Builder Agent (concurrent ×N)
-- `review:pr` → Reviewer Agent (on push)
-- `qa:run` → QA Agent (on merge, not yet implemented)
+- `review:pr` → Reviewer Agent (on push to PR)
+- `qa:run` → **QA Agent** (after PR merge, nightly cron, on-demand) ✅
 - `secu:check` → Security Agent (blocking, not yet implemented)
 
 ---
@@ -149,18 +178,27 @@ claude /stack-status
 claude /shelly-sync
 
 # Run agent workflows
-claude /agent-pm
-claude /agent-designer
-claude /agent-builder
-claude /agent-reviewer
+claude /agent-pm       # Triage tickets, create work items
+claude /agent-designer # Create wireframes, design tokens
+claude /agent-builder  # Implement features, create PRs
+claude /agent-reviewer # Review PRs for conformity
+claude /agent-qa       # Run E2E tests with Playwright ✅
 ```
 
 ---
 
-## Next Steps (Not Yet Implemented)
+## Implementation Status
 
+✅ **Implemented**:
+- PM Agent (`/agent-pm`) — Triage & backlog management
+- Designer Agent (`/agent-designer`) — Penpot integration
+- Builder Agent (`/agent-builder`) — Code generation & PRs
+- Reviewer Agent (`/agent-reviewer`) — PR reviews
+- **QA Agent** (`/agent-qa`) — **Playwright E2E testing** ✅
+- Infrastructure commands (`/stack-deploy`, `/stack-status`, `/shelly-sync`)
+
+⏳ **Not Yet Implemented**:
 - **Architect Agent** (`/agent-architect`) — ADR creation, impact analysis
-- **QA Agent** (`/agent-qa`) — E2E tests, smoke tests
 - **Security Agent** (`/agent-secu`) — Permify integration, compliance checks
 - **pgvector Memory** — Semantic search of past decisions
-- **Telegram Bot** — Interactive validation via Telegram
+- **Telegram Bot** — Interactive validation via Telegram messages
