@@ -54,6 +54,11 @@ program
   .option('--cycle <id>')
   .description('Workflow engine operations')
   .action(async (action, work_item_id, opts) => {
+    // Workflow ops hit the master SQLite (workflow_instances); initialize
+    // it the same way the worker + server do.
+    const { initMasterDatabase } = await import('../src/server/db.js');
+    initMasterDatabase(process.env.DEVPANEL_STORAGE || './storage');
+
     if (action === 'dispatch') {
       if (!work_item_id) { console.error('work_item_id is required'); process.exit(2); }
       const { enqueueWorkflowStart } = await import('../src/worker/dispatch.js');
