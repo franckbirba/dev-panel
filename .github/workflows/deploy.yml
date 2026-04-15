@@ -73,22 +73,26 @@ jobs:
             # Private LAN IP for redis/postgres port binding (see docker-compose.yml)
             export LAN_HOST="10.0.0.2"
 
-            # Initialize .env.production
+            # Initialize .env.production (idempotent — preserves existing secrets)
             bash infra/init.sh production
 
-            # Deploy core stack
-            docker compose pull
-            docker compose --profile core up -d
-            docker compose --profile plane up -d
-            docker compose --profile penpot up -d
-            docker compose --profile monitoring up -d
+            # ──────────────────────────────────────────────────────────────
+            # DEPLOY RULE (see memory/infra_deploy_isolation.md):
+            # Per-push CI only refreshes the `devpanel` container.
+            # Plane, Penpot, Affine, traefik, redis, postgres, monitoring
+            # are persistent team infrastructure — they stay up across
+            # deploys. Touching them here has caused repeated Plane outages.
+            # Bootstrap / stack rebuild is a manual op, not a CI job.
+            # ──────────────────────────────────────────────────────────────
+            docker compose pull devpanel
+            docker compose up -d --no-deps devpanel
 
-            # Health check (worker runs on agents node; see scripts/deploy-agent-worker.sh)
+            # Health check
             sleep 15
-            docker compose ps
+            docker compose ps devpanel
             docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
 
-            # Cleanup
+            # Cleanup dangling images only (do not prune the stopped plane-migrator etc.)
             docker image prune -f
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}

@@ -61,6 +61,24 @@ The package has four layers with clean separation:
 
 Project config lives in `.devpanelrc.json` (template at `templates/.devpanelrc.json`). Contains project name, server port, GitHub credentials, sync settings, and storage path.
 
+## Deploy isolation — persistent services are off-limits on `git push`
+
+**Rule:** a push to `main` refreshes *only* the `devpanel` container. Everything else on the services VPS — Plane, Penpot, Affine, traefik, redis, postgres, bull-board, uptime-kuma — is **persistent team infrastructure** that must survive every deploy. It holds user data (work items, design files, notes, memory). `.github/workflows/deploy.yml` reflects this: it runs `docker compose up -d --no-deps devpanel` and nothing else. Don't add `docker compose --profile plane|penpot|monitoring up -d` back into CI.
+
+**Bootstrap / full stack rebuild** is a deliberate, manual operation run on the VPS:
+```bash
+ssh deploy@77.42.46.87 'cd ~/dev-panel && docker compose --profile all up -d'
+```
+Never trigger this from CI.
+
+**On the VPS there must be exactly one env file.** Keep `.env.production`; delete `.env` or symlink it to `.env.production`. Docker Compose reads `.env` first for interpolation — if both exist, `.env` wins silently and drifts from `.env.production`, which is exactly how Plane's DB password kept getting baked wrong into recreated containers.
+
+**Postgres stored password drift** is a separate recurring trap: `POSTGRES_PASSWORD` only initializes the role on the first volume write. Once the volume exists, changing the env var has no effect — the running DB still accepts only the original password. Recover with:
+```bash
+docker exec plane-db psql -U plane -d plane -c "ALTER USER plane WITH PASSWORD '<hex>';"
+```
+See memory `infra_plane_caveats.md` for the full symptom-to-fix decision tree.
+
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
 
 Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the official Telegram channel plugin. You chat with her in Telegram; she dispatches work to other agents and reports back.
