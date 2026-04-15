@@ -203,17 +203,26 @@ async function _sendText(text) {
 function _flushDebounce() {
   const lines = _debounceBuffer.map(b => b.line).join('\n');
   const metadataId = _debounceBuffer.map(b => b.job_id).filter(Boolean).join(',');
+  console.log('[Alerts] Flushing', _debounceBuffer.length, 'notification(s)');
   _debounceBuffer = [];
   _debounceTimer = null;
-  if (!_hasDestination()) return;
-  return _sendText(lines + (metadataId ? `\n<!-- job_ids:${metadataId} -->` : ''));
+  if (!_hasDestination()) {
+    console.warn('[Alerts] No destination configured');
+    return;
+  }
+  const text = lines + (metadataId ? `\n<!-- job_ids:${metadataId} -->` : '');
+  console.log('[Alerts] Sending:', text.substring(0, 100));
+  return _sendText(text);
 }
 
 export async function notifyJob({
   job_id = null, agent, work_item_id, title, status,
   duration_ms = null, extra = null, next_agent = null
 }) {
-  if (!_hasDestination()) return;
+  if (!_hasDestination()) {
+    console.log('[Alerts] No destination, skipping notification');
+    return;
+  }
 
   const DEBOUNCE = parseInt(process.env.SHELLY_DEBOUNCE_MS ?? '5000', 10);
   const word = STATUS_WORD[status] || String(status).toUpperCase();
@@ -222,6 +231,11 @@ export async function notifyJob({
   else if (extra) parts.push(`(${extra})`);
   parts.push(next_agent ? `  next: ${next_agent}` : `  next: -`);
 
-  _debounceBuffer.push({ job_id, line: parts.join('  ') });
-  if (!_debounceTimer) _debounceTimer = setTimeout(_flushDebounce, DEBOUNCE);
+  const line = parts.join('  ');
+  console.log('[Alerts] Queuing:', line);
+  _debounceBuffer.push({ job_id, line });
+  if (!_debounceTimer) {
+    console.log(`[Alerts] Starting ${DEBOUNCE}ms debounce timer`);
+    _debounceTimer = setTimeout(_flushDebounce, DEBOUNCE);
+  }
 }
