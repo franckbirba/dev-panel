@@ -240,6 +240,10 @@ services:
       - "traefik.http.routers.plane-api.tls=true"
       - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
+      # Priority must beat plane-web's length-based default, otherwise
+      # every /api/* request is served as the plane-web SPA. See
+      # memory: infra_plane_caveats.md.
+      - "traefik.http.routers.plane-api.priority=30"
 
   plane-migrator:
     image: makeplane/plane-backend:stable
