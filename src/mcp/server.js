@@ -309,20 +309,23 @@ server.tool(
   'Mark a cycle closed in Plane and schedule its cycle-audit pipeline.',
   {
     cycle_id: z.string(),
-    project_id: z.string().optional(),
+    project_id: z.string().describe('Plane project id for the cycle being closed — required; devpanl is multi-project'),
     audit_at: z.string().optional().describe('ISO 8601; defaults to next 09:00 Europe/Paris')
   },
   async ({ cycle_id, project_id, audit_at }) => {
     const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
     // Step A: mark the cycle closed in Plane. Non-fatal if creds are absent
     // (matches Spec 1 pattern: automation steps no-op when env is unset).
+    // NB: project_id is passed in per-call — each devpanl-imported GitHub
+    // repo has its own Plane project, so resolving from a global env var
+    // would cement the wrong multi-tenant model. Future: resolve from the
+    // devpanl projects table based on caller context.
     const base = process.env.PLANE_BASE_URL;
     const slug = process.env.PLANE_WORKSPACE_SLUG;
     const token = process.env.PLANE_API_TOKEN;
-    const proj = project_id || process.env.PLANE_PROJECT_ID;
-    if (base && slug && token && proj) {
+    if (base && slug && token && project_id) {
       try {
-        await fetch(`${base}/api/v1/workspaces/${slug}/projects/${proj}/cycles/${cycle_id}/`, {
+        await fetch(`${base}/api/v1/workspaces/${slug}/projects/${project_id}/cycles/${cycle_id}/`, {
           method: 'PATCH',
           headers: { 'X-API-Key': token, 'Content-Type': 'application/json',
                      'User-Agent': 'dev-panel/close_cycle' },
