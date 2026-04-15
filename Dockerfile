@@ -27,6 +27,7 @@ COPY --from=base /app/package*.json ./
 COPY --from=base /app/bin ./bin
 COPY --from=base /app/src ./src
 COPY --from=base /app/templates ./templates
+COPY --from=base /app/claw.js ./claw.js
 
 # dist/ is mounted as volume in docker-compose (../dist:/app/dist)
 # Do NOT COPY it here — .dockerignore excludes it
