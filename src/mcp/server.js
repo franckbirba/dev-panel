@@ -280,6 +280,107 @@ server.tool(
 );
 
 server.tool(
+  'plane_dispatch_work_item',
+  'Start the work-item pipeline on a Plane work-item (PM-owned dispatch).',
+  {
+    work_item_id: z.string(),
+    module_id: z.string().optional(),
+    cycle_id: z.string().optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    workflow: z.enum(['work-item']).default('work-item')
+  },
+  async ({ work_item_id, module_id, cycle_id, title, description, workflow }) => {
+    const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
+    const out = await enqueueWorkflowStart({
+      workflow,
+      plane: { work_item_id, module_id, cycle_id },
+      work_item: { title, description }
+    });
+    return {
+      content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+      isError: !out.ok
+    };
+  }
+);
+
+server.tool(
+  'plane_close_cycle',
+  'Mark a cycle closed in Plane and schedule its cycle-audit pipeline.',
+  {
+    cycle_id: z.string(),
+    project_id: z.string().optional(),
+    audit_at: z.string().optional().describe('ISO 8601; defaults to next 09:00 Europe/Paris')
+  },
+  async ({ cycle_id, project_id, audit_at }) => {
+    const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
+    // Step A: mark the cycle closed in Plane. Non-fatal if creds are absent
+    // (matches Spec 1 pattern: automation steps no-op when env is unset).
+    const base = process.env.PLANE_BASE_URL;
+    const slug = process.env.PLANE_WORKSPACE_SLUG;
+    const token = process.env.PLANE_API_TOKEN;
+    const proj = project_id || process.env.PLANE_PROJECT_ID;
+    if (base && slug && token && proj) {
+      try {
+        await fetch(`${base}/api/v1/workspaces/${slug}/projects/${proj}/cycles/${cycle_id}/`, {
+          method: 'PATCH',
+          headers: { 'X-API-Key': token, 'Content-Type': 'application/json',
+                     'User-Agent': 'dev-panel/close_cycle' },
+          body: JSON.stringify({ end_date: new Date().toISOString() })
+        });
+      } catch (e) {
+        console.warn('[plane_close_cycle] Plane PATCH failed:', e.message);
+      }
+    }
+    // Step B: schedule audit
+    const when = audit_at ? Date.parse(audit_at) : nextAuditTime();
+    const out = await enqueueWorkflowStart({
+      workflow: 'cycle-audit',
+      plane: { work_item_id: `cycle:${cycle_id}`, cycle_id },
+      work_item: { title: `Cycle audit ${cycle_id}` },
+      scheduled_for: when
+    });
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ ...out, scheduled_for: when }, null, 2) }],
+      isError: !out.ok
+    };
+  }
+);
+
+// nextAuditTime assumes host timezone is Europe/Paris (spec §5.2).
+// On a non-Paris-TZ container this shifts by the UTC offset — revisit
+// if Europe/Paris scheduling becomes load-bearing.
+function nextAuditTime() {
+  const now = new Date();
+  const t = new Date(now);
+  t.setHours(9, 0, 0, 0);
+  if (t <= now) t.setDate(t.getDate() + 1);
+  return t.getTime();
+}
+
+server.tool(
+  'devpanel_workflow_dispatch',
+  'Operator override: start any workflow on a work-item (admin).',
+  {
+    work_item_id: z.string(),
+    workflow: z.enum(['work-item', 'cycle-audit']).default('work-item'),
+    module_id: z.string().optional(),
+    cycle_id: z.string().optional()
+  },
+  async ({ work_item_id, workflow, module_id, cycle_id }) => {
+    const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
+    const out = await enqueueWorkflowStart({
+      workflow,
+      plane: { work_item_id, module_id, cycle_id }
+    });
+    return {
+      content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+      isError: !out.ok
+    };
+  }
+);
+
+server.tool(
   'list_jobs',
   'List jobs in the agents queue by status',
   {

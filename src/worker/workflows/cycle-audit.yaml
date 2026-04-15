@@ -1,0 +1,11 @@
+name: cycle-audit
+description: Cycle-end cybersecurity audit (agent lands in Spec 3).
+max_revisions: 1
+on_exhaustion: block
+
+steps:
+  - agent: audit
+    on:
+      done:     { terminal: true }
+      failed:   { next: pm, workflow: replan }
+      blocked:  { next: pm, workflow: replan }

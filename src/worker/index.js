@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
-import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
+import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { runAutomation } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
@@ -205,39 +205,7 @@ worker.on('completed', async (job, result) => {
     });
   }
 
-  // Chain: builder (tests passed) -> reviewer
-  if (agent === 'builder' && result?.tests_passed && source !== 'pipeline' && task?.id) {
-    const agentsQueue = getQueue(QUEUES.agents);
-    await agentsQueue.add(`review:${task.id}`, {
-      agent: 'reviewer',
-      task: {
-        ...task,
-        builder_output: result
-      },
-      skills: ['agent-reviewer'],
-      source: 'pipeline',
-      requested_by: 'worker'
-    }, {
-      priority: PRIORITY_MAP.p1
-    });
-    console.log(`[Pipeline] Enqueued reviewer for ${task.id}`);
-  }
-
-  // Chain: reviewer approved (autonomous mode) -> log merge-ready
-  if (agent === 'reviewer' && source === 'pipeline' && task?.id) {
-    if (mode.mode === 'autonomous') {
-      logMorningReview({
-        type: 'merge_ready',
-        task_id: task.id,
-        task_title: task.title,
-        branch: task.branch,
-        review_result: result?.summary || 'Approved'
-      });
-      console.log(`[Pipeline] ${task.id} merge-ready (autonomous — logged for morning review)`);
-    } else {
-      console.log(`[Pipeline] ${task.id} review done — awaiting Franck validation (collaborative mode)`);
-    }
-  }
+  // Chaining is owned by workflow.trigger_next (see src/worker/engine.js).
 });
 
 worker.on('failed', (job, err) => {

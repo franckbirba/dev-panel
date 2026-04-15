@@ -41,6 +41,15 @@ Validate Builder's branch against tests and conventions; merge in autonomous mod
 Populate: `status` (done | failed), `summary`, `artifacts.pr_url`, `handoff.next_agent` (qa on done, builder on failed), `memory_writes_count`, `issues_found`.
 
 ## Handoff
+
+On done (merge approved): hand off to **qa**.
+
+On rejection (serious issues): retreat to **builder** — set
+`handoff.next_agent = "builder"` in the output JSON. This is the only
+allowed retreat; any other value is rejected by the engine.
+
+`handoff.retreat_allowed: [builder]`
+
 - Approved → qa
 - Rejected → builder (with `issues_found`)
 

@@ -12,11 +12,26 @@ const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 export function buildPrompt(jobData) {
   const {
     job_id, agent, mode = 'autonomous',
+    workflow = null, workflow_instance_id = null, workflow_revision = null,
+    parent_workflow = null, parent_revision = null, failed_step = null,
+    issues_found = [], blockers = [],
     plane = {}, work_item = {}, context = {},
     required_skills = [], allowed_mcp = [], memory_namespace = 'dev-panel'
   } = jobData;
 
   const sections = [];
+
+  if (workflow) {
+    sections.push(
+      `## Workflow context\n\n` +
+      `- workflow: ${workflow}\n` +
+      `- instance_id: ${workflow_instance_id}\n` +
+      `- revision: ${workflow_revision}\n` +
+      (parent_workflow ? `- parent_workflow: ${parent_workflow}\n` +
+                         `- parent_revision: ${parent_revision}\n` +
+                         `- failed_step: ${failed_step}\n` : '')
+    );
+  }
 
   // 1. Agent SOUL
   const soulPath = join(PROJECT_ROOT, '.agents', agent, 'SOUL.md');

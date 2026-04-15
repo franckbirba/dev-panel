@@ -1,0 +1,11 @@
+name: replan
+description: PM re-plans a failed workflow revision.
+max_revisions: 1
+on_exhaustion: block
+
+steps:
+  - agent: pm
+    on:
+      done:     { terminal: true }
+      blocked:  { terminal: true }
+      failed:   { terminal: true }

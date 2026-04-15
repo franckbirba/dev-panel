@@ -45,4 +45,38 @@ program.addCommand(importCommand);
 program.addCommand(syncDocsCommand);
 program.addCommand(clarifyCommand);
 
+program
+  .command('workflow')
+  .argument('<action>', 'dispatch | list')
+  .argument('[work_item_id]')
+  .option('--workflow <name>', 'work-item | cycle-audit', 'work-item')
+  .option('--module <id>')
+  .option('--cycle <id>')
+  .description('Workflow engine operations')
+  .action(async (action, work_item_id, opts) => {
+    if (action === 'dispatch') {
+      if (!work_item_id) { console.error('work_item_id is required'); process.exit(2); }
+      const { enqueueWorkflowStart } = await import('../src/worker/dispatch.js');
+      let out;
+      try {
+        out = await enqueueWorkflowStart({
+          workflow: opts.workflow,
+          plane: { work_item_id, module_id: opts.module, cycle_id: opts.cycle }
+        });
+      } catch (err) {
+        console.error(`dispatch failed: ${err.message}`);
+        process.exit(1);
+      }
+      console.log(JSON.stringify(out, null, 2));
+      process.exit(out.ok ? 0 : 1);
+    }
+    if (action === 'list') {
+      const { listActive } = await import('../src/server/workflow-instances.js');
+      console.table(listActive());
+      return;
+    }
+    console.error(`unknown action: ${action}`);
+    process.exit(2);
+  });
+
 program.parse();
