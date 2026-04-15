@@ -94,14 +94,22 @@ Both `.env` and `.env.production` on services VPS must carry `TELEGRAM_BOT_TOKEN
 
 ### Relaunching Shelly
 
+**Critical:** `bun` lives at `/home/deploy/.bun/bin/bun` and must be on `PATH` inside the tmux session, otherwise the telegram plugin silently fails to spawn its bun subprocess — Shelly will *say* "Listening for channel messages" but will never actually receive any. `su -` strips `.bun/bin` from PATH by default. Always set it explicitly:
+
 ```bash
-ssh hetzner-vps 'su - deploy -c "cd /home/deploy/projects/dev-panel && \
+ssh hetzner-vps 'su - deploy -c "tmux -L deploy kill-session -t shelly 2>/dev/null; \
+  cd /home/deploy/projects/dev-panel && \
   tmux -L deploy new-session -d -s shelly \
-    \"TELEGRAM_BOT_TOKEN=<token> TELEGRAM_CHAT_ID=<chat> \
-     claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions\""'
+    \"PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+     claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions\" && \
+  sleep 5 && tmux -L deploy send-keys -t shelly Enter"'
 ```
 
-Attach to observe: `ssh hetzner-vps 'su - deploy -c "tmux -L deploy attach -t shelly"'` (read-only preferable).
+The `send-keys Enter` dismisses Claude's first-run "trust this folder?" prompt. Token + chat ID come from `/home/deploy/.claude/channels/telegram/.env` — the plugin reads it at startup; no need to pass them on the command line.
+
+Verify she's live: `ssh hetzner-vps 'pgrep -af "bun server.ts"'` must show a process. If empty, the plugin failed to start — almost always a PATH issue.
+
+Attach to observe: `ssh hetzner-vps 'su - deploy -c "tmux -L deploy attach -t shelly"'` (read-only preferable — `Ctrl-b d` to detach).
 
 ### Dead code — do not resurrect
 
