@@ -231,6 +231,10 @@ services:
       AWS_SECRET_ACCESS_KEY: ${PLANE_MINIO_ROOT_PASSWORD}
       AWS_S3_BUCKET_NAME: plane-uploads
       AWS_S3_ENDPOINT_URL: https://minio.devpanl.dev
+      # Required by plane-backend's gunicorn entrypoint — otherwise
+      # gunicorn -w '' fails with "invalid int value" and the container
+      # restart-loops before serving.
+      GUNICORN_WORKERS: "2"
     depends_on:
       plane-db:
         condition: service_healthy
