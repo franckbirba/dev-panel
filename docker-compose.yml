@@ -114,23 +114,6 @@ services:
       - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
 
-  shelly-bot:
-    image: ghcr.io/franckbirba/dev-panel:latest
-    container_name: shelly-bot
-    profiles: [core, all]
-    restart: unless-stopped
-    env_file:
-      - path: .env.production
-        required: false
-      - path: .env
-        required: false
-    environment:
-      GITHUB_REPO: ${GITHUB_REPO:-franckbirba/dev-panel}
-      GITHUB_ASSIGNEE: ${GITHUB_ASSIGNEE:-shelly}
-    command: ["node", "claw.js"]
-    networks:
-      - devpanel_net
-
   postgres:
     image: pgvector/pgvector:pg16
     container_name: devpanel-postgres

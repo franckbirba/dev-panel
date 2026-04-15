@@ -60,3 +60,57 @@ The package has four layers with clean separation:
 ## Configuration
 
 Project config lives in `.devpanelrc.json` (template at `templates/.devpanelrc.json`). Contains project name, server port, GitHub credentials, sync settings, and storage path.
+
+## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
+
+Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the official Telegram channel plugin. You chat with her in Telegram; she dispatches work to other agents and reports back.
+
+### Runtime topology
+
+| Host | Role | What runs |
+|---|---|---|
+| `hetzner-vps` — 62.238.0.167 (agents node, internal 10.0.0.3) | Shelly + coding agents | `tmux -L deploy -s shelly` session → `claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions` as user `deploy`, cwd `/home/deploy/projects/dev-panel`. BullMQ worker `node src/worker/index.js` pulls jobs from Redis (services node) and spawns **ephemeral** `claude -p` subprocesses per job. |
+| services VPS — 77.42.46.87 (internal 10.0.0.2) | Control plane | `devpanel-api` container (Express + MCP + `notifyJob()` push notifications), Redis, Postgres, dashboard, bull-board. |
+
+### Who polls the Telegram bot token
+
+**Exactly one process** may call `getUpdates` for a given bot token or Telegram returns `409 Conflict` and *everyone* loses messages. That one process is **Shelly** (the tmux session on `hetzner-vps`). Do not start any other poller with the same token anywhere — no second tmux, no Docker container, no local `node claw.js`, nothing.
+
+Push-only `sendMessage` calls (used by `notifyJob()` in `src/server/alerts.js`) are fine — they don't conflict.
+
+### Telegram env vars
+
+Both `.env` and `.env.production` on services VPS must carry `TELEGRAM_BOT_TOKEN=8661116721:...` and `TELEGRAM_CHAT_ID=5663177530` (numeric, never a t.me URL). `.env` takes precedence over `.env.production` in `docker-compose`, so fix both when updating.
+
+### Dispatch flow
+
+1. You → Telegram → Shelly (Claude with restricted MCP tools: devpanel, plane, affine, penpot, github, pgvector, bullmq).
+2. Shelly reads context via MCP, identifies work, calls `enqueue_job` on the devpanel MCP.
+3. BullMQ worker (same host) pops the job, spawns `claude -p "..."` in the target project cwd with full tools.
+4. Ephemeral Claude does the work and exits.
+5. Shelly or the worker's `notifyJob()` reports status back to Telegram.
+
+**Shelly does not code.** She dispatches and reports. Coding happens in the ephemeral `claude -p` subprocesses.
+
+### Relaunching Shelly
+
+```bash
+ssh hetzner-vps 'su - deploy -c "cd /home/deploy/projects/dev-panel && \
+  tmux -L deploy new-session -d -s shelly \
+    \"TELEGRAM_BOT_TOKEN=<token> TELEGRAM_CHAT_ID=<chat> \
+     claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions\""'
+```
+
+Attach to observe: `ssh hetzner-vps 'su - deploy -c "tmux -L deploy attach -t shelly"'` (read-only preferable).
+
+### Dead code — do not resurrect
+
+- `claw.js` and anything in `docs/SHELLY.md` referencing OpenClaw, `claw` CLI, `node-telegram-bot-api`, or a `shelly-bot` Docker container is the **old design, abandoned**. The `/issues` /resolve /resolveall slash-command bot is not part of the current architecture. If you see a `shelly-bot` service in `docker-compose.yml` or a `bot` script in `package.json`, they are leftovers to remove.
+
+### References (on the repo)
+
+- `src/worker/index.js` — BullMQ worker on agents host
+- `src/server/alerts.js` — `notifyJob()` push notifications
+- `.agents/shelly/SOUL.md` — Shelly's persona/tool restrictions (if present)
+- Memory: `shelly_bootstrap.md`, `shelly_job_decisions.md`, `infra_prod_network.md`
+
