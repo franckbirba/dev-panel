@@ -77,6 +77,7 @@
     "bin",
     "src",
     "templates",
+    "claw.js",
     "README.md"
   ]
 }
