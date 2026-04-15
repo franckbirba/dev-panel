@@ -132,21 +132,27 @@ services:
       - devpanel_net
 
   postgres:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.devpanel.rule=Host(`devpanl.dev`)"
-      - "traefik.http.routers.devpanel.entrypoints=websecure"
-      - "traefik.http.routers.devpanel.tls=true"
-      - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
-      - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
-
-  postgres:
     image: pgvector/pgvector:pg16
     container_name: devpanel-postgres
+    profiles: [core, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: affine
+      POSTGRES_PASSWORD: ${AFFINE_DB_PASSWORD}
+      POSTGRES_DB: affine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Expose on private LAN only (10.0.0.2) so the worker on the agents
+      # node (10.0.0.3) can reach it for memory_* MCP tools. Not public.
+      - "${LAN_HOST:-127.0.0.1}:5432:5432"
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U affine"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     profiles: [core, all]
     restart: unless-stopped
     environment:
