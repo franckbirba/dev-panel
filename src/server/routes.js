@@ -11,6 +11,7 @@ import {
   createTicket,
   getTicket,
   listTickets,
+  searchTickets,
   updateTicket,
   deleteTicket,
   getStats,
@@ -661,11 +662,21 @@ export function createRouter(config = {}) {
   // List tickets
   router.get('/tickets', authenticateProject, (req, res) => {
     try {
-      const { status, limit } = req.query;
+      const { status, type, q, sort, order, limit, offset } = req.query;
+
+      if (q) {
+        const results = searchTickets(storagePath, req.project.id, q,
+          limit ? parseInt(limit) : 20);
+        return res.json({ project: req.project.name, tickets: results });
+      }
 
       const tickets = listTickets(storagePath, req.project.id, {
         status,
-        limit: limit ? parseInt(limit) : undefined
+        type,
+        sort,
+        order,
+        limit: limit ? parseInt(limit) : undefined,
+        offset: offset ? parseInt(offset) : undefined
       });
 
       res.json({

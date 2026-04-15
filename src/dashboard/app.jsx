@@ -8,7 +8,6 @@ import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
 
-// Derive initial tab from URL
 function getInitialTab() {
   const path = window.location.pathname;
   if (path.includes("/queues")) return "queues";
@@ -16,9 +15,20 @@ function getInitialTab() {
   return "inbox";
 }
 
+function getInitialInboxParams() {
+  const sp = new URLSearchParams(window.location.search);
+  return {
+    filter: sp.get("filter") || null,
+    search: sp.get("q") || "",
+    sort: sp.get("sort") || "created_at",
+    order: sp.get("order") || "desc",
+  };
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState(getInitialTab);
-  const [filter, setFilter] = useState(null);
+  const [inboxParams, setInboxParams] = useState(getInitialInboxParams);
+  const filter = inboxParams.filter;
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("devpanel_api_key") || "");
   const [sseConnected, setSseConnected] = useState(false);
   const [activities, setActivities] = useState([]);
@@ -29,9 +39,22 @@ function App() {
 
   const apiUrl = window.location.origin;
 
+  function updateInboxParams(next) {
+    setInboxParams(prev => {
+      const merged = { ...prev, ...next };
+      const sp = new URLSearchParams();
+      if (merged.filter) sp.set("filter", merged.filter);
+      if (merged.search) sp.set("q", merged.search);
+      if (merged.sort && merged.sort !== "created_at") sp.set("sort", merged.sort);
+      if (merged.order && merged.order !== "desc") sp.set("order", merged.order);
+      const qs = sp.toString();
+      window.history.replaceState(null, "", "/dashboard/" + (qs ? `?${qs}` : ""));
+      return merged;
+    });
+  }
+
   function handleTabChange(tab) {
     setActiveTab(tab);
-    // Update URL for bookmarking without full navigation
     const path = tab === "queues" ? "/dashboard/queues"
       : tab === "settings" ? "/dashboard/settings"
       : "/dashboard/";
@@ -149,10 +172,10 @@ function App() {
         onTabChange={handleTabChange}
         stats={tabStats}
         activeFilter={filter}
-        onFilterChange={setFilter}
+        onFilterChange={(f) => updateInboxParams({ filter: f === filter ? null : f })}
       />
       <div className="flex-1 overflow-hidden">
-        {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
+        {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} search={inboxParams.search} sort={inboxParams.sort} order={inboxParams.order} onParamsChange={updateInboxParams} refreshKey={refreshKey} />}
         {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
         {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
         {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}

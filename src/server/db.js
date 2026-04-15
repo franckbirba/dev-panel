@@ -138,7 +138,27 @@ export function initProjectDatabase(storagePath, projectId) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_status ON tickets(status);
+    CREATE INDEX IF NOT EXISTS idx_type ON tickets(type);
     CREATE INDEX IF NOT EXISTS idx_github_issue ON tickets(github_issue_number);
+
+    -- Full-text search index for tickets
+    CREATE VIRTUAL TABLE IF NOT EXISTS tickets_fts USING fts5(
+      title, description, content=tickets, content_rowid=id
+    );
+
+    -- Triggers to keep tickets FTS in sync
+    CREATE TRIGGER IF NOT EXISTS tickets_fts_ai AFTER INSERT ON tickets BEGIN
+      INSERT INTO tickets_fts(rowid, title, description) VALUES (new.id, new.title, new.description);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS tickets_fts_ad AFTER DELETE ON tickets BEGIN
+      INSERT INTO tickets_fts(tickets_fts, rowid, title, description) VALUES('delete', old.id, old.title, old.description);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS tickets_fts_au AFTER UPDATE ON tickets BEGIN
+      INSERT INTO tickets_fts(tickets_fts, rowid, title, description) VALUES('delete', old.id, old.title, old.description);
+      INSERT INTO tickets_fts(rowid, title, description) VALUES (new.id, new.title, new.description);
+    END;
 
     -- Milestones
     CREATE TABLE IF NOT EXISTS milestones (
@@ -350,7 +370,9 @@ export function getTicket(storagePath, projectId, ticketId) {
   return ticket;
 }
 
-export function listTickets(storagePath, projectId, { status, limit = 100 } = {}) {
+const TICKET_SORT_FIELDS = new Set(['created_at', 'title', 'type', 'status']);
+
+export function listTickets(storagePath, projectId, { status, type, sort, order, limit = 100, offset = 0 } = {}) {
   const db = getProjectDatabase(storagePath, projectId);
   let query = 'SELECT id, type, status, title, description, github_issue_number, github_issue_url, created_at, created_by FROM tickets WHERE 1=1';
   const params = [];
@@ -360,13 +382,32 @@ export function listTickets(storagePath, projectId, { status, limit = 100 } = {}
     params.push(status);
   }
 
-  query += ' ORDER BY created_at DESC LIMIT ?';
-  params.push(limit);
+  if (type) {
+    query += ' AND type = ?';
+    params.push(type);
+  }
 
-  const stmt = db.prepare(query);
-  const tickets = stmt.all(...params);
+  const sortField = TICKET_SORT_FIELDS.has(sort) ? sort : 'created_at';
+  const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  query += ` ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
 
-  return tickets;
+  return db.prepare(query).all(...params);
+}
+
+export function searchTickets(storagePath, projectId, query, limit = 20) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    SELECT t.id, t.type, t.status, t.title, t.description,
+           t.github_issue_number, t.github_issue_url, t.created_at, t.created_by,
+           rank
+    FROM tickets_fts
+    JOIN tickets t ON t.id = tickets_fts.rowid
+    WHERE tickets_fts MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, limit);
 }
 
 export function updateTicket(storagePath, projectId, ticketId, updates) {
