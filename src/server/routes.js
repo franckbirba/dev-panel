@@ -30,6 +30,7 @@ import {
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetchIssueComments } from './github.js';
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
+import { validateBulkPayload, bulkReject, bulkPublish } from './bulk.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 
 // ============================================================================
@@ -859,6 +860,38 @@ export function createRouter(config = {}) {
       res.json(result);
     } catch (error) {
       console.error('Error rejecting ticket:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Bulk actions (publish/reject multiple tickets)
+  router.post('/tickets/bulk', authenticateProject, async (req, res) => {
+    try {
+      const { action, ids, reason } = req.body;
+      const validationError = validateBulkPayload({ action, ids });
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      if (action === 'reject') {
+        const result = bulkReject(storagePath, req.project.id, ids, reason);
+        return res.json(result);
+      }
+
+      if (action === 'publish') {
+        const fs = await import('fs');
+        let githubConfig = {};
+        try {
+          const config = JSON.parse(fs.readFileSync('.devpanelrc.json', 'utf-8'));
+          githubConfig = config.github || {};
+        } catch (e) {
+          // No config file, rely on env vars
+        }
+        const result = await bulkPublish(storagePath, req.project.id, ids, githubConfig);
+        return res.json(result);
+      }
+    } catch (error) {
+      console.error('Error in bulk action:', error);
       res.status(500).json({ error: error.message });
     }
   });

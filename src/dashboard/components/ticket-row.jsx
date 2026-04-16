@@ -1,6 +1,6 @@
 import { StatusChip } from "./status-chip";
 
-export function TicketRow({ ticket, selected, onClick }) {
+export function TicketRow({ ticket, selected, onClick, selectable, checked, onCheck }) {
   const context = typeof ticket.context === "string"
     ? JSON.parse(ticket.context || "{}")
     : ticket.context || {};
@@ -16,6 +16,15 @@ export function TicketRow({ ticket, selected, onClick }) {
           : "bg-transparent border border-transparent hover:bg-secondary/50"
       }`}
     >
+      {selectable && (
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => { e.stopPropagation(); onCheck(ticket.id); }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-3.5 h-3.5 rounded border-border accent-info cursor-pointer shrink-0"
+        />
+      )}
       <span className="text-muted-foreground/50 text-[10px] font-mono min-w-[50px] tabular-nums">
         DP-{String(ticket.id).padStart(4, "0")}
       </span>
