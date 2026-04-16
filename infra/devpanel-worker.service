@@ -33,9 +33,24 @@ Environment=AGENT_MEMORY_NAMESPACE=dev-panel
 Environment=VOYAGE_MODEL=voyage-code-3
 Environment=WORKER_EVENTS_URL=https://devpanl.dev/api/admin/events/publish
 
+# Plane REST config (non-secrets). PLANE_API_KEY is in .env.agent.
+Environment=PLANE_BASE_URL=https://plane.devpanl.dev
+Environment=PLANE_WORKSPACE_SLUG=devpanl
+Environment=PLANE_PROJECT_ID=d2522fed-e3f2-4eeb-9077-6445261752c1
+
+# Backlog puller defaults — flip BACKLOG_PULL_ENABLED to "true" to start the
+# continuous Plane-Todo → workflow loop. LABEL gate keeps only items you've
+# explicitly tagged "agent-ready" in-scope for the agent team.
+Environment=BACKLOG_PULL_ENABLED=true
+Environment=BACKLOG_PULL_LABEL=agent-ready
+Environment=BACKLOG_PULL_STATE_GROUPS=unstarted
+Environment=BACKLOG_PULL_MAX_PER_TICK=3
+Environment=BACKLOG_PULL_INTERVAL_MS=900000
+
 # Secrets come from a hand-managed file on the agents node (not CI-deployed):
 #   /home/deploy/projects/dev-panel/.env.agent
-# Required keys: PG_PASSWORD, VOYAGE_API_KEY, ADMIN_API_KEY
+# Required keys: PG_PASSWORD, VOYAGE_API_KEY, ADMIN_API_KEY, GITHUB_TOKEN,
+#                TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PLANE_API_KEY
 EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
 
 StandardOutput=journal

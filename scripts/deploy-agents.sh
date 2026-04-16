@@ -20,9 +20,10 @@ VOYAGE_KEY=$(ssh "$SERVICES_HOST" 'grep ^VOYAGE_API_KEY= ~/dev-panel/.env.produc
 TG_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_BOT_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
 TG_CHAT=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_CHAT_ID= ~/dev-panel/.env.production | cut -d= -f2')
 GH_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^GITHUB_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
+PLANE_KEY=$(ssh "$SERVICES_HOST" 'grep ^PLANE_API_KEY= ~/dev-panel/.env.production | cut -d= -f2')
 
 # Sanity check — all non-empty
-for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN; do
+for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY; do
   [ -n "${!v}" ] || { echo "missing secret: $v"; exit 1; }
 done
 
@@ -41,6 +42,7 @@ ADMIN_API_KEY=${ADMIN_KEY}
 TELEGRAM_BOT_TOKEN=${TG_TOKEN}
 TELEGRAM_CHAT_ID=${TG_CHAT}
 GITHUB_TOKEN=${GH_TOKEN}
+PLANE_API_KEY=${PLANE_KEY}
 ENVEOF
 chown deploy:deploy /home/deploy/projects/dev-panel/.env.agent
 chmod 600 /home/deploy/projects/dev-panel/.env.agent
