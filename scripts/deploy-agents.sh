@@ -19,9 +19,10 @@ ADMIN_KEY=$(ssh "$SERVICES_HOST" 'grep ^ADMIN_API_KEY= ~/dev-panel/.env.producti
 VOYAGE_KEY=$(ssh "$SERVICES_HOST" 'grep ^VOYAGE_API_KEY= ~/dev-panel/.env.production | cut -d= -f2')
 TG_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_BOT_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
 TG_CHAT=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_CHAT_ID= ~/dev-panel/.env.production | cut -d= -f2')
+GH_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^GITHUB_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
 
 # Sanity check — all non-empty
-for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT; do
+for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN; do
   [ -n "${!v}" ] || { echo "missing secret: $v"; exit 1; }
 done
 
@@ -39,9 +40,17 @@ VOYAGE_API_KEY=${VOYAGE_KEY}
 ADMIN_API_KEY=${ADMIN_KEY}
 TELEGRAM_BOT_TOKEN=${TG_TOKEN}
 TELEGRAM_CHAT_ID=${TG_CHAT}
+GITHUB_TOKEN=${GH_TOKEN}
 ENVEOF
 chown deploy:deploy /home/deploy/projects/dev-panel/.env.agent
 chmod 600 /home/deploy/projects/dev-panel/.env.agent
+
+# Pin the git origin remote to use the token for HTTPS pushes so builder
+# agents can push branches without interactive auth. Re-applied every
+# deploy in case the token rotates.
+su - deploy -c "cd /home/deploy/projects/dev-panel && \\
+  git remote set-url origin \\
+    https://x-access-token:${GH_TOKEN}@github.com/franckbirba/dev-panel.git"
 
 # Systemd unit
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/

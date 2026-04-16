@@ -1,4 +1,5 @@
 // src/worker/automation.js
+import { execSync } from 'child_process';
 import { logStep, countMemoryWrites } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
 import { loadWorkflows, triggerNext } from './engine.js';
@@ -110,6 +111,151 @@ async function verifyMemoryWrites({ job_id, result }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Terminal publisher — closes the loop on successful work-item workflows.
+// When qa.done triggers `terminal: true`, this fires: locate the builder's
+// feature branch, push it, open a PR, and move the Plane work item to the
+// "Done" state so the backlog puller stops re-dispatching it. Each side
+// effect is independent — a push failure doesn't block PR creation, etc.
+// ---------------------------------------------------------------------------
+
+function isTerminalDone({ flow, agent, status }) {
+  const step = flow?.steps?.find(s => s.agent === agent);
+  return Boolean(step?.on?.[status]?.terminal) && status === 'done';
+}
+
+// Find the feature branch whose name contains the first 8 chars of the
+// work_item_id (builder convention: feat/<uuid-short>-<slug>). Falls back to
+// any branch referencing the full work_item_id in its name.
+function findWorkItemBranch(workItemId) {
+  if (!workItemId) return null;
+  const cwd = process.env.PROJECT_ROOT || process.cwd();
+  const shortId = workItemId.slice(0, 8);
+  try {
+    const out = execSync(
+      `git -C "${cwd}" for-each-ref --format='%(refname:short)' refs/heads/`,
+      { encoding: 'utf8' }
+    );
+    const branches = out.split('\n').map(s => s.trim()).filter(Boolean);
+    return (
+      branches.find(b => b.includes(shortId)) ||
+      branches.find(b => b.includes(workItemId)) ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function pushBranch(branch) {
+  const cwd = process.env.PROJECT_ROOT || process.cwd();
+  // --force-with-lease keeps us safe if the remote has moved (e.g. replan
+  // round overwrites a prior push), without the danger of plain --force.
+  execSync(`git -C "${cwd}" push --force-with-lease origin ${branch}`, { stdio: 'pipe' });
+}
+
+function createPullRequest({ branch, title, body }) {
+  const cwd = process.env.PROJECT_ROOT || process.cwd();
+  const safeTitle = String(title || '').slice(0, 100).replace(/\n/g, ' ');
+  const safeBody = String(body || '');
+  // gh CLI reads GH_TOKEN. We mirror GITHUB_TOKEN into it for this call.
+  const env = { ...process.env, GH_TOKEN: process.env.GITHUB_TOKEN || '' };
+  // If a PR for this branch already exists, `gh pr create` errors — tolerate
+  // that since the goal is idempotent "ensure PR exists".
+  try {
+    execSync(
+      `git -C "${cwd}" fetch origin ${branch} 2>/dev/null || true`,
+      { env }
+    );
+    return execSync(
+      `gh pr create --repo franckbirba/dev-panel --base main --head ${branch} ` +
+      `--title ${JSON.stringify(safeTitle)} --body ${JSON.stringify(safeBody)}`,
+      { cwd, env, encoding: 'utf8' }
+    ).trim();
+  } catch (err) {
+    const msg = (err.stderr || err.stdout || err.message || '').toString();
+    if (msg.includes('already exists')) {
+      // Look up existing PR URL
+      try {
+        return execSync(
+          `gh pr list --repo franckbirba/dev-panel --head ${branch} --json url --jq '.[0].url'`,
+          { env, encoding: 'utf8' }
+        ).trim();
+      } catch { return null; }
+    }
+    throw new Error(`gh pr create: ${msg.slice(0, 400)}`);
+  }
+}
+
+async function setPlaneState({ workItemId, stateName }) {
+  const base = (process.env.PLANE_BASE_URL || '').replace(/\/$/, '');
+  const slug = process.env.PLANE_WORKSPACE_SLUG;
+  const key  = process.env.PLANE_API_KEY;
+  const pid  = process.env.PLANE_PROJECT_ID;
+  if (!base || !slug || !key || !pid || !workItemId) return null;
+
+  const statesRes = await fetch(
+    `${base}/api/v1/workspaces/${slug}/projects/${pid}/states/`,
+    { headers: { 'X-API-Key': key } }
+  );
+  if (!statesRes.ok) throw new Error(`plane states ${statesRes.status}`);
+  const statesJson = await statesRes.json();
+  const list = statesJson.results || statesJson;
+  const target = list.find(s => s.name === stateName);
+  if (!target) throw new Error(`Plane state "${stateName}" not found`);
+
+  const patchRes = await fetch(
+    `${base}/api/v1/workspaces/${slug}/projects/${pid}/issues/${workItemId}/`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+      body: JSON.stringify({ state: target.id })
+    }
+  );
+  if (!patchRes.ok) throw new Error(`plane patch ${patchRes.status}`);
+  return target.id;
+}
+
+async function publishWorkItem({ job_id, agent, jobData, result }) {
+  const workItemId = jobData.plane?.work_item_id;
+  if (!workItemId) return;
+
+  const branch = findWorkItemBranch(workItemId);
+  const summary = result.summary || `Auto work item ${workItemId.slice(0, 8)}`;
+  const title = (jobData.work_item?.title || summary).slice(0, 100);
+  const body =
+    `Autonomous agent pipeline completed (workflow: ${jobData.workflow}).\n\n` +
+    `Work item: \`${workItemId}\`\n\n### Summary\n${summary}\n\n` +
+    `_Generated by the DevPanel agent team._`;
+
+  let prUrl = null;
+  if (branch) {
+    await runStep(job_id, agent, 'publish.git_push', () => pushBranch(branch));
+    await runStep(job_id, agent, 'publish.pr_create', () => {
+      prUrl = createPullRequest({ branch, title, body });
+    });
+  } else {
+    console.warn(`[publish] no feature branch found for work_item ${workItemId}`);
+  }
+
+  await runStep(job_id, agent, 'publish.plane_state',
+    () => setPlaneState({ workItemId, stateName: 'Done' }));
+
+  // Explicit Telegram ping with the PR URL if we have one — the notifyJob
+  // inside runAutomation already pinged once with the QA summary; this is
+  // the "ship it" confirmation with a clickable link.
+  if (prUrl) {
+    await runStep(job_id, agent, 'publish.notify_pr',
+      () => notifyJob({
+        job_id, agent: 'publisher',
+        work_item_id: workItemId,
+        title,
+        status: 'done',
+        extra: prUrl
+      }));
+  }
+}
+
 // --- public entrypoint ---
 
 export async function runAutomation({ jobData, result, startedAt }) {
@@ -148,4 +294,13 @@ export async function runAutomation({ jobData, result, startedAt }) {
       enqueue: _enqueue,
       emit: emitEvent
     }));
+
+  // Terminal publisher: if this step is a `terminal: true` transition with
+  // status `done`, ship the result (push branch, open PR, mark Plane Done).
+  // The engine has already updated workflow_instance state; this only runs
+  // on the "happy path" and all side-effects are best-effort.
+  const flow = getFlows()[jobData.workflow];
+  if (flow && isTerminalDone({ flow, agent, status: result.status })) {
+    await publishWorkItem({ job_id, agent, jobData, result });
+  }
 }

@@ -7,6 +7,7 @@ import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
 import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
+import { startBacklogPuller } from './backlog-puller.js';
 import { runAutomation } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
@@ -245,6 +246,12 @@ console.log(`[Worker] Mode file: ${MODE_FILE}`);
 
 // Register crons
 registerCrons().catch(err => console.error('[Crons] Registration failed:', err));
+
+// Start the continuous Plane backlog → workflow dispatcher.
+// This is what keeps the team busy 24/7: every N minutes it pulls Todos
+// and enqueues work-item workflows for each (dedup via workflow_instances
+// unique index). Disabled cleanly if Plane env vars are missing.
+startBacklogPuller();
 
 // Export for api.js
 export { activeProcesses, worker, getMode };
