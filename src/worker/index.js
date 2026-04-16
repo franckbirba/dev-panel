@@ -8,6 +8,47 @@ import { buildPrompt, parseResult } from './prompt-builder.js';
 import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
+
+// Enrich jobData.work_item from Plane REST if the payload only has the ID.
+// This runs unconditionally before prompt build so every code path — CLI
+// dispatch, backlog puller, engine replan resume — gets the same context.
+async function enrichWorkItemFromPlane(jobData) {
+  const wi = jobData.work_item || {};
+  const id = jobData.plane?.work_item_id;
+  if (!id) return;
+  if (wi.title && wi.description) return; // already populated
+  const base = (process.env.PLANE_BASE_URL || '').replace(/\/$/, '');
+  const slug = process.env.PLANE_WORKSPACE_SLUG;
+  const key  = process.env.PLANE_API_KEY;
+  const pid  = process.env.PLANE_PROJECT_ID;
+  if (!base || !slug || !key || !pid) return;
+  try {
+    const res = await fetch(
+      `${base}/api/v1/workspaces/${slug}/projects/${pid}/issues/${id}/`,
+      { headers: { 'X-API-Key': key } }
+    );
+    if (!res.ok) { console.warn(`[enrich] plane ${res.status} for ${id}`); return; }
+    const i = await res.json();
+    const desc = (i.description_html || '')
+      .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '- ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\n{3,}/g, '\n\n').trim();
+    jobData.work_item = {
+      sequence_id: i.sequence_id,
+      title: i.name,
+      name: i.name,
+      description: desc,
+      priority: i.priority,
+      ...wi
+    };
+  } catch (err) {
+    console.warn(`[enrich] plane lookup failed for ${id}: ${err.message}`);
+  }
+}
 import { runAutomation } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
@@ -128,6 +169,12 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       await runAutomation({ jobData, result, startedAt });
       return result;
     }
+
+  // Enrich work_item from Plane REST when the payload only carries the ID.
+  // Engine-resumed jobs (replan → re-enqueue) and cron dispatches only know
+  // plane.work_item_id; agents therefore lose all task context. Bypasses
+  // plane-mcp's pydantic deserialisation bug entirely.
+  await enrichWorkItemFromPlane(jobData);
 
   // Build prompt
   const prompt = buildPrompt(jobData);

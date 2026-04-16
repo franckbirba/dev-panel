@@ -39,6 +39,24 @@ function hasPlaneConfig() {
   return Boolean(PLANE_BASE_URL && PLANE_API_KEY && PLANE_WORKSPACE_SLUG && PLANE_PROJECT_ID);
 }
 
+// Lightweight HTML → plaintext: unwrap common block tags to newlines, strip
+// remaining tags, collapse whitespace. Plane stores descriptions as HTML
+// (description_html) so we can't feed it to agents raw.
+function stripHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function planeFetch(path) {
   const url = `${PLANE_BASE_URL}${path}`;
   const res = await fetch(url, {
@@ -137,6 +155,7 @@ async function tick() {
   let dispatched = 0, alreadyRunning = 0, failed = 0;
   for (const issue of batch) {
     try {
+      const description = stripHtml(issue.description_html) || issue.description_text || '';
       const out = await enqueueWorkflowStart({
         workflow: 'work-item',
         plane: {
@@ -144,7 +163,13 @@ async function tick() {
           module_id: Array.isArray(issue.module) ? issue.module[0] : (issue.module || null),
           cycle_id: issue.cycle || null
         },
-        work_item: { sequence_id: issue.sequence_id, name: issue.name }
+        work_item: {
+          sequence_id: issue.sequence_id,
+          title: issue.name,
+          name: issue.name,
+          description,
+          priority: issue.priority
+        }
       });
       if (out.ok) dispatched++;
       else if (out.error === 'already_running') alreadyRunning++;

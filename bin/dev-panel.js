@@ -62,11 +62,52 @@ program
     if (action === 'dispatch') {
       if (!work_item_id) { console.error('work_item_id is required'); process.exit(2); }
       const { enqueueWorkflowStart } = await import('../src/worker/dispatch.js');
+
+      // Best-effort: fetch the work item title/description from Plane so the
+      // agent gets real context even when plane-mcp can't deserialise the
+      // response. Bypasses the MCP-level pydantic bug seen on 2026-04-16.
+      let work_item = {};
+      const base = (process.env.PLANE_BASE_URL || '').replace(/\/$/, '');
+      const slug = process.env.PLANE_WORKSPACE_SLUG;
+      const key  = process.env.PLANE_API_KEY;
+      const pid  = process.env.PLANE_PROJECT_ID;
+      if (base && slug && key && pid) {
+        try {
+          const res = await fetch(
+            `${base}/api/v1/workspaces/${slug}/projects/${pid}/issues/${work_item_id}/`,
+            { headers: { 'X-API-Key': key } }
+          );
+          if (res.ok) {
+            const i = await res.json();
+            const desc = (i.description_html || '')
+              .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
+              .replace(/<li[^>]*>/gi, '- ')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/\n{3,}/g, '\n\n').trim();
+            work_item = {
+              sequence_id: i.sequence_id,
+              title: i.name,
+              name: i.name,
+              description: desc,
+              priority: i.priority
+            };
+          } else {
+            console.warn(`plane lookup ${res.status} — dispatching without work_item context`);
+          }
+        } catch (err) {
+          console.warn(`plane lookup failed: ${err.message} — continuing without work_item context`);
+        }
+      }
+
       let out;
       try {
         out = await enqueueWorkflowStart({
           workflow: opts.workflow,
-          plane: { work_item_id, module_id: opts.module, cycle_id: opts.cycle }
+          plane: { work_item_id, module_id: opts.module, cycle_id: opts.cycle },
+          work_item
         });
       } catch (err) {
         console.error(`dispatch failed: ${err.message}`);
