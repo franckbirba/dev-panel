@@ -367,15 +367,16 @@ export function createRouter(config = {}) {
 
   // ============================================================================
   // SHELLY MONITORING (Dashboard pane + uptime-kuma)
-  //   - GET /api/shelly/status   → proxy worker /shelly-health
-  //   - GET /api/shelly/log      → proxy worker /shelly-log (text/plain)
-  // Public health endpoint (uptime-kuma checks this directly, no auth):
-  //   - GET /api/shelly/health   → 200/503 only, body kept tiny
+  // Router is mounted at /api in src/server/index.js so paths here are
+  // relative — final URLs are /api/shelly/{health,status,log}.
+  //   - /api/shelly/health   → public, proxies worker; uptime-kuma polls this
+  //   - /api/shelly/status   → admin, full diagnostics body for the dashboard
+  //   - /api/shelly/log      → admin, text/plain tail of /home/deploy/logs/shelly.log
   // ============================================================================
 
   const _workerApi = () => process.env.WORKER_API || 'http://10.0.0.3:3099';
 
-  router.get('/api/shelly/health', async (req, res) => {
+  router.get('/shelly/health', async (req, res) => {
     try {
       const resp = await fetch(`${_workerApi()}/shelly-health`);
       // Mirror status code so kuma's "expected status 200" check works.
@@ -386,7 +387,7 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.get('/api/shelly/status', authenticateAdmin, async (req, res) => {
+  router.get('/shelly/status', authenticateAdmin, async (req, res) => {
     try {
       const resp = await fetch(`${_workerApi()}/shelly-health`);
       const body = await resp.json();
@@ -396,7 +397,7 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.get('/api/shelly/log', authenticateAdmin, async (req, res) => {
+  router.get('/shelly/log', authenticateAdmin, async (req, res) => {
     const lines = Math.min(1000, Math.max(1, parseInt(req.query.lines, 10) || 200));
     try {
       const resp = await fetch(`${_workerApi()}/shelly-log?lines=${lines}`);
