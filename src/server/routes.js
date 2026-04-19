@@ -387,7 +387,7 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.get('/shelly/status', authenticateAdmin, async (req, res) => {
+  router.get('/shelly/status', authenticateProject, async (req, res) => {
     try {
       const resp = await fetch(`${_workerApi()}/shelly-health`);
       const body = await resp.json();
@@ -397,7 +397,7 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.get('/shelly/log', authenticateAdmin, async (req, res) => {
+  router.get('/shelly/log', authenticateProject, async (req, res) => {
     const lines = Math.min(1000, Math.max(1, parseInt(req.query.lines, 10) || 200));
     try {
       const resp = await fetch(`${_workerApi()}/shelly-log?lines=${lines}`);
