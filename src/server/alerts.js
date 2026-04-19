@@ -226,12 +226,19 @@ export async function notifyJob({
 
   const DEBOUNCE = parseInt(process.env.SHELLY_DEBOUNCE_MS ?? '5000', 10);
   const word = STATUS_WORD[status] || String(status).toUpperCase();
-  const parts = [`[${agent}]`, `${work_item_id}${title ? ` "${title}"` : ''}`, word];
+  // Cron jobs have no work_item_id and no title — never emit literal "undefined"
+  // (that string was suspected of crashing Shelly's bun telegram plugin on inbound).
+  const subject = work_item_id || job_id || agent;
+  const titlePart = title ? ` "${String(title).replace(/[\r\n]+/g, ' ').slice(0, 80)}"` : '';
+  const parts = [`[${agent}]`, `${subject}${titlePart}`, word];
   if (duration_ms != null) parts.push(`(${Math.round(duration_ms / 1000)}s${extra ? `, ${extra}` : ''})`);
   else if (extra) parts.push(`(${extra})`);
   parts.push(next_agent ? `  next: ${next_agent}` : `  next: -`);
 
-  const line = parts.join('  ');
+  // Cap the whole line so a chatty agent summary can never poison a parser
+  // downstream (Shelly's telegram plugin / claude inbound handler).
+  let line = parts.join('  ').replace(/[\r\n]+/g, ' ').replace(/\s{3,}/g, '  ');
+  if (line.length > 240) line = line.slice(0, 237) + '...';
   console.log('[Alerts] Queuing:', line);
   _debounceBuffer.push({ job_id, line });
   if (!_debounceTimer) {
