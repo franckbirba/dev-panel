@@ -54,11 +54,27 @@ su - deploy -c "cd /home/deploy/projects/dev-panel && \\
   git remote set-url origin \\
     https://x-access-token:${GH_TOKEN}@github.com/franckbirba/dev-panel.git"
 
-# Systemd unit
+# Systemd units (worker + shelly + watchdog)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer /etc/systemd/system/
+
+# Watchdog script must be executable and on the deploy user's PATH.
+install -d -o deploy -g deploy /home/deploy/bin /home/deploy/logs
+install -o deploy -g deploy -m 0755 \
+  /home/deploy/projects/dev-panel/infra/shelly-watchdog.sh \
+  /home/deploy/bin/shelly-watchdog.sh
+
 systemctl daemon-reload
-systemctl enable devpanel-worker
+systemctl enable devpanel-worker shelly.service shelly-watchdog.timer
 systemctl restart devpanel-worker
+# Reload shelly only if it's running; do not start a kill cascade if a human
+# is debugging by attaching to the tmux. Watchdog will pick it up if needed.
+if systemctl is-active --quiet shelly.service; then
+  systemctl reload-or-restart shelly.service || true
+fi
+systemctl restart shelly-watchdog.timer
 
 sleep 3
 if systemctl is-active devpanel-worker > /dev/null; then

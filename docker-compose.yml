@@ -445,7 +445,7 @@ services:
       - "traefik.http.routers.penpot-mcp-ws.entrypoints=websecure"
       - "traefik.http.routers.penpot-mcp-ws.tls=true"
       - "traefik.http.routers.penpot-mcp-ws.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.penpot-mcp-ws.priority=20"
+      - "traefik.http.routers.penpot-mcp-ws.priority=100"
       - "traefik.http.routers.penpot-mcp-ws.service=penpot-mcp-ws"
       - "traefik.http.services.penpot-mcp-ws.loadbalancer.server.port=4402"
 

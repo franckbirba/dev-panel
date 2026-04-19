@@ -1,0 +1,8 @@
+[Unit]
+Description=Shelly watchdog — restart shelly.service if telegram plugin died
+After=shelly.service
+Wants=shelly.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/deploy/bin/shelly-watchdog.sh

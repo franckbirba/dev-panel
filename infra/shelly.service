@@ -1,0 +1,38 @@
+[Unit]
+Description=Shelly — Claude Code + telegram plugin (tmux-backed)
+Documentation=file:///home/deploy/projects/dev-panel/CLAUDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/projects/dev-panel
+Environment=HOME=/home/deploy
+Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+
+# Make sure log destination exists.
+ExecStartPre=-/bin/mkdir -p /home/deploy/logs
+ExecStartPre=-/bin/chown deploy:deploy /home/deploy/logs
+
+# Always start from a clean tmux session.
+ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
+
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions"
+
+# 1) Dismiss claude's first-run "trust this folder?" prompt.
+# 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
+#    -t shelly survives a session kill (tmux pty would otherwise lose the
+#    crash trace). pipe-pane appends to a fresh stream on every restart.
+# 3) Also tee to a plain file so a frustrated human doesn't need journalctl
+#    to read the last 200 lines.
+ExecStartPost=/bin/sh -c "sleep 6 && \
+  /usr/bin/tmux -L deploy send-keys -t shelly Enter && \
+  /usr/bin/tmux -L deploy pipe-pane -O -t shelly:0.0 'tee -a /home/deploy/logs/shelly.log | systemd-cat -t shelly -p info'"
+
+ExecStop=-/usr/bin/tmux -L deploy kill-session -t shelly
+
+[Install]
+WantedBy=multi-user.target

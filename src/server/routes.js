@@ -365,6 +365,47 @@ export function createRouter(config = {}) {
     }
   });
 
+  // ============================================================================
+  // SHELLY MONITORING (Dashboard pane + uptime-kuma)
+  //   - GET /api/shelly/status   → proxy worker /shelly-health
+  //   - GET /api/shelly/log      → proxy worker /shelly-log (text/plain)
+  // Public health endpoint (uptime-kuma checks this directly, no auth):
+  //   - GET /api/shelly/health   → 200/503 only, body kept tiny
+  // ============================================================================
+
+  const _workerApi = () => process.env.WORKER_API || 'http://10.0.0.3:3099';
+
+  router.get('/api/shelly/health', async (req, res) => {
+    try {
+      const resp = await fetch(`${_workerApi()}/shelly-health`);
+      // Mirror status code so kuma's "expected status 200" check works.
+      res.status(resp.status);
+      res.type('application/json').send(await resp.text());
+    } catch (err) {
+      res.status(502).json({ healthy: false, error: `worker unreachable: ${err.message}` });
+    }
+  });
+
+  router.get('/api/shelly/status', authenticateAdmin, async (req, res) => {
+    try {
+      const resp = await fetch(`${_workerApi()}/shelly-health`);
+      const body = await resp.json();
+      res.status(resp.ok ? 200 : 200).json(body); // dashboard wants the body either way
+    } catch (err) {
+      res.status(502).json({ healthy: false, error: `worker unreachable: ${err.message}` });
+    }
+  });
+
+  router.get('/api/shelly/log', authenticateAdmin, async (req, res) => {
+    const lines = Math.min(1000, Math.max(1, parseInt(req.query.lines, 10) || 200));
+    try {
+      const resp = await fetch(`${_workerApi()}/shelly-log?lines=${lines}`);
+      res.status(resp.status).type('text/plain').send(await resp.text());
+    } catch (err) {
+      res.status(502).type('text/plain').send(`worker unreachable: ${err.message}`);
+    }
+  });
+
   // Metrics (Prometheus-compatible)
   router.get('/metrics', async (req, res) => {
     const { getMetrics } = await import('./monitoring.js');

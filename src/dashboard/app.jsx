@@ -7,11 +7,13 @@ import { InboxView } from "@/views/inbox-view";
 import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
+import { ShellyView } from "@/views/shelly-view";
 
 // Derive initial tab from URL
 function getInitialTab() {
   const path = window.location.pathname;
   if (path.includes("/queues")) return "queues";
+  if (path.includes("/shelly")) return "shelly";
   if (path.includes("/settings")) return "settings";
   return "inbox";
 }
@@ -33,6 +35,7 @@ function App() {
     setActiveTab(tab);
     // Update URL for bookmarking without full navigation
     const path = tab === "queues" ? "/dashboard/queues"
+      : tab === "shelly" ? "/dashboard/shelly"
       : tab === "settings" ? "/dashboard/settings"
       : "/dashboard/";
     window.history.replaceState(null, "", path);
@@ -155,6 +158,7 @@ function App() {
         {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
         {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
         {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
+        {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}
         {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
       </div>
       {activeTab !== "queues" && (

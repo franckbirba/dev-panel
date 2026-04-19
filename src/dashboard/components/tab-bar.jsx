@@ -7,6 +7,7 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
     { id: "inbox", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },
     { id: "queues", label: "Queues" },
+    { id: "shelly", label: "Shelly" },
     { id: "settings", label: "Settings" },
   ];
 
