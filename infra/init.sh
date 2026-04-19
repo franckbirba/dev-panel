@@ -46,6 +46,7 @@ PLANE_SECRET_KEY_V=$(stage PLANE_SECRET_KEY)
 PLANE_MINIO_ROOT_PASSWORD_V=$(stage PLANE_MINIO_ROOT_PASSWORD)
 PENPOT_SECRET_KEY_V=$(stage PENPOT_SECRET_KEY)
 PENPOT_DB_PASSWORD_V=$(stage PENPOT_DB_PASSWORD)
+PLANE_API_KEY_V=$(stage PLANE_API_KEY)
 
 # ── Generate .env ───────────────────────────────────────────────────────────
 
@@ -97,6 +98,9 @@ PLANE_DB_PASSWORD=${PLANE_DB_PASSWORD_V}
 PLANE_SECRET_KEY=${PLANE_SECRET_KEY_V}
 PLANE_MINIO_ROOT_USER=plane
 PLANE_MINIO_ROOT_PASSWORD=${PLANE_MINIO_ROOT_PASSWORD_V}
+# REST API key the worker (and agents) use to read/write Plane work items.
+# Preserved across re-runs by the stage() helper above; not auto-generated.
+PLANE_API_KEY=${PLANE_API_KEY_V}
 
 # Penpot
 PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY_V}
