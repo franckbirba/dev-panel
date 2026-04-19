@@ -9,6 +9,33 @@ import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
 
+// Resolve per-project Plane settings, preferring the project's own
+// .devpanlrc.json over the worker's PLANE_* env vars. This is what lets
+// the same agent worker serve N projects (zeno, edms, dev-panel, ...)
+// without env collisions — each project owns its own plane.project_id.
+function resolveProjectPlane(projectRoot) {
+  try {
+    const rcPath = join(projectRoot, '.devpanlrc.json');
+    if (existsSync(rcPath)) {
+      const rc = JSON.parse(readFileSync(rcPath, 'utf8'));
+      if (rc?.plane?.project_id && rc.plane.project_id !== '__SET_ME__') {
+        return {
+          base: (process.env.PLANE_BASE_URL || '').replace(/\/$/, ''),
+          slug: rc.plane.workspace_slug || process.env.PLANE_WORKSPACE_SLUG,
+          key:  process.env.PLANE_API_KEY,
+          pid:  rc.plane.project_id
+        };
+      }
+    }
+  } catch { /* fall through to env */ }
+  return {
+    base: (process.env.PLANE_BASE_URL || '').replace(/\/$/, ''),
+    slug: process.env.PLANE_WORKSPACE_SLUG,
+    key:  process.env.PLANE_API_KEY,
+    pid:  process.env.PLANE_PROJECT_ID
+  };
+}
+
 // Enrich jobData.work_item from Plane REST if the payload only has the ID.
 // This runs unconditionally before prompt build so every code path — CLI
 // dispatch, backlog puller, engine replan resume — gets the same context.
@@ -17,10 +44,8 @@ async function enrichWorkItemFromPlane(jobData) {
   const id = jobData.plane?.work_item_id;
   if (!id) return;
   if (wi.title && wi.description) return; // already populated
-  const base = (process.env.PLANE_BASE_URL || '').replace(/\/$/, '');
-  const slug = process.env.PLANE_WORKSPACE_SLUG;
-  const key  = process.env.PLANE_API_KEY;
-  const pid  = process.env.PLANE_PROJECT_ID;
+  const projectRoot = jobData.context?.project_root || PROJECT_ROOT;
+  const { base, slug, key, pid } = resolveProjectPlane(projectRoot);
   if (!base || !slug || !key || !pid) return;
   try {
     const res = await fetch(
