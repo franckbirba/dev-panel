@@ -1,4 +1,6 @@
-export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange }) {
+import { ProjectSwitcher } from "./project-switcher";
+
+export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange, onProjectSwitch }) {
   const pendingCount = stats?.pending || 0;
   const bugCount = stats?.bugs || 0;
   const featureCount = stats?.features || 0;
@@ -6,6 +8,7 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
   const tabs = [
     { id: "inbox", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },
+    { id: "projects", label: "Projects" },
     { id: "queues", label: "Queues" },
     { id: "shelly", label: "Shelly" },
     { id: "settings", label: "Settings" },
@@ -60,6 +63,9 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
           ))}
         </div>
       )}
+      <div className="pr-3">
+        <ProjectSwitcher onSwitch={onProjectSwitch} onManage={() => onTabChange("projects")} />
+      </div>
     </div>
   );
 }

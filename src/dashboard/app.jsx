@@ -1,27 +1,39 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
 import { TabBar } from "@/components/tab-bar";
 import { CommandDock } from "@/components/command-dock";
+import { ProjectRibbon } from "@/components/project-ribbon";
 import { InboxView } from "@/views/inbox-view";
 import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
 import { ShellyView } from "@/views/shelly-view";
+import { ProjectsView } from "@/views/projects-view";
+import {
+  migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject
+} from "@/lib/projects-store";
 
 // Derive initial tab from URL
 function getInitialTab() {
   const path = window.location.pathname;
   if (path.includes("/queues")) return "queues";
   if (path.includes("/shelly")) return "shelly";
+  if (path.includes("/projects")) return "projects";
   if (path.includes("/settings")) return "settings";
   return "inbox";
 }
 
 function App() {
+  // Migrate v1 storage on first mount, then read from v2.
+  useEffect(() => { migrateLegacy(); }, []);
+
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [filter, setFilter] = useState(null);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("devpanel_api_key") || "");
+  // currentProject snapshot — re-read on switch via projectVersion bump.
+  const [projectVersion, setProjectVersion] = useState(0);
+  const currentProject = getCurrentProject();
+  const apiKey = currentProject?.api_key || "";
   const [sseConnected, setSseConnected] = useState(false);
   const [activities, setActivities] = useState([]);
   const [stats, setStats] = useState(null);
@@ -31,23 +43,45 @@ function App() {
 
   const apiUrl = window.location.origin;
 
+  // Bump everything that depends on the active project when the user switches.
+  const handleProjectSwitch = useCallback(() => {
+    setProjectVersion(v => v + 1);
+    setRefreshKey(k => k + 1);
+    setActivities([]);
+    setStats(null);
+  }, []);
+
   function handleTabChange(tab) {
     setActiveTab(tab);
     // Update URL for bookmarking without full navigation
     const path = tab === "queues" ? "/dashboard/queues"
       : tab === "shelly" ? "/dashboard/shelly"
+      : tab === "projects" ? "/dashboard/projects"
       : tab === "settings" ? "/dashboard/settings"
       : "/dashboard/";
     window.history.replaceState(null, "", path);
   }
 
-  function handleApiKeySubmit(e) {
+  async function handleApiKeySubmit(e) {
     e.preventDefault();
     const key = e.target.elements.apikey.value.trim();
-    if (key) {
-      localStorage.setItem("devpanel_api_key", key);
-      setApiKey(key);
+    if (!key) return;
+    // Resolve via /whoami so the project shows up in the switcher with a real
+    // name. If the lookup fails (key invalid, server down), still store as a
+    // legacy entry so the user can troubleshoot from inside the app.
+    try {
+      const r = await fetch(`${apiUrl}/api/whoami`, { headers: { "X-API-Key": key } });
+      if (r.ok) {
+        const body = await r.json();
+        addOrUpdateProject({ id: body.id, name: body.name, api_key: key,
+          github_repo: body.github_repo, plane_project_id: body.plane_project_id });
+      } else {
+        addOrUpdateProject({ id: '_unverified_' + Date.now(), name: 'project (unverified)', api_key: key });
+      }
+    } catch {
+      addOrUpdateProject({ id: '_unverified_' + Date.now(), name: 'project (offline)', api_key: key });
     }
+    setProjectVersion(v => v + 1);
   }
 
   useEffect(() => {
@@ -56,7 +90,7 @@ function App() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setActivities)
       .catch(() => {});
-  }, [apiKey, apiUrl]);
+  }, [apiKey, apiUrl, projectVersion]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -64,7 +98,7 @@ function App() {
       .then((r) => (r.ok ? r.json() : null))
       .then(setStats)
       .catch(() => {});
-  }, [apiKey, apiUrl, refreshKey]);
+  }, [apiKey, apiUrl, refreshKey, projectVersion]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -115,7 +149,7 @@ function App() {
 
     connect();
     return () => { sseRef.current?.close(); };
-  }, [apiKey, apiUrl]);
+  }, [apiKey, apiUrl, projectVersion]);
 
   if (!apiKey) {
     return (
@@ -153,17 +187,21 @@ function App() {
         stats={tabStats}
         activeFilter={filter}
         onFilterChange={setFilter}
+        onProjectSwitch={handleProjectSwitch}
       />
+      {/* Cross-project pulse — only renders if 2+ projects are local */}
+      <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
       <div className="flex-1 overflow-hidden">
         {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
         {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
+        {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}
         {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
         {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}
         {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
       </div>
-      {activeTab !== "queues" && (
+      {activeTab !== "queues" && activeTab !== "projects" && (
         <CommandDock
-          projectName={stats?.project}
+          projectName={stats?.project || currentProject?.name}
           sseConnected={sseConnected}
           ticketCount={stats?.stats?.total}
         />

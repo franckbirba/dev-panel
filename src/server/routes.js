@@ -6,6 +6,10 @@ import {
   createProject,
   listProjects,
   getProjectByName,
+  getProjectById,
+  getMasterDatabase,
+  updateProject,
+  deleteProject,
   initProjectDatabase,
   getProjectDatabase,
   createTicket,
@@ -441,6 +445,160 @@ export function createRouter(config = {}) {
       res.json({ projects });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // MULTI-PROJECT DASHBOARD SUPPORT
+  //
+  // /whoami           — project key auth, returns the calling project + metrics.
+  //                     Used by the dashboard to identify which project an
+  //                     api key belongs to (e.g. when the user pastes a key
+  //                     to add a project to the local switcher).
+  // /projects/summary — admin auth, returns every project + metrics + api_key.
+  //                     Powers "import all my projects" + cross-project ribbon.
+  // POST /projects    — admin, create a project with full metadata.
+  // PATCH /projects/:id — admin, edit metadata.
+  // DELETE /projects/:id — admin, drop a project.
+  // ============================================================================
+
+  function projectMetrics(project) {
+    let stats = { total: 0, pending: 0, published: 0, rejected: 0 };
+    try { stats = getStats(storagePath, project.id) || stats; }
+    catch { /* per-project db may not exist yet for fresh imports */ }
+
+    // Active workflow count is project-scoped via plane_project_id when set,
+    // otherwise we fall back to a global count so demo/dev projects still
+    // show *something* in the ribbon.
+    let activeWorkflows = 0;
+    try {
+      const masterDb = getMasterDatabase();
+      if (project.plane_project_id) {
+        // workflow_instances doesn't carry plane_project_id directly; the
+        // dispatch path puts it in metadata when present. Fall back to a
+        // simple count if metadata isn't structured.
+        activeWorkflows = masterDb.prepare(
+          `SELECT COUNT(*) AS n FROM workflow_instances
+             WHERE status IN ('running','awaiting_approval')
+               AND (metadata LIKE ? OR metadata IS NULL)`
+        ).get(`%${project.plane_project_id}%`).n || 0;
+      } else {
+        activeWorkflows = masterDb.prepare(
+          `SELECT COUNT(*) AS n FROM workflow_instances
+             WHERE status IN ('running','awaiting_approval')`
+        ).get().n || 0;
+      }
+    } catch { /* table may be empty */ }
+
+    let lastActivity = null;
+    try {
+      const recent = listActivity(storagePath, project.id, 1);
+      if (recent && recent[0]) lastActivity = recent[0].created_at;
+    } catch { /* db may not exist yet */ }
+
+    return {
+      id: project.id,
+      name: project.name,
+      description: project.description || null,
+      github_owner: project.github_owner || null,
+      github_repo: project.github_repo || null,
+      plane_project_id: project.plane_project_id || null,
+      plane_workspace_slug: project.plane_workspace_slug || null,
+      default_branch: project.default_branch || null,
+      local_path: project.local_path || null,
+      created_at: project.created_at,
+      updated_at: project.updated_at || project.created_at,
+      stats,
+      active_workflows: activeWorkflows,
+      last_activity: lastActivity
+    };
+  }
+
+  // Resolve which project an api key belongs to + return its metrics.
+  router.get('/whoami', authenticateProject, async (req, res) => {
+    try {
+      const m = await projectMetrics(req.project);
+      res.json({ ...m, api_key: req.project.api_key });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/projects/summary', authLimiter, authenticateAdmin, async (req, res) => {
+    try {
+      const projects = listProjects();
+      const enriched = await Promise.all(projects.map(p => projectMetrics(p)
+        .then(m => ({ ...m, api_key: p.api_key }))));
+      res.json({ projects: enriched });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/projects', authLimiter, authenticateAdmin, async (req, res) => {
+    try {
+      const {
+        name, description = null,
+        github_owner = null, github_repo = null, github_token = null,
+        plane_project_id = null, plane_workspace_slug = null,
+        default_branch = null, local_path = null
+      } = req.body || {};
+
+      if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) {
+        return res.status(400).json({ error: 'name required: alphanumeric, dot, underscore, dash' });
+      }
+      if (getProjectByName(name)) {
+        return res.status(409).json({ error: `Project "${name}" already exists` });
+      }
+
+      const project = createProject({
+        name, description,
+        github_owner, github_repo, github_token,
+        plane_project_id, plane_workspace_slug,
+        default_branch, local_path
+      });
+      initProjectDatabase(storagePath, project.id);
+
+      // Return the fresh row including api_key so the dashboard can persist it.
+      const row = getProjectById(project.id);
+      res.status(201).json({ ...row });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.patch('/projects/:id', authLimiter, authenticateAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = getProjectById(id);
+      if (!project) return res.status(404).json({ error: 'project not found' });
+
+      // Whitelist editable fields — never let api_key/id/timestamps drift in.
+      const allowed = [
+        'name', 'description', 'github_owner', 'github_repo', 'github_token',
+        'plane_project_id', 'plane_workspace_slug', 'default_branch', 'local_path'
+      ];
+      const updates = {};
+      for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+      if (!Object.keys(updates).length) {
+        return res.status(400).json({ error: 'no editable fields in body' });
+      }
+      updateProject(id, updates);
+      res.json(getProjectById(id));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete('/projects/:id', authLimiter, authenticateAdmin, (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = getProjectById(id);
+      if (!project) return res.status(404).json({ error: 'project not found' });
+      deleteProject(id);
+      res.json({ deleted: id, name: project.name });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

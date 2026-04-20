@@ -77,6 +77,22 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS idx_wi_cycle  ON workflow_instances(cycle_id);
   `);
 
+  // Migration: add multi-project metadata columns introduced for the
+  // dashboard "Projects" view. SQLite has no IF NOT EXISTS for ADD COLUMN,
+  // so we sniff PRAGMA table_info first.
+  const cols = new Set(masterDb.prepare("PRAGMA table_info(projects)").all().map(c => c.name));
+  for (const [col, def] of [
+    ['plane_project_id',     'TEXT'],
+    ['plane_workspace_slug', 'TEXT'],
+    ['default_branch',       'TEXT'],
+    ['local_path',           'TEXT'],
+    ['description',          'TEXT']
+  ]) {
+    if (!cols.has(col)) {
+      masterDb.exec(`ALTER TABLE projects ADD COLUMN ${col} ${def}`);
+    }
+  }
+
   return masterDb;
 }
 
@@ -254,16 +270,25 @@ export function getProjectDatabase(storagePath, projectId) {
 // PROJECT MANAGEMENT
 // ============================================================================
 
-export function createProject({ name, github_owner, github_repo, github_token }) {
+export function createProject({
+  name, github_owner = null, github_repo = null, github_token = null,
+  plane_project_id = null, plane_workspace_slug = null,
+  default_branch = null, local_path = null, description = null
+}) {
   const id = crypto.randomUUID();
   const api_key = 'dp_' + crypto.randomBytes(32).toString('hex');
 
   const stmt = masterDb.prepare(`
-    INSERT INTO projects (id, name, github_owner, github_repo, github_token, api_key)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (
+      id, name, github_owner, github_repo, github_token, api_key,
+      plane_project_id, plane_workspace_slug, default_branch, local_path, description
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(id, name, github_owner, github_repo, github_token, api_key);
+  stmt.run(
+    id, name, github_owner, github_repo, github_token, api_key,
+    plane_project_id, plane_workspace_slug, default_branch, local_path, description
+  );
 
   return { id, name, api_key };
 }
@@ -284,7 +309,12 @@ export function getProjectByName(name) {
 }
 
 export function listProjects() {
-  const stmt = masterDb.prepare('SELECT id, name, github_owner, github_repo, api_key, created_at FROM projects ORDER BY created_at DESC');
+  const stmt = masterDb.prepare(`
+    SELECT id, name, description, github_owner, github_repo, api_key,
+           plane_project_id, plane_workspace_slug, default_branch, local_path,
+           created_at, updated_at
+    FROM projects ORDER BY created_at DESC
+  `);
   return stmt.all();
 }
 
