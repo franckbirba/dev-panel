@@ -93,6 +93,40 @@ export function initMasterDatabase(storagePath = './storage') {
     }
   }
 
+  // Captures — Franck+Shelly's triage surface. Raw thoughts become
+  // conversations become Plane work items (or get dropped). The whole
+  // point of this table is that dumping an idea here is frictionless;
+  // promotion to Plane is a deliberate act Shelly orchestrates.
+  masterDb.exec(`
+    CREATE TABLE IF NOT EXISTS captures (
+      id                TEXT PRIMARY KEY,
+      project_id        TEXT NOT NULL,
+      kind              TEXT NOT NULL DEFAULT 'idea',
+      content           TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'new',
+      plane_work_item_id TEXT,
+      plane_sequence_id INTEGER,
+      created_by        TEXT DEFAULT 'franck',
+      created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_captures_project ON captures(project_id);
+    CREATE INDEX IF NOT EXISTS idx_captures_status  ON captures(status);
+    CREATE INDEX IF NOT EXISTS idx_captures_created ON captures(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS capture_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      capture_id TEXT NOT NULL,
+      role       TEXT NOT NULL,        -- 'user' | 'shelly' | 'system'
+      content    TEXT NOT NULL,
+      metadata   TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (capture_id) REFERENCES captures(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_capmsg_capture ON capture_messages(capture_id, created_at);
+  `);
+
   return masterDb;
 }
 

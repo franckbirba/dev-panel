@@ -11,6 +11,12 @@ import {
   updateProject,
   deleteProject,
   initProjectDatabase,
+} from './db.js';
+import {
+  createCapture, getCapture, listCaptures,
+  addCaptureMessage, updateCapture, deleteCapture
+} from './captures.js';
+import {
   getProjectDatabase,
   createTicket,
   getTicket,
@@ -533,6 +539,92 @@ export function createRouter(config = {}) {
     }
   });
 
+  // ============================================================================
+  // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
+  // if you're logged in with a valid key you can add another project. Pastes
+  // a GitHub URL, optionally links/creates a Plane project, returns a fresh
+  // devpanel project + api_key.
+  // ============================================================================
+
+  router.post('/projects/wizard', authenticateProject, async (req, res) => {
+    try {
+      const { github_url = '', plane_mode = 'skip', plane_project_id = null,
+              plane_name = null, name_override = null, description = null } = req.body || {};
+
+      // Parse GitHub URL
+      const m = String(github_url).match(/(?:https?:\/\/)?github\.com\/([^/\s]+)\/([^/\s#?.]+)/);
+      if (!m) return res.status(400).json({ error: 'need a valid github.com URL' });
+      const owner = m[1];
+      const repo  = m[2].replace(/\.git$/, '');
+      const name  = (name_override || repo).replace(/[^a-zA-Z0-9._-]/g, '-');
+
+      if (getProjectByName(name)) {
+        return res.status(409).json({ error: `Project "${name}" already exists`, existing_name: name });
+      }
+
+      // Plane wiring
+      let resolved_plane_id = null;
+      let resolved_plane_slug = process.env.PLANE_WORKSPACE_SLUG || 'devpanl';
+      if (plane_mode === 'link') {
+        if (!plane_project_id) return res.status(400).json({ error: 'plane_mode=link requires plane_project_id' });
+        resolved_plane_id = plane_project_id;
+      } else if (plane_mode === 'create') {
+        const base = (process.env.PLANE_BASE_URL || 'https://plane.devpanl.dev').replace(/\/$/, '');
+        const key = process.env.PLANE_API_KEY;
+        if (!key) return res.status(500).json({ error: 'PLANE_API_KEY not set on server' });
+        try {
+          const r = await fetch(
+            `${base}/api/v1/workspaces/${resolved_plane_slug}/projects/`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+              body: JSON.stringify({
+                name: plane_name || repo,
+                identifier: (plane_name || repo).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || 'PROJ',
+                network: 2
+              })
+            }
+          );
+          if (!r.ok) {
+            const body = await r.text();
+            return res.status(502).json({ error: `Plane create failed: ${r.status}`, body: body.slice(0, 400) });
+          }
+          const plane = await r.json();
+          resolved_plane_id = plane.id;
+        } catch (e) {
+          return res.status(502).json({ error: `Plane create threw: ${e.message}` });
+        }
+      }
+
+      // Create the devpanel project
+      const created = createProject({
+        name,
+        description,
+        github_owner: owner, github_repo: repo,
+        github_token: process.env.GITHUB_TOKEN || null,
+        plane_project_id: resolved_plane_id,
+        plane_workspace_slug: resolved_plane_id ? resolved_plane_slug : null,
+        default_branch: 'main'
+      });
+      initProjectDatabase(storagePath, created.id);
+
+      const row = getProjectById(created.id);
+      res.status(201).json({
+        project: row,
+        next_steps: {
+          rc_snippet: {
+            plane: { project_id: resolved_plane_id || '__SET_ME__', workspace_slug: resolved_plane_slug },
+            github: { repo: `${owner}/${repo}`, default_branch: 'main' }
+          },
+          run_in_project: '/devpanl:init'
+        }
+      });
+    } catch (err) {
+      console.error('[/projects/wizard]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.post('/projects', authLimiter, authenticateAdmin, async (req, res) => {
     try {
       const {
@@ -598,6 +690,75 @@ export function createRouter(config = {}) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ============================================================================
+  // CAPTURES — Franck+Shelly's triage surface. Pre-Plane queue.
+  //   POST /captures                 create (content, optional kind)
+  //   GET  /captures                 list for the current project
+  //   GET  /captures/:id             capture + messages (thread)
+  //   POST /captures/:id/messages    append a user message
+  //   PATCH /captures/:id            mutate status / attach plane ids
+  //   DELETE /captures/:id           drop
+  // All project-key auth — captures belong to a project.
+  // ============================================================================
+
+  router.post('/captures', authenticateProject, (req, res) => {
+    try {
+      const { content = '', kind = 'idea' } = req.body || {};
+      if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
+      const capture = createCapture({
+        project_id: req.project.id,
+        content: String(content).slice(0, 4000),
+        kind: String(kind).slice(0, 32)
+      });
+      res.status(201).json(capture);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.get('/captures', authenticateProject, (req, res) => {
+    try {
+      const status = req.query.status ? String(req.query.status) : null;
+      const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+      res.json({ captures: listCaptures({ project_id: req.project.id, status, limit }) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.get('/captures/:id', authenticateProject, (req, res) => {
+    try {
+      const c = getCapture(req.params.id);
+      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
+      res.json(c);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.post('/captures/:id/messages', authenticateProject, (req, res) => {
+    try {
+      const { content = '', role = 'user' } = req.body || {};
+      const c = getCapture(req.params.id);
+      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
+      if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
+      if (!['user', 'shelly', 'system'].includes(role)) return res.status(400).json({ error: 'bad role' });
+      addCaptureMessage({ capture_id: c.id, role, content: String(content).slice(0, 8000) });
+      res.json(getCapture(c.id));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.patch('/captures/:id', authenticateProject, (req, res) => {
+    try {
+      const c = getCapture(req.params.id);
+      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
+      res.json(updateCapture(req.params.id, req.body || {}));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.delete('/captures/:id', authenticateProject, (req, res) => {
+    try {
+      const c = getCapture(req.params.id);
+      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
+      deleteCapture(c.id);
+      res.json({ deleted: c.id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
   // ============================================================================

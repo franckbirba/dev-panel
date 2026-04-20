@@ -1,13 +1,14 @@
 import { ProjectSwitcher } from "./project-switcher";
+import { NewProjectButton } from "./new-project-button";
 
-export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange, onProjectSwitch }) {
+export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterChange, onProjectSwitch, apiUrl, apiKey }) {
   const pendingCount = stats?.pending || 0;
   const bugCount = stats?.bugs || 0;
   const featureCount = stats?.features || 0;
 
   const tabs = [
     { id: "today", label: "Today" },
-    { id: "inbox", label: "Inbox", badge: pendingCount || null },
+    { id: "captures", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },
     { id: "projects", label: "Projects" },
     { id: "queues", label: "Queues" },
@@ -64,7 +65,8 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
           ))}
         </div>
       )}
-      <div className="pr-3">
+      <div className="flex items-center pr-3">
+        {apiKey && <NewProjectButton apiUrl={apiUrl} apiKey={apiKey} onCreated={onProjectSwitch} />}
         <ProjectSwitcher onSwitch={onProjectSwitch} onManage={() => onTabChange("projects")} />
       </div>
     </div>
