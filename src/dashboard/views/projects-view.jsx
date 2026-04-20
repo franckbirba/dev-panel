@@ -31,20 +31,33 @@ export function ProjectsView({ apiUrl, onProjectChange }) {
 
   const refresh = useCallback(() => setLocalProjects(listLocalProjects()), []);
 
-  // If we have an admin key, fetch the server-side summary so we can show
-  // metrics + flag any projects on the server that aren't in localStorage yet.
+  // With admin key: one bulk /summary call returns every project enriched.
+  // Without admin: fall back to per-project /whoami so the user still gets
+  // real numbers for the projects they have api keys for.
   const loadSummary = useCallback(async () => {
-    if (!adminKey) { setServerSummary(null); return; }
-    try {
-      const r = await fetch(`${apiUrl}/api/projects/summary`, {
-        headers: { 'X-Admin-Key': adminKey }
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { projects } = await r.json();
-      setServerSummary(projects);
-    } catch (e) {
-      setStatus({ kind: 'error', text: `summary: ${e.message}` });
+    if (adminKey) {
+      try {
+        const r = await fetch(`${apiUrl}/api/projects/summary`, {
+          headers: { 'X-Admin-Key': adminKey }
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const { projects } = await r.json();
+        setServerSummary(projects);
+      } catch (e) {
+        setStatus({ kind: 'error', text: `summary: ${e.message}` });
+      }
+      return;
     }
+    // Fallback: parallel /whoami per project we have an api key for.
+    const projects = listLocalProjects();
+    const enriched = await Promise.all(projects.map(async p => {
+      try {
+        const r = await fetch(`${apiUrl}/api/whoami`, { headers: { 'X-API-Key': p.api_key } });
+        if (r.ok) return await r.json();
+      } catch { /* ignore — surface as missing row */ }
+      return null;
+    }));
+    setServerSummary(enriched.filter(Boolean));
   }, [apiUrl, adminKey]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
