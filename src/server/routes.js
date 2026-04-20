@@ -515,20 +515,18 @@ export function createRouter(config = {}) {
   }
 
   // Resolve which project an api key belongs to + return its metrics.
-  router.get('/whoami', authenticateProject, async (req, res) => {
+  router.get('/whoami', authenticateProject, (req, res) => {
     try {
-      const m = await projectMetrics(req.project);
+      const m = projectMetrics(req.project);
       res.json({ ...m, api_key: req.project.api_key });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  router.get('/projects/summary', authLimiter, authenticateAdmin, async (req, res) => {
+  router.get('/projects/summary', authLimiter, authenticateAdmin, (req, res) => {
     try {
-      const projects = listProjects();
-      const enriched = await Promise.all(projects.map(p => projectMetrics(p)
-        .then(m => ({ ...m, api_key: p.api_key }))));
+      const enriched = listProjects().map(p => ({ ...projectMetrics(p), api_key: p.api_key }));
       res.json({ projects: enriched });
     } catch (err) {
       res.status(500).json({ error: err.message });
