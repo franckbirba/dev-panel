@@ -600,6 +600,107 @@ export function createRouter(config = {}) {
     }
   });
 
+  // ============================================================================
+  // TODAY VIEW — single actionable feed across the whole team.
+  // Aggregates from three sources: workflow_instances (engine state),
+  // BullMQ agents queue (job-level failures), and per-project tickets.
+  // Project key auth (read-only metrics, nothing destructive).
+  // ============================================================================
+
+  router.get('/today', authenticateProject, async (req, res) => {
+    try {
+      const masterDb = getMasterDatabase();
+      const now = Date.now();
+      const dayAgo = now - 24 * 3600 * 1000;
+      const ageMin = (ts) => Math.max(0, Math.round((now - ts) / 60000));
+
+      // Workflow instances — full picture from the engine.
+      const allInstances = masterDb.prepare(
+        `SELECT * FROM workflow_instances ORDER BY last_event_at DESC LIMIT 200`
+      ).all();
+
+      const parseMeta = (m) => { try { return m ? JSON.parse(m) : null; } catch { return null; } };
+
+      const needs_attention = [];
+      const in_progress = [];
+      const shipped_today = [];
+
+      for (const inst of allInstances) {
+        const meta = parseMeta(inst.metadata);
+        const base = {
+          instance_id: inst.id,
+          work_item_id: inst.work_item_id,
+          workflow: inst.workflow_name,
+          step: inst.current_step,
+          revision: inst.revision,
+          status: inst.status,
+          age_min: ageMin(inst.last_event_at),
+          last_event_at: inst.last_event_at,
+          metadata: meta
+        };
+        if (inst.status === 'exhausted' || inst.status === 'awaiting_approval') {
+          needs_attention.push({ kind: `workflow_${inst.status}`, ...base });
+        } else if (inst.status === 'running') {
+          in_progress.push({ kind: 'workflow_running', ...base });
+        } else if (inst.status === 'done' && inst.last_event_at >= dayAgo) {
+          shipped_today.push({ kind: 'workflow_done', ...base });
+        }
+      }
+
+      // Failed BullMQ jobs — DLQ-flavoured surface for things that didn't
+      // even reach a workflow terminal (e.g. claude -p crashed mid-run).
+      let recent_failed_jobs = [];
+      try {
+        const queue = getQueue(QUEUES.agents);
+        const failed = await queue.getJobs(['failed'], 0, 19);
+        recent_failed_jobs = failed
+          .filter(j => (j.finishedOn || j.timestamp || 0) >= dayAgo)
+          .map(j => ({
+            kind: 'job_failed',
+            job_id: j.id,
+            name: j.name,
+            agent: j.data?.agent,
+            work_item_id: j.data?.plane?.work_item_id,
+            failed_reason: (j.failedReason || '').slice(0, 240),
+            attempts: j.attemptsMade,
+            age_min: ageMin(j.finishedOn || j.timestamp || now)
+          }));
+      } catch { /* queue may be cold, skip silently */ }
+
+      // 24h pulse — the team's heartbeat.
+      const stats_24h = {
+        ships: shipped_today.length,
+        in_progress: in_progress.length,
+        needs_attention: needs_attention.length + recent_failed_jobs.length,
+        avg_duration_min: shipped_today.length
+          ? Math.round(shipped_today.reduce((s, w) => {
+              const start = w.metadata?.started_at || w.last_event_at;
+              return s + Math.max(0, (w.last_event_at - start) / 60000);
+            }, 0) / shipped_today.length)
+          : null
+      };
+
+      // Recent activity feed (per current project) — last 30 ticket events.
+      let activity = [];
+      try { activity = listActivity(storagePath, req.project.id, 30) || []; }
+      catch { /* tolerate cold project */ }
+
+      res.json({
+        project: { id: req.project.id, name: req.project.name },
+        generated_at: new Date().toISOString(),
+        stats_24h,
+        needs_attention,
+        recent_failed_jobs,
+        in_progress,
+        shipped_today,
+        activity
+      });
+    } catch (err) {
+      console.error('[/today]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Import GitHub repo as project
   router.post('/projects/import', authLimiter, authenticateAdmin, async (req, res) => {
     try {

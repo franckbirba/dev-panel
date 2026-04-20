@@ -10,6 +10,7 @@ import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
 import { ShellyView } from "@/views/shelly-view";
 import { ProjectsView } from "@/views/projects-view";
+import { TodayView } from "@/views/today-view";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject
 } from "@/lib/projects-store";
@@ -21,7 +22,9 @@ function getInitialTab() {
   if (path.includes("/shelly")) return "shelly";
   if (path.includes("/projects")) return "projects";
   if (path.includes("/settings")) return "settings";
-  return "inbox";
+  if (path.includes("/inbox")) return "inbox";
+  if (path.includes("/dashboard/")) return "today";
+  return "today";
 }
 
 function App() {
@@ -58,6 +61,7 @@ function App() {
       : tab === "shelly" ? "/dashboard/shelly"
       : tab === "projects" ? "/dashboard/projects"
       : tab === "settings" ? "/dashboard/settings"
+      : tab === "inbox" ? "/dashboard/inbox"
       : "/dashboard/";
     window.history.replaceState(null, "", path);
   }
@@ -192,6 +196,7 @@ function App() {
       {/* Cross-project pulse — only renders if 2+ projects are local */}
       <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
       <div className="flex-1 overflow-hidden">
+        {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
         {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
         {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
         {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}

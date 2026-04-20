@@ -6,6 +6,7 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
   const featureCount = stats?.features || 0;
 
   const tabs = [
+    { id: "today", label: "Today" },
     { id: "inbox", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },
     { id: "projects", label: "Projects" },

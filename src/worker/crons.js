@@ -39,6 +39,19 @@ const CRON_JOBS = [
       tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
     },
     priority: PRIORITY_MAP.p1
+  },
+  {
+    // Morning digest — runs as a "shelly:digest" handler in the worker
+    // (not a claude -p), assembles the same payload as /api/today and
+    // pushes it to Telegram via notifyJob. Cheap, deterministic, no
+    // tokens consumed.
+    name: 'shelly:morning-digest',
+    data: { agent: 'shelly_digest', source: 'cron', requested_by: 'cron:morning' },
+    repeat: {
+      pattern: process.env.MORNING_DIGEST_CRON || '0 7 * * *',
+      tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
+    },
+    priority: PRIORITY_MAP.p2
   }
 ];
 

@@ -195,6 +195,15 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       return result;
     }
 
+    if (jobData.agent === 'shelly_digest') {
+      const { handleShellyDigest } = await import('./handlers/shelly-digest.js');
+      const startedAt = Date.now();
+      const result = await handleShellyDigest(jobData);
+      // No runAutomation here — the digest handler already notified;
+      // running the workflow engine on a non-workflow job would just no-op.
+      return result;
+    }
+
   // Enrich work_item from Plane REST when the payload only carries the ID.
   // Engine-resumed jobs (replan → re-enqueue) and cron dispatches only know
   // plane.work_item_id; agents therefore lose all task context. Bypasses
