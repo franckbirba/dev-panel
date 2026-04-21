@@ -6,7 +6,10 @@ export function TabBar({ activeTab, onTabChange, stats, activeFilter, onFilterCh
   const bugCount = stats?.bugs || 0;
   const featureCount = stats?.features || 0;
 
+  const signalsEnabled = localStorage.getItem('devpanel_signals_enabled') === 'true';
+
   const tabs = [
+    ...(signalsEnabled ? [{ id: "signals", label: "Signals" }] : []),
     { id: "today", label: "Today" },
     { id: "captures", label: "Inbox", badge: pendingCount || null },
     { id: "dashboard", label: "Dashboard" },

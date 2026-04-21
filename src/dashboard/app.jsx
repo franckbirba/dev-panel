@@ -12,8 +12,9 @@ import { ShellyView } from "@/views/shelly-view";
 import { ProjectsView } from "@/views/projects-view";
 import { TodayView } from "@/views/today-view";
 import { CapturesView } from "@/views/captures-view";
+import { SignalsView } from "@/views/signals-view";
 import {
-  migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject
+  migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject, getAdminKey
 } from "@/lib/projects-store";
 
 // Derive initial tab from URL
@@ -24,6 +25,7 @@ function getInitialTab() {
   if (path.includes("/projects")) return "projects";
   if (path.includes("/settings")) return "settings";
   if (path.includes("/inbox") || path.includes("/captures")) return "captures";
+  if (path.includes("/signals")) return "signals";
   if (path.includes("/dashboard/")) return "today";
   return "today";
 }
@@ -62,6 +64,7 @@ function App() {
       : tab === "shelly" ? "/dashboard/shelly"
       : tab === "projects" ? "/dashboard/projects"
       : tab === "settings" ? "/dashboard/settings"
+      : tab === "signals" ? "/dashboard/signals"
       : tab === "captures" ? "/dashboard/captures"
       : tab === "inbox" ? "/dashboard/inbox"
       : "/dashboard/";
@@ -200,6 +203,7 @@ function App() {
       {/* Cross-project pulse — only renders if 2+ projects are local */}
       <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
       <div className="flex-1 overflow-hidden">
+        {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
         {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
         {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
         {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
