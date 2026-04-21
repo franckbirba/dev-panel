@@ -129,4 +129,13 @@
   .empty-state {
     background-image: radial-gradient(circle at 50% 50%, rgba(63, 63, 70, 0.15) 0%, transparent 70%);
   }
+
+  /* Signal highlight — new signal flash */
+  @keyframes signal-flash {
+    0% { background-color: rgba(59, 130, 246, 0.15); }
+    100% { background-color: transparent; }
+  }
+  .signal-new {
+    animation: signal-flash 1.5s ease-out;
+  }
 }
