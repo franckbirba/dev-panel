@@ -18,6 +18,9 @@ import {
 import { embed } from '../server/voyage.js';
 import { memoryInsert, memorySearchSql, memoryList } from '../server/pg.js';
 import { recordMemoryWrite } from '../server/jobs-log.js';
+import { parseTag } from '../server/telegram-tag.js';
+import { getSubject } from '../server/subjects.js';
+import { getOrCreateThread, appendFromTelegram } from '../server/threads.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -550,6 +553,49 @@ server.tool(
       limit: args.limit
     });
     return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+// ============================================================================
+// THREAD APPEND — inbound Telegram message → dashboard thread
+// ============================================================================
+
+export async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
+  const parsed = parseTag(raw_text);
+  if (!parsed) return { appended: false, reason: 'no tag in message' };
+  if (!getSubject(parsed.subject_type, parsed.subject_id)) {
+    return { appended: false, reason: `unknown subject ${parsed.subject_type}/${parsed.subject_id}` };
+  }
+  const thread = getOrCreateThread(parsed.subject_type, parsed.subject_id);
+  const id = appendFromTelegram({
+    thread_id: thread.thread_id,
+    role: role || 'shelly',
+    content: parsed.body,
+    telegram_message_id
+  });
+  if (id != null) {
+    try {
+      const { broadcast } = await import('../server/sse.js');
+      broadcast('thread:message', {
+        thread_id: thread.thread_id,
+        message: { id, role, source: 'telegram', content: parsed.body, created_at: new Date().toISOString() }
+      });
+    } catch (e) { /* SSE may not be initialised in MCP context */ }
+  }
+  return { appended: id != null, thread_id: thread.thread_id };
+}
+
+server.tool(
+  'thread_append',
+  'Forward a tagged Telegram message into the dashboard\'s thread for the matching subject. Use when the user (or another bot) sends a message starting with [thread:type/id].',
+  {
+    raw_text: z.string().describe('Full message text including the [thread:type/id] prefix'),
+    role: z.string().default('shelly').describe('user | shelly | agent'),
+    telegram_message_id: z.number().describe('Telegram message_id for dedup')
+  },
+  async ({ raw_text, role, telegram_message_id }) => {
+    const result = await handleThreadAppend({ raw_text, role, telegram_message_id });
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   }
 );
 
