@@ -2,6 +2,8 @@
 // ALERT SYSTEM — Telegram notifications via Shelly
 // ============================================================================
 
+import { recordDeployEvent } from './deploy-events.js';
+
 /**
  * Send alert to Telegram via Shelly
  * @param {Object} alert - Alert object
@@ -239,6 +241,27 @@ export async function notifyJob({
   // downstream (Shelly's telegram plugin / claude inbound handler).
   let line = parts.join('  ').replace(/[\r\n]+/g, ' ').replace(/\s{3,}/g, '  ');
   if (line.length > 240) line = line.slice(0, 237) + '...';
+  // Persist deploy + bootstrap events so the signals feed can surface them.
+  // Best-effort — never throw out of notifyJob.
+  if (agent === 'deploy' || agent === 'bootstrap') {
+    try {
+      const eventStatus = agent === 'bootstrap'
+        ? (status === 'done' ? 'bootstrap_succeeded' : status === 'failed' ? 'bootstrap_failed' : null)
+        : (status === 'done' ? 'succeeded' : status === 'failed' ? 'failed' : null);
+      if (eventStatus && work_item_id) {
+        const shaMatch = String(extra || '').match(/sha=([a-f0-9]+)/i);
+        recordDeployEvent({
+          project_id: work_item_id,
+          status: eventStatus,
+          sha: shaMatch ? shaMatch[1] : null,
+          failed_reason: eventStatus === 'failed' ? String(extra || '').slice(0, 200) : null
+        });
+      }
+    } catch (e) {
+      console.error('[Alerts] recordDeployEvent failed:', e.message);
+    }
+  }
+
   console.log('[Alerts] Queuing:', line);
   _debounceBuffer.push({ job_id, line });
   if (!_debounceTimer) {

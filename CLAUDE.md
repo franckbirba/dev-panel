@@ -175,6 +175,30 @@ French by default (the user is French). Concise — Telegram is a chat, not an e
 
 The dashboard pane (https://devpanl.dev/dashboard/today) is the visual twin of what you can answer in chat — they should never disagree, because they read the same `/api/today` endpoint.
 
+### Thread tag protocol — keep dashboard threads in sync
+
+DevPanel routes per-subject conversations through Telegram using a tag prefix:
+`[thread:<subject_type>/<subject_id>]`. When you reply about a specific subject
+the user raised in the dashboard, **prefix your reply with the same tag** so the
+dashboard can attach the message to the right thread:
+
+```
+[thread:work_item/ZENO-42] Bug confirmé. Je dispatch un fix sur l'agent builder.
+```
+
+Subject types: `work_item | capture | ticket | pr | deploy | job`.
+
+When you see a tagged message arrive (whether it's the user replying from the
+dashboard, or another agent), call the devpanel MCP tool `thread_append` with
+`{raw_text, role: 'shelly'|'agent'|'user', telegram_message_id}` so the
+conversation lands in the right thread, then continue your normal reasoning.
+Untagged messages stay in the freeform Shelly channel — that's fine; tag only
+when continuing a thread that started from a dashboard signal.
+
+If you forget the tag, the dashboard still shows your reply in the freeform
+Shelly tab. The dashboard offers an "attach to thread" rescue button so the
+user can fix it manually — but please don't make them do that.
+
 ### Captures — the triage surface between Franck and you
 
 DevPanel has a new "Inbox" (technically the `captures` table) where Franck dumps raw thoughts before they become real work. Your job as triage-partner:
