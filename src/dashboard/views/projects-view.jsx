@@ -4,6 +4,7 @@ import {
   removeProject, importByApiKey, importAllViaAdmin,
   getAdminKey, setAdminKey, addOrUpdateProject
 } from "@/lib/projects-store";
+import { PasteUrlModal } from "@/components/paste-url-modal";
 
 function StatusDot({ healthy }) {
   return <span className={`w-1.5 h-1.5 rounded-full ${healthy ? "bg-success" : "bg-muted-foreground/40"}`} />;
@@ -28,6 +29,7 @@ export function ProjectsView({ apiUrl, onProjectChange }) {
   const [editing, setEditing] = useState(null);   // project being edited
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [showPasteUrl, setShowPasteUrl] = useState(false);
 
   const refresh = useCallback(() => setLocalProjects(listLocalProjects()), []);
 
@@ -215,10 +217,16 @@ export function ProjectsView({ apiUrl, onProjectChange }) {
         <span className="text-xs text-muted-foreground">{localProjects.length} known locally{serverSummary && ` · ${serverSummary.length} on server`}</span>
         <div className="flex-1" />
         {adminKey && (
-          <button onClick={() => setCreating(true)}
-            className="px-3 py-1 text-xs rounded-md bg-foreground text-background hover:bg-foreground/90 cursor-pointer">
-            + New project
-          </button>
+          <>
+            <button onClick={() => setShowPasteUrl(true)}
+              className="px-3 py-1 text-xs rounded-md border border-border hover:bg-secondary cursor-pointer">
+              Paste GitHub URL
+            </button>
+            <button onClick={() => setCreating(true)}
+              className="px-3 py-1 text-xs rounded-md bg-foreground text-background hover:bg-foreground/90 cursor-pointer">
+              + New project
+            </button>
+          </>
         )}
       </div>
 
@@ -303,6 +311,14 @@ export function ProjectsView({ apiUrl, onProjectChange }) {
           onSubmit={handleCreate}
           onClose={() => setCreating(false)}
           busy={busy}
+        />
+      )}
+
+      {showPasteUrl && (
+        <PasteUrlModal
+          apiUrl={apiUrl}
+          onClose={() => setShowPasteUrl(false)}
+          onCreated={() => { setShowPasteUrl(false); refresh(); loadSummary(); onProjectChange?.(); }}
         />
       )}
 
