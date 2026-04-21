@@ -195,6 +195,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       return result;
     }
 
+    if (jobData.agent === 'bootstrap') {
+      const { handleBootstrapProject } = await import('./handlers/bootstrap-project.js');
+      return handleBootstrapProject({ id: job.id, data: jobData });
+    }
+
     if (jobData.agent === 'shelly_digest') {
       const { handleShellyDigest } = await import('./handlers/shelly-digest.js');
       const startedAt = Date.now();
