@@ -45,6 +45,7 @@ function App() {
   const [stats, setStats] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [queueHealth, setQueueHealth] = useState(null);
+  const [capturesCount, setCapturesCount] = useState(0);
   const sseRef = useRef(null);
 
   const apiUrl = window.location.origin;
@@ -106,6 +107,14 @@ function App() {
     fetch(`${apiUrl}/api/stats`, { headers: { "X-API-Key": apiKey } })
       .then((r) => (r.ok ? r.json() : null))
       .then(setStats)
+      .catch(() => {});
+  }, [apiKey, apiUrl, refreshKey, projectVersion]);
+
+  useEffect(() => {
+    if (!apiKey) return;
+    fetch(`${apiUrl}/api/captures?status=new`, { headers: { "X-API-Key": apiKey } })
+      .then((r) => (r.ok ? r.json() : { captures: [] }))
+      .then((d) => setCapturesCount(d.captures?.length || 0))
       .catch(() => {});
   }, [apiKey, apiUrl, refreshKey, projectVersion]);
 
@@ -184,9 +193,11 @@ function App() {
     );
   }
 
-  const tabStats = stats?.stats
-    ? { pending: stats.stats.pending, bugs: 0, features: 0 }
-    : {};
+  const tabStats = {
+    pending: capturesCount,
+    bugs: 0,
+    features: 0,
+  };
 
   return (
     <div className="flex flex-col h-screen bg-background">
