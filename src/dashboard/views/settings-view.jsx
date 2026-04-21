@@ -28,13 +28,6 @@ const SECTION_ICONS = {
       <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
     </svg>
   ),
-  features: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M12 2L2 7l10 5 10-5-10-5z" />
-      <path d="M2 17l10 5 10-5" />
-      <path d="M2 12l10 5 10-5" />
-    </svg>
-  ),
   danger: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -112,7 +105,6 @@ export function SettingsView({ apiUrl, apiKey }) {
     { id: "github", label: "GitHub" },
     { id: "notifications", label: "Notifications" },
     { id: "storage", label: "Storage" },
-    { id: "features", label: "Features" },
     { id: "danger", label: "Danger Zone", danger: true },
   ];
 
@@ -245,39 +237,6 @@ export function SettingsView({ apiUrl, apiKey }) {
                 <FieldCard label="Max File Size" value="10 MB" />
                 <FieldCard label="Screenshot Format" value="BLOB (base64 → binary)" />
                 <FieldCard label="Database" value="SQLite via better-sqlite3" mono={false} />
-              </div>
-            </>
-          )}
-
-          {section === "features" && (
-            <>
-              <SectionHeader
-                title="Features"
-                description="Try experimental features before they become the default."
-              />
-              <div className="flex flex-col gap-4 mt-4">
-                <div className="card-glow rounded-xl p-4 flex items-center justify-between">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-foreground text-[13px] font-medium">Signals view</span>
-                    <span className="text-muted-foreground/50 text-[11px]">
-                      Cross-project signal feed replacing Today/Captures/Dashboard.
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const current = localStorage.getItem('devpanel_signals_enabled') === 'true';
-                      localStorage.setItem('devpanel_signals_enabled', String(!current));
-                      window.location.reload();
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors ${
-                      localStorage.getItem('devpanel_signals_enabled') === 'true'
-                        ? 'bg-success/15 text-success'
-                        : 'bg-secondary text-muted-foreground'
-                    }`}
-                  >
-                    {localStorage.getItem('devpanel_signals_enabled') === 'true' ? 'ON' : 'OFF'}
-                  </button>
-                </div>
               </div>
             </>
           )}

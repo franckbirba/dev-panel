@@ -26,8 +26,8 @@ function getInitialTab() {
   if (path.includes("/settings")) return "settings";
   if (path.includes("/inbox") || path.includes("/captures")) return "captures";
   if (path.includes("/signals")) return "signals";
-  if (path.includes("/dashboard/")) return "today";
-  return "today";
+  if (path.includes("/dashboard/")) return "signals";
+  return "signals";
 }
 
 function App() {
