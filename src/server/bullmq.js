@@ -32,16 +32,28 @@ const PRIORITY_MAP = {
   p3: 20   // low
 };
 
+// Queues must be memoized: `new Queue()` opens a Redis connection and
+// callers like getAllQueuesHealth() hit this on a 5s SSE loop. Without
+// caching, the server bled ~951 zombie clients in 12min and OOM'd at 50.
+const queueCache = new Map();
+let sharedConnection = null;
+
+function getSharedConnection() {
+  if (!sharedConnection) sharedConnection = new Redis(REDIS_CONFIG);
+  return sharedConnection;
+}
+
 /**
- * Create or get a BullMQ queue
+ * Create or get a BullMQ queue (cached per queueName)
  * @param {string} queueName - Queue name from QUEUES
  * @returns {Queue} BullMQ queue instance
  */
 export function getQueue(queueName) {
-  const connection = new Redis(REDIS_CONFIG);
+  const cached = queueCache.get(queueName);
+  if (cached) return cached;
 
-  return new Queue(queueName, {
-    connection,
+  const queue = new Queue(queueName, {
+    connection: getSharedConnection(),
     defaultJobOptions: {
       attempts: 3,
       backoff: {
@@ -52,6 +64,8 @@ export function getQueue(queueName) {
       removeOnFail: false // Keep failed jobs for DLQ
     }
   });
+  queueCache.set(queueName, queue);
+  return queue;
 }
 
 /**
