@@ -7,3 +7,7 @@ storage/
 .env.production
 .htpasswd
 .worktrees/
+.playwright-mcp/
+.claude/skills/ui-*/
+*.png
+*.zip
