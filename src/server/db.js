@@ -127,6 +127,66 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS idx_capmsg_capture ON capture_messages(capture_id, created_at);
   `);
 
+  // ============================================================================
+  // SIGNAL INBOX — subjects, threads, thread_messages, deploy_events
+  // ============================================================================
+  masterDb.exec(`
+    CREATE TABLE IF NOT EXISTS subjects (
+      subject_type     TEXT NOT NULL,
+      subject_id       TEXT NOT NULL,
+      project_id       TEXT NOT NULL,
+      title            TEXT,
+      priority         TEXT,
+      priority_set_at  DATETIME,
+      created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (subject_type, subject_id),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS subjects_priority ON subjects(priority) WHERE priority IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS subjects_project  ON subjects(project_id);
+
+    CREATE TABLE IF NOT EXISTS threads (
+      thread_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_type     TEXT NOT NULL,
+      subject_id       TEXT NOT NULL,
+      project_id       TEXT NOT NULL,
+      created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_message_at  DATETIME,
+      UNIQUE (subject_type, subject_id),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS thread_messages (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id             INTEGER NOT NULL,
+      role                  TEXT NOT NULL,
+      source                TEXT NOT NULL,
+      content               TEXT NOT NULL,
+      telegram_message_id   INTEGER,
+      created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS thread_messages_thread ON thread_messages(thread_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS thread_messages_tg_dedup
+      ON thread_messages(telegram_message_id)
+      WHERE telegram_message_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS deploy_events (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id    TEXT NOT NULL,
+      status        TEXT NOT NULL,
+      sha           TEXT,
+      ref           TEXT,
+      log_url       TEXT,
+      failed_reason TEXT,
+      started_at    DATETIME,
+      finished_at   DATETIME,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS deploy_events_project_created ON deploy_events(project_id, created_at DESC);
+  `);
+
   return masterDb;
 }
 
