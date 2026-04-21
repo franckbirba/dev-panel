@@ -16,6 +16,11 @@ import {
   createCapture, getCapture, listCaptures,
   addCaptureMessage, updateCapture, deleteCapture
 } from './captures.js';
+import { upsertSubject, getSubject, setPriority } from './subjects.js';
+import { getOrCreateThread, listMessages as listThreadMessages, appendMessage as appendThreadMessage } from './threads.js';
+import { buildSignalsFeed } from './signals.js';
+import { prependTag } from './telegram-tag.js';
+import { bootstrapFromGithub } from './projects-bootstrap.js';
 import {
   getProjectDatabase,
   createTicket,
@@ -1411,6 +1416,105 @@ export function createRouter(config = {}) {
     if (!instance) return res.status(404).json({ error: 'not found' });
     const steps = instance.last_job_id ? listSteps(instance.last_job_id) : [];
     res.json({ instance, steps });
+  });
+
+  // ============================================================================
+  // SIGNAL INBOX — signals / threads / subjects / bootstrap
+  // ============================================================================
+
+  router.get('/signals', authenticateProject, async (req, res) => {
+    try {
+      const { project, priority, needs_me_only, since_min } = req.query;
+      const signals = await buildSignalsFeed({
+        project_id: project || req.project.id,
+        priority: priority || null,
+        needs_me_only: needs_me_only === '1' || needs_me_only === 'true',
+        since_min: since_min ? parseInt(since_min, 10) : 1440
+      });
+      res.json({ signals });
+    } catch (e) {
+      console.error('[signals]', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get('/threads/:subject_type/:subject_id', authenticateProject, (req, res) => {
+    try {
+      const { subject_type, subject_id } = req.params;
+      const thread = getOrCreateThread(subject_type, subject_id);
+      const messages = listThreadMessages(thread.thread_id);
+      res.json({ ...thread, messages });
+    } catch (e) {
+      const status = /not found/i.test(e.message) ? 404 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  });
+
+  router.post('/threads/:subject_type/:subject_id/messages', authenticateProject, async (req, res) => {
+    try {
+      const { subject_type, subject_id } = req.params;
+      const { content } = req.body || {};
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({ error: 'content required' });
+      }
+      const thread = getOrCreateThread(subject_type, subject_id);
+      const id = appendThreadMessage({ thread_id: thread.thread_id, role: 'user', source: 'web', content });
+      const { broadcast } = await import('./sse.js');
+      broadcast('thread:message', {
+        thread_id: thread.thread_id,
+        message: { id, role: 'user', source: 'web', content, created_at: new Date().toISOString() }
+      });
+      // Forward to Telegram with tag prefix; fire-and-forget.
+      const text = prependTag(subject_type, subject_id, content);
+      const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+      const token = process.env.TELEGRAM_BOT_TOKEN;
+      const chat  = process.env.TELEGRAM_CHAT_ID;
+      if (url) {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+          .catch(err => console.error('[threads] webhook send failed:', err.message));
+      } else if (token && chat) {
+        fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chat, text })
+        }).catch(err => console.error('[threads] telegram API send failed:', err.message));
+      }
+      res.json({ id, thread_id: thread.thread_id });
+    } catch (e) {
+      const status = /not found/i.test(e.message) ? 404 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  });
+
+  router.patch('/subjects/:subject_type/:subject_id', authenticateProject, (req, res) => {
+    try {
+      const { subject_type, subject_id } = req.params;
+      const { priority, title } = req.body || {};
+      if (!getSubject(subject_type, subject_id)) {
+        upsertSubject({ subject_type, subject_id, project_id: req.project.id, title: title || null });
+      }
+      if (priority !== undefined) setPriority(subject_type, subject_id, priority);
+      import('./sse.js').then(({ broadcast }) => {
+        broadcast('subject:priority_changed', { subject_type, subject_id, priority, project_id: req.project.id });
+      }).catch(() => {});
+      res.json(getSubject(subject_type, subject_id));
+    } catch (e) {
+      const status = /invalid/i.test(e.message) ? 400 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  });
+
+  router.post('/projects/from-github', authenticateAdmin, async (req, res) => {
+    try {
+      const { github_url } = req.body || {};
+      if (!github_url) return res.status(400).json({ error: 'github_url required' });
+      const result = await bootstrapFromGithub({ github_url });
+      res.status(201).json(result);
+    } catch (e) {
+      const status = /invalid github/i.test(e.message) ? 400
+                   : /not found/i.test(e.message)     ? 404
+                   : 500;
+      res.status(status).json({ error: e.message });
+    }
   });
 
   return router;
