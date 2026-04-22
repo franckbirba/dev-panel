@@ -14,22 +14,14 @@ import { Lucia, TimeSpan } from 'lucia';
 import { BetterSqlite3Adapter } from '@lucia-auth/adapter-sqlite';
 import { randomBytes, randomInt, timingSafeEqual } from 'crypto';
 
-// Inline Telegram helpers — keep auth self-contained.
+// Inline Telegram helpers — keep auth self-contained. Auth pushes go DIRECT
+// to Telegram (not through SHELLY_TELEGRAM_WEBHOOK) because Franck is the
+// human reader, not Shelly: the [auth] code must appear in his chat, not in
+// Shelly's tmux session.
 function _hasDest() {
-  return Boolean(
-    process.env.SHELLY_TELEGRAM_WEBHOOK ||
-    (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID)
-  );
+  return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 }
 async function _send(text) {
-  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
-  if (url) {
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
-  }
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat = process.env.TELEGRAM_CHAT_ID;
   if (token && chat) {
