@@ -1,15 +1,29 @@
-export function CommandDock({ projectName, sseConnected, ticketCount }) {
+// src/dashboard/components/command-dock.jsx
+// Status bar: 1 line, monospace, just the essentials.
+const VIEW_LABELS = {
+  signals: 'Signals', today: 'Today', captures: 'Inbox', inbox: 'Inbox',
+  dashboard: 'Dashboard', projects: 'Projects', queues: 'Queues',
+  shelly: 'Shelly', settings: 'Settings',
+};
+
+export function CommandDock({ projectName, sseConnected, ticketCount, activeTab }) {
   return (
-    <div className="status-bar flex items-center h-8 px-4 border-t border-border gap-4">
-      <span className="text-muted-foreground/50 text-[10px] font-mono">{projectName || "dev-panel"}</span>
-      <span className="text-border text-[10px]">·</span>
-      <span className="text-muted-foreground/50 text-[10px] font-mono">{ticketCount || 0} tickets</span>
+    <div className="status-bar">
+      <span>{projectName || 'dev-panel'}</span>
+      <span className="opacity-40">/</span>
+      <span>{VIEW_LABELS[activeTab] || ''}</span>
+      {ticketCount != null && (
+        <>
+          <span className="opacity-40">·</span>
+          <span>{ticketCount} tickets</span>
+        </>
+      )}
       <div className="flex-1" />
+      <span className="hidden md:inline opacity-60">⌘K</span>
+      <span className="opacity-40 hidden md:inline">·</span>
       <div className="flex items-center gap-1.5">
-        <span className={`w-1 h-1 rounded-full ${sseConnected ? "bg-success animate-pulse" : "bg-error"}`} />
-        <span className="text-muted-foreground/40 text-[10px] font-mono">
-          {sseConnected ? "live" : "disconnected"}
-        </span>
+        <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? 'bg-[var(--color-success)] animate-glow-pulse' : 'bg-[var(--color-error)]'}`} />
+        <span>{sseConnected ? 'live' : 'disconnected'}</span>
       </div>
     </div>
   );

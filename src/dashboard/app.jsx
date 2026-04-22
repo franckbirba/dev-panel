@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
-import { TabBar } from "@/components/tab-bar";
+import { Sidebar } from "@/components/sidebar";
+import { Topbar } from "@/components/topbar";
+import { CommandPalette } from "@/components/command-palette";
 import { CommandDock } from "@/components/command-dock";
 import { ProjectRibbon } from "@/components/project-ribbon";
+import { PasteUrlModal } from "@/components/paste-url-modal";
 import { InboxView } from "@/views/inbox-view";
 import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
@@ -13,6 +16,7 @@ import { ProjectsView } from "@/views/projects-view";
 import { TodayView } from "@/views/today-view";
 import { CapturesView } from "@/views/captures-view";
 import { SignalsView } from "@/views/signals-view";
+import { IconLogo } from "@/components/icons";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject, getAdminKey
 } from "@/lib/projects-store";
@@ -46,7 +50,21 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [queueHealth, setQueueHealth] = useState(null);
   const [capturesCount, setCapturesCount] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showAddProject, setShowAddProject] = useState(false);
   const sseRef = useRef(null);
+
+  // ⌘K opens the command palette globally
+  useEffect(() => {
+    function onKey(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const apiUrl = window.location.origin;
 
@@ -169,13 +187,22 @@ function App() {
     return () => { sseRef.current?.close(); };
   }, [apiKey, apiUrl, projectVersion]);
 
+  // ── Login screen ────────────────────────────────────────
   if (!apiKey) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background empty-state">
-        <form onSubmit={handleApiKeySubmit} className="card-glow flex flex-col gap-5 p-8 rounded-xl max-w-sm w-full">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-base font-semibold tracking-tight">DevPanel</h2>
-            <p className="text-[13px] text-muted-foreground">Enter your API key to connect.</p>
+      <div className="login-bg flex items-center justify-center h-screen relative overflow-hidden">
+        {/* Floating orbs */}
+        <div className="orb" style={{ width: 400, height: 400, top: '10%', left: '15%', background: 'rgba(99, 102, 241, 0.08)' }} />
+        <div className="orb" style={{ width: 300, height: 300, bottom: '20%', right: '10%', background: 'rgba(52, 211, 153, 0.06)', animationDelay: '-4s' }} />
+        <div className="orb" style={{ width: 200, height: 200, top: '60%', left: '50%', background: 'rgba(251, 191, 36, 0.05)', animationDelay: '-8s' }} />
+
+        <form onSubmit={handleApiKeySubmit} className="login-card flex flex-col gap-6 p-8 rounded-2xl max-w-sm w-full relative z-10 animate-scale-in">
+          <div className="flex flex-col items-center gap-3">
+            <IconLogo width={48} height={48} />
+            <div className="flex flex-col items-center gap-1">
+              <h2 className="text-lg font-semibold tracking-tight">DevPanel</h2>
+              <p className="text-[13px] text-muted-foreground">Enter your API key to connect</p>
+            </div>
           </div>
           <input
             name="apikey"
@@ -183,11 +210,14 @@ function App() {
             placeholder="dp_..."
             autoComplete="off"
             autoFocus
-            className="h-9 px-3 rounded-lg border border-border bg-background text-foreground font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring/60 transition-all placeholder:text-muted-foreground/40"
+            className="h-11 px-4 rounded-xl border border-border bg-background/50 text-foreground font-mono text-sm input-glow transition-all placeholder:text-muted-foreground/30"
           />
-          <button type="submit" className="h-9 rounded-lg bg-foreground text-background text-sm font-medium hover:bg-foreground/90 transition-colors cursor-pointer">
+          <button type="submit" className="h-11 rounded-xl bg-brand text-brand-foreground text-sm font-medium hover:bg-brand/90 transition-all cursor-pointer shadow-lg shadow-brand/20">
             Connect
           </button>
+          <p className="text-[11px] text-muted-foreground/40 text-center">
+            Run <code className="font-mono text-muted-foreground/60">dev-panel init</code> to get your key
+          </p>
         </form>
       </div>
     );
@@ -199,36 +229,58 @@ function App() {
     features: 0,
   };
 
+  // ── Main layout ─────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen bg-background">
-      <TabBar
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        stats={tabStats}
-        activeFilter={filter}
-        onFilterChange={setFilter}
+      <Topbar
+        currentProject={currentProject}
         onProjectSwitch={handleProjectSwitch}
-        apiUrl={apiUrl}
-        apiKey={apiKey}
+        onManageProjects={() => handleTabChange('projects')}
+        onAddProject={() => setShowAddProject(true)}
+        onOpenPalette={() => setPaletteOpen(true)}
       />
-      {/* Cross-project pulse — only renders if 2+ projects are local */}
-      <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
-      <div className="flex-1 overflow-hidden">
-        {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
-        {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
-        {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
-        {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
-        {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
-        {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}
-        {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
-        {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}
-        {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          stats={tabStats}
+        />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Cross-project pulse — only renders if 2+ projects are local */}
+          <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
+          <div className="flex-1 overflow-hidden">
+            {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
+            {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
+            {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
+            {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
+            {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
+            {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}
+            {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
+            {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}
+            {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
+          </div>
+          <CommandDock
+            projectName={stats?.project || currentProject?.name}
+            sseConnected={sseConnected}
+            ticketCount={stats?.stats?.total}
+            activeTab={activeTab}
+          />
+        </div>
       </div>
-      {activeTab !== "queues" && activeTab !== "projects" && (
-        <CommandDock
-          projectName={stats?.project || currentProject?.name}
-          sseConnected={sseConnected}
-          ticketCount={stats?.stats?.total}
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onNavigate={(tab) => handleTabChange(tab)}
+        onProjectSwitch={handleProjectSwitch}
+        onAddProject={() => setShowAddProject(true)}
+      />
+
+      {showAddProject && (
+        <PasteUrlModal
+          apiUrl={apiUrl}
+          onClose={() => setShowAddProject(false)}
+          onCreated={() => { setShowAddProject(false); handleProjectSwitch(); }}
         />
       )}
     </div>

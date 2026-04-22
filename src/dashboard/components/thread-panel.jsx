@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeAdminEvents } from '@/lib/events';
 import { getAdminKey } from '@/lib/projects-store';
+import { IconClose, IconSend, IconArrowLeft } from './icons';
 
 function timeAgo(iso) {
   if (!iso) return '\u2014';
@@ -13,11 +14,13 @@ function timeAgo(iso) {
 }
 
 const ROLE_STYLE = {
-  user: 'bg-foreground text-background',
-  shelly: 'bg-info/15 text-foreground border border-info/30',
-  system: 'bg-secondary/50 text-muted-foreground italic',
-  agent: 'bg-warning/15 text-foreground border border-warning/30',
+  user: 'bg-brand/20 text-foreground border border-brand/20',
+  shelly: 'bg-info/10 text-foreground border border-info/20',
+  system: 'bg-white/[0.02] text-muted-foreground italic border border-border',
+  agent: 'bg-warning/10 text-foreground border border-warning/20',
 };
+
+const ROLE_LABEL = { shelly: 'Shelly', agent: 'Agent', system: 'System' };
 
 export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
   const [thread, setThread] = useState(null);
@@ -91,19 +94,23 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
   if (!subject) return null;
 
   return (
-    <div className="w-full md:w-[40%] md:min-w-[360px] md:max-w-[560px] fixed md:relative inset-0 md:inset-auto border-l border-border flex flex-col bg-background h-full z-30">
+    <div className="w-full md:w-[40%] md:min-w-[360px] md:max-w-[560px] fixed md:relative inset-0 md:inset-auto border-l border-border flex flex-col bg-background/95 backdrop-blur-xl h-full z-30 animate-slide-in-right">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-border flex items-center gap-3">
+      <div className="px-5 py-3.5 border-b border-border flex items-center gap-3 glass-surface">
         <button onClick={onClose}
-          className="md:hidden text-muted-foreground hover:text-foreground cursor-pointer text-xs mr-2">{'\u2190'} back</button>
+          className="md:hidden text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded-md hover:bg-white/5 transition-colors mr-1">
+          <IconArrowLeft width={16} height={16} />
+        </button>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium truncate">{subject.title || `${subject.subject_type}/${subject.subject_id}`}</div>
-          <div className="text-[10px] text-muted-foreground/60 font-mono mt-0.5">
-            {subject.project_name || ''} {'\u00B7'} {subject.subject_type}
+          <div className="text-[13px] font-medium truncate">{subject.title || `${subject.subject_type}/${subject.subject_id}`}</div>
+          <div className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">
+            {subject.project_name || ''} · {subject.subject_type}
           </div>
         </div>
         <button onClick={onClose}
-          className="hidden md:block text-muted-foreground hover:text-foreground cursor-pointer text-sm">{'\u2715'}</button>
+          className="hidden md:flex items-center justify-center w-7 h-7 text-muted-foreground hover:text-foreground cursor-pointer rounded-md hover:bg-white/5 transition-colors">
+          <IconClose width={15} height={15} />
+        </button>
       </div>
 
       {error && (
@@ -112,14 +119,15 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-        {messages.map(m => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] rounded-lg px-3 py-2 text-xs ${ROLE_STYLE[m.role] || ROLE_STYLE.system}`}>
+        {messages.map((m, i) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
+            style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s` }}>
+            <div className={`max-w-[80%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${ROLE_STYLE[m.role] || ROLE_STYLE.system}`}>
               {m.role !== 'user' && (
-                <div className="text-[10px] font-mono uppercase tracking-wider opacity-60 mb-1">{m.role}</div>
+                <div className="text-[10px] font-mono uppercase tracking-wider opacity-50 mb-1">{ROLE_LABEL[m.role] || m.role}</div>
               )}
               <div className="whitespace-pre-wrap">{m.content}</div>
-              <div className="text-[10px] opacity-50 mt-1 font-mono">{timeAgo(m.created_at)}</div>
+              <div className="text-[10px] opacity-40 mt-1.5 font-mono">{timeAgo(m.created_at)}</div>
             </div>
           </div>
         ))}
@@ -127,16 +135,16 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
       </div>
 
       {/* Reply box */}
-      <form onSubmit={handleSend} className="border-t border-border px-5 py-3 flex items-center gap-2">
+      <form onSubmit={handleSend} className="border-t border-border px-5 py-3 flex items-center gap-2 glass-surface">
         <input
           ref={inputRef}
           onKeyDown={handleKeyDown}
-          placeholder="reply to shelly\u2026 (Cmd+Enter to send)"
-          className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring/60"
+          placeholder="Reply to Shelly… (⌘+Enter)"
+          className="flex-1 h-10 px-4 rounded-xl border border-border bg-background/50 text-sm input-glow transition-all placeholder:text-muted-foreground/30"
         />
         <button type="submit" disabled={sending}
-          className="h-9 px-3 rounded-md bg-foreground text-background text-xs font-medium disabled:opacity-50 cursor-pointer">
-          send
+          className="h-10 w-10 rounded-xl bg-brand text-brand-foreground flex items-center justify-center disabled:opacity-40 cursor-pointer hover:bg-brand/90 transition-colors shadow-lg shadow-brand/10">
+          <IconSend width={16} height={16} />
         </button>
       </form>
     </div>

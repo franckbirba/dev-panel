@@ -1,14 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 
 const chipStyles = {
-  bug: "bg-error/10 text-error border-error/20",
-  feature: "bg-info/10 text-info border-info/20",
-  published: "bg-success/10 text-success border-success/20",
-  rejected: "bg-muted text-muted-foreground border-border",
-  pending: "bg-warning/10 text-warning border-warning/20",
-  synced: "bg-warning/10 text-warning border-warning/20",
-  created: "bg-info/10 text-info border-info/20",
-  updated: "bg-muted text-muted-foreground border-border",
+  bug: "bg-error/10 text-error border-error/15",
+  feature: "bg-info/10 text-info border-info/15",
+  published: "bg-success/10 text-success border-success/15",
+  rejected: "bg-muted/40 text-muted-foreground border-border",
+  pending: "bg-warning/10 text-warning border-warning/15",
+  synced: "bg-warning/10 text-warning border-warning/15",
+  created: "bg-info/10 text-info border-info/15",
+  updated: "bg-muted/40 text-muted-foreground border-border",
+  healthy: "bg-success/10 text-success border-success/15",
+  warning: "bg-warning/10 text-warning border-warning/15",
 };
 
 export function StatusChip({ label, type }) {
