@@ -67,7 +67,9 @@ describe('captures migration (capture_messages → thread_messages)', () => {
     expect(msgs).toHaveLength(3);
     expect(msgs.map(m => m.role)).toEqual(['user', 'shelly', 'user']);
     expect(msgs.every(m => m.source === 'web')).toBe(true);
+    expect(msgs[0].content).toBe('first thought');
     expect(msgs[1].content).toBe('got it, bug or feature?');
+    expect(msgs[2].content).toBe('bug');
 
     const captureMessagesExists = db.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='capture_messages'`
