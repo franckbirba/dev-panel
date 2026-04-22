@@ -1,5 +1,6 @@
 import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
 
 /** @type { import('@storybook/react-vite').StorybookConfig } */
 const config = {
@@ -15,6 +16,11 @@ const config = {
   },
   async viteFinal(vite) {
     vite.plugins = vite.plugins || [];
+    // Re-apply the React plugin with explicit include covering /stories/.
+    // Storybook's default react plugin instance only transforms files under
+    // /app; JSX in synced source trees would otherwise compile with the
+    // classic runtime (requires `import React`), breaking rendering.
+    vite.plugins.push(react({ include: ['/stories/**/*.{js,jsx,ts,tsx}'] }));
     vite.plugins.push(tailwindcss());
 
     vite.resolve = vite.resolve || {};

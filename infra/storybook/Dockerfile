@@ -9,6 +9,7 @@ RUN npm install --no-audit --no-fund
 # Minimal storybook config — stories come from a mounted volume at /stories.
 COPY .storybook ./.storybook
 COPY index.html ./
+COPY app.css ./app.css
 
 # Create the mount point so storybook's glob resolves to an existing dir
 # even before the sync user has written anything.
