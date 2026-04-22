@@ -13,12 +13,20 @@ import { DevPanel } from './DevPanel.jsx';
 const ROOT_ID = 'devpanel-widget-root';
 
 function mount() {
-  if (document.getElementById(ROOT_ID)) return; // already mounted
-
   // document.currentScript is null in module contexts but fine here (IIFE).
   // Fall back to querying for the last loaded script with a data-api-key.
   const script = document.currentScript
     ?? document.querySelector('script[src*="/widget.js"][data-api-key]');
+
+  if (document.getElementById(ROOT_ID)) {
+    // Second <script> tag firing after the first already mounted. Warn if the
+    // keys differ — silently ignoring would let a stale/wrong key win.
+    const existing = document.getElementById(ROOT_ID).dataset.apiKey;
+    if (script?.dataset?.apiKey && existing && script.dataset.apiKey !== existing) {
+      console.warn('[DevPanel widget] already mounted with a different apiKey; ignoring second <script>.');
+    }
+    return;
+  }
   const apiKey = script?.dataset?.apiKey;
   const apiUrl = script?.dataset?.apiUrl;
 
@@ -29,6 +37,7 @@ function mount() {
 
   const root = document.createElement('div');
   root.id = ROOT_ID;
+  root.dataset.apiKey = apiKey;
   document.body.appendChild(root);
   createRoot(root).render(<DevPanel apiKey={apiKey} apiUrl={apiUrl} />);
 }
