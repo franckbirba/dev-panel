@@ -99,7 +99,7 @@ export function CapturesView({ apiUrl, apiKey }) {
     if (!content || !selected) return;
     setBusy(true);
     try {
-      await fetch(`${apiUrl}/api/captures/${selected}/messages`, {
+      await fetch(`${apiUrl}/api/threads/capture/${selected}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
         body: JSON.stringify({ content, role: 'user' }),
