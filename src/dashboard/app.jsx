@@ -20,6 +20,8 @@ import { IconLogo } from "@/components/icons";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject, getAdminKey
 } from "@/lib/projects-store";
+import { useAuth } from "@/lib/use-auth";
+import { LoginView } from "@/views/login-view";
 
 // Derive initial tab from URL
 function getInitialTab() {
@@ -37,6 +39,11 @@ function getInitialTab() {
 function App() {
   // Migrate v1 storage on first mount, then read from v2.
   useEffect(() => { migrateLegacy(); }, []);
+
+  // Auth gate — probe /auth/me (uses Lucia session cookie). If not authed,
+  // render LoginView (Telegram OTP). The per-project api_key in localStorage
+  // is still used for scoping requests but no longer authenticates the human.
+  const { status: authStatus } = useAuth("");
 
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [filter, setFilter] = useState(null);
@@ -187,40 +194,12 @@ function App() {
     return () => { sseRef.current?.close(); };
   }, [apiKey, apiUrl, projectVersion]);
 
-  // ── Login screen ────────────────────────────────────────
-  if (!apiKey) {
-    return (
-      <div className="login-bg flex items-center justify-center h-screen relative overflow-hidden">
-        {/* Floating orbs */}
-        <div className="orb" style={{ width: 400, height: 400, top: '10%', left: '15%', background: 'rgba(99, 102, 241, 0.08)' }} />
-        <div className="orb" style={{ width: 300, height: 300, bottom: '20%', right: '10%', background: 'rgba(52, 211, 153, 0.06)', animationDelay: '-4s' }} />
-        <div className="orb" style={{ width: 200, height: 200, top: '60%', left: '50%', background: 'rgba(251, 191, 36, 0.05)', animationDelay: '-8s' }} />
-
-        <form onSubmit={handleApiKeySubmit} className="login-card flex flex-col gap-6 p-8 rounded-2xl max-w-sm w-full relative z-10 animate-scale-in">
-          <div className="flex flex-col items-center gap-3">
-            <IconLogo width={48} height={48} />
-            <div className="flex flex-col items-center gap-1">
-              <h2 className="text-lg font-semibold tracking-tight">DevPanel</h2>
-              <p className="text-[13px] text-muted-foreground">Enter your API key to connect</p>
-            </div>
-          </div>
-          <input
-            name="apikey"
-            type="password"
-            placeholder="dp_..."
-            autoComplete="off"
-            autoFocus
-            className="h-11 px-4 rounded-xl border border-border bg-background/50 text-foreground font-mono text-sm input-glow transition-all placeholder:text-muted-foreground/30"
-          />
-          <button type="submit" className="h-11 rounded-xl bg-brand text-brand-foreground text-sm font-medium hover:bg-brand/90 transition-all cursor-pointer shadow-lg shadow-brand/20">
-            Connect
-          </button>
-          <p className="text-[11px] text-muted-foreground/40 text-center">
-            Run <code className="font-mono text-muted-foreground/60">dev-panel init</code> to get your key
-          </p>
-        </form>
-      </div>
-    );
+  // ── Auth gate (Telegram-via-Shelly OTP) ─────────────────
+  if (authStatus === 'unknown') {
+    return <div className="flex items-center justify-center h-screen text-sm text-muted-foreground">Connexion…</div>;
+  }
+  if (authStatus === 'unauthenticated') {
+    return <LoginView apiUrl="" />;
   }
 
   const tabStats = {

@@ -28,6 +28,7 @@
         "PG_PASSWORD": "__PG_PASSWORD__",
         "VOYAGE_API_KEY": "__VOYAGE_API_KEY__",
         "ADMIN_API_KEY": "__ADMIN_API_KEY__",
+        "API_BASE": "https://devpanl.dev",
         "WORKER_API": "http://localhost:3099"
       }
     }

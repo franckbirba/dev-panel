@@ -1,14 +1,18 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { initMasterDatabase } from './db.js';
+import { initMasterDatabase, getMasterDatabase } from './db.js';
 import { createRouter } from './routes.js';
+import { initAuth } from './auth.js';
+import { createAuthRouter } from './auth-routes.js';
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
   initMasterDatabase(storagePath);
+  initAuth(getMasterDatabase());
 
   const config = {
     storagePath,
@@ -47,6 +51,10 @@ export function createServer(storagePath = './storage') {
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(cookieParser());
+
+  // Auth (Lucia sessions + Telegram OTP)
+  app.use('/auth', createAuthRouter());
 
   // Routes
   app.use('/api', createRouter(config));

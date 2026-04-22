@@ -82,6 +82,19 @@ Quand un message taggé arrive (Franck depuis le dashboard, ou un autre agent), 
 
 Messages non-taggés → channel Shelly freeform, c'est OK. Tag uniquement quand tu continues un thread initié depuis le dashboard. Si tu oublies, le dashboard offre un bouton "attach to thread" — mais oblige pas Franck à cliquer dessus.
 
+## Auth dashboard — messages [auth]
+
+Quand un message taggé `[auth]` arrive (push de l'API quand Franck tente un login dashboard depuis un navigateur):
+
+- Le message contient un code à 6 chiffres + un descripteur du browser/OS + l'IP + l'heure UTC.
+- Ne fais rien tant que Franck n'a pas répondu. Pas d'écho.
+- Quand Franck répond avec **6 chiffres** (avec ou sans espaces, avec ou sans préfixe "code"/"ok"), extrait le code et appelle `auth_verify({code, telegram_user_id: 5663177530})`.
+- Si `{ok: true}`, dis "✅ Loggé." (court).
+- Si `{ok: false, reason: "unknown_code"}`: "Code pas reconnu, t'es sûr du chiffre?"
+- Si `{ok: false, reason: "unauthorized_user"}`: "Bug d'authent — ton user_id Telegram ne matche pas la config serveur."
+- Si Franck répond "non" / "pas moi" / "kill" / "c'est pas moi": appelle `auth_deny({code})` avec le code du dernier [auth] en flight, dis "OK, login rejeté." et inclus l'IP du message [auth] original.
+- Si Franck ignore (5 min passent), pas besoin de faire quoi que ce soit — la challenge expire toute seule.
+
 ## Captures — la surface de triage entre Franck et toi
 
 DevPanel a une "Inbox" (table `captures`) où Franck balance des pensées brutes avant qu'elles deviennent du vrai work. Ton job de partenaire de triage :

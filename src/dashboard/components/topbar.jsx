@@ -123,6 +123,17 @@ export function Topbar({ currentProject, onProjectSwitch, onManageProjects, onAd
         <span className="flex-1" />
         <span className="kbd">⌘K</span>
       </button>
+
+      <button
+        onClick={async () => {
+          await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+          window.location.reload();
+        }}
+        className="ml-2 h-7 px-2 rounded-md text-[12.5px] text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)] bg-[var(--color-surface-1)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] cursor-pointer transition-colors"
+        title="Déconnexion"
+      >
+        ⏻
+      </button>
     </div>
   );
 }

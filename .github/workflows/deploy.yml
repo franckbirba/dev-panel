@@ -54,7 +54,7 @@ jobs:
             AFFINE_DB_PASSWORD,PLANE_DB_PASSWORD,PLANE_SECRET_KEY,
             PLANE_MINIO_ROOT_USER,PLANE_MINIO_ROOT_PASSWORD,
             PENPOT_SECRET_KEY,PENPOT_DB_PASSWORD,
-            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,TRAEFIK_USER,TRAEFIK_PASS
+            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,AUTHORIZED_TELEGRAM_USER_ID,TRAEFIK_USER,TRAEFIK_PASS
           script: |
             cd ~/dev-panel
 
@@ -71,6 +71,7 @@ jobs:
             export PENPOT_DB_PASSWORD="$PENPOT_DB_PASSWORD"
             export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
             export TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+            export AUTHORIZED_TELEGRAM_USER_ID="${AUTHORIZED_TELEGRAM_USER_ID:-$TELEGRAM_CHAT_ID}"
             export TRAEFIK_USER="$TRAEFIK_USER"
             export TRAEFIK_PASS="$TRAEFIK_PASS"
             # Private LAN IP for redis/postgres port binding (see docker-compose.yml)
@@ -110,6 +111,7 @@ jobs:
           PENPOT_DB_PASSWORD: ${{ secrets.PENPOT_DB_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AUTHORIZED_TELEGRAM_USER_ID: ${{ secrets.AUTHORIZED_TELEGRAM_USER_ID }}
           TRAEFIK_USER: ${{ secrets.TRAEFIK_USER }}
           TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}
 
