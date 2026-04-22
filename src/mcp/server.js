@@ -33,8 +33,57 @@ const REDIS_HOST = process.env.REDIS_HOST || '77.42.46.87';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
 const MODE_FILE = process.env.MODE_FILE || join(process.env.HOME || '/home/deploy', '.shelly-mode.json');
 const WORKER_API = process.env.WORKER_API || 'http://localhost:3099';
+const API_BASE = process.env.API_BASE || 'https://devpanl.dev';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+
+const PLANE_BASE = (process.env.PLANE_BASE_URL || 'https://plane.devpanl.dev').replace(/\/$/, '');
+const PLANE_SLUG = process.env.PLANE_WORKSPACE_SLUG || 'devpanl';
+const PLANE_KEY = process.env.PLANE_API_KEY || process.env.PLANE_API_TOKEN || '';
 
 const PRIORITY_MAP = { p0: 1, p1: 5, p2: 10, p3: 20 };
+
+// Resolve a human task_id like "DEVPA-93" to its Plane UUID + title/description.
+// Returns { id, project_id, title, description, priority } or null.
+// All fetches have a 5s timeout so callers can't hang BullMQ dispatch.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SEQ_RE = /^([A-Z][A-Z0-9]*)-(\d+)$/;
+
+async function resolvePlaneWorkItem(idOrSeq) {
+  if (!PLANE_KEY) return null;
+  const m = (idOrSeq || '').match(SEQ_RE);
+  if (!m) return null;
+  const [, projectIdentifier, seq] = m;
+  const headers = { 'X-API-Key': PLANE_KEY };
+  try {
+    const projRes = await fetch(
+      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/`,
+      { headers, signal: AbortSignal.timeout(5000) }
+    );
+    if (!projRes.ok) return null;
+    const projects = await projRes.json();
+    const proj = (projects.results || projects).find(p => p.identifier === projectIdentifier);
+    if (!proj) return null;
+    const wiRes = await fetch(
+      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${proj.id}/issues/?sequence=${seq}`,
+      { headers, signal: AbortSignal.timeout(5000) }
+    );
+    if (!wiRes.ok) return null;
+    const items = await wiRes.json();
+    const wi = (items.results || items)[0];
+    if (!wi) return null;
+    const desc = (wi.description_html || '')
+      .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '- ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/\n{3,}/g, '\n\n').trim();
+    return { id: wi.id, project_id: proj.id, title: wi.name, description: desc, priority: wi.priority };
+  } catch (err) {
+    console.warn(`[resolvePlaneWorkItem] ${idOrSeq}: ${err.message}`);
+    return null;
+  }
+}
 
 let agentsQueue = null;
 function getAgentsQueue() {
@@ -70,13 +119,38 @@ server.tool(
   'List all projects managed by dev-panel',
   {},
   async () => {
-    const projects = listProjects();
-    const result = projects.map(p => ({
-      name: p.name,
-      github: `${p.github_owner}/${p.github_repo}`,
-      id: p.id
-    }));
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    // Source of truth lives on the services API, not the local SQLite.
+    // This MCP runs on the agents node where storage/projects.db is empty.
+    if (!ADMIN_API_KEY) {
+      return {
+        content: [{ type: 'text', text: 'ADMIN_API_KEY not configured — cannot query /api/projects.' }],
+        isError: true
+      };
+    }
+    try {
+      const resp = await fetch(`${API_BASE}/api/projects`, {
+        headers: { 'X-Admin-Key': ADMIN_API_KEY }
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        return {
+          content: [{ type: 'text', text: `GET ${API_BASE}/api/projects → ${resp.status}: ${body}` }],
+          isError: true
+        };
+      }
+      const { projects = [] } = await resp.json();
+      const result = projects.map(p => ({
+        name: p.name,
+        github: `${p.github_owner}/${p.github_repo}`,
+        id: p.id
+      }));
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Failed to reach ${API_BASE}/api/projects: ${err.message}` }],
+        isError: true
+      };
+    }
   }
 );
 
@@ -238,7 +312,7 @@ server.tool(
 
 server.tool(
   'enqueue_job',
-  'Enqueue a job for an agent in the BullMQ queue',
+  'Low-level: enqueue a job directly on the BullMQ queue. PREFER plane_dispatch_work_item for any dispatch tied to a Plane work item — it auto-resolves DEVPA-xx and fills title/description from Plane. Use this only for unusual one-off agent tasks.',
   {
     agent: z.enum(['builder', 'reviewer', 'pm', 'designer', 'architect', 'qa']).describe('Agent type'),
     task_id: z.string().describe('Task ID from Plane (e.g. DEVPA-42)'),
@@ -250,6 +324,29 @@ server.tool(
     source: z.enum(['telegram', 'dashboard', 'cron']).default('telegram')
   },
   async ({ agent, task_id, task_title, task_description, skills, priority, branch, source }) => {
+    // Guard: empty-payload dispatches (jobs 42, 44, 113, 114) waste a builder
+    // run and get blocked immediately. Force Shelly to bring a real spec.
+    const tid = (task_id || '').trim();
+    const ttitle = (task_title || '').trim();
+    const tdesc = (task_description || '').trim();
+    const planeIdPattern = /^[A-Z][A-Z0-9]*-\d+$/;
+    if (!planeIdPattern.test(tid) || !ttitle || !tdesc) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'empty_or_invalid_work_item',
+            message: 'Refusing to enqueue: need a real Plane work item with title + description. ' +
+                     'If Franck asked to "start a job" without an id: first query the Plane backlog, ' +
+                     'pick or create a work item in the current cycle with acceptance criteria, ' +
+                     'confirm with Franck, then re-call enqueue_job with that work_item id.',
+            received: { task_id: tid, task_title: ttitle, task_description_length: tdesc.length },
+            expected: { task_id: 'e.g. DEVPA-42 or ZENO-17', task_title: 'non-empty', task_description: 'non-empty with acceptance criteria' }
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
     try {
       const queue = getAgentsQueue();
       const job = await queue.add(`${agent}:${task_id}`, {
@@ -284,9 +381,9 @@ server.tool(
 
 server.tool(
   'plane_dispatch_work_item',
-  'Start the work-item pipeline on a Plane work-item (PM-owned dispatch).',
+  'Start the work-item pipeline on a Plane work-item. Accepts a UUID or a human sequence like DEVPA-93 — sequence gets resolved to UUID and title/description are filled from Plane if omitted. This is the preferred entry point for Shelly.',
   {
-    work_item_id: z.string(),
+    work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93'),
     module_id: z.string().optional(),
     cycle_id: z.string().optional(),
     title: z.string().optional(),
@@ -294,14 +391,44 @@ server.tool(
     workflow: z.enum(['work-item']).default('work-item')
   },
   async ({ work_item_id, module_id, cycle_id, title, description, workflow }) => {
+    let resolved_id = work_item_id;
+    let plane_project_id;
+    let fetched_title;
+    let fetched_description;
+
+    if (!UUID_RE.test(work_item_id)) {
+      const wi = await resolvePlaneWorkItem(work_item_id);
+      if (!wi) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ok: false,
+            error: 'plane_lookup_failed',
+            message: `Could not resolve "${work_item_id}" to a Plane work item. Check the sequence (e.g. DEVPA-93) and PLANE_API_KEY.`,
+          }, null, 2) }],
+          isError: true
+        };
+      }
+      resolved_id = wi.id;
+      plane_project_id = wi.project_id;
+      fetched_title = wi.title;
+      fetched_description = wi.description;
+    }
+
     const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
     const out = await enqueueWorkflowStart({
       workflow,
-      plane: { work_item_id, module_id, cycle_id },
-      work_item: { title, description }
+      plane: { work_item_id: resolved_id, project_id: plane_project_id, module_id, cycle_id },
+      work_item: {
+        title: title || fetched_title,
+        description: description || fetched_description
+      }
     });
     return {
-      content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify({
+        ...out,
+        resolved_from: work_item_id !== resolved_id ? work_item_id : undefined,
+        work_item_id: resolved_id
+      }, null, 2) }],
       isError: !out.ok
     };
   }
