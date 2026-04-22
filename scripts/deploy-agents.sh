@@ -54,6 +54,22 @@ su - deploy -c "cd /home/deploy/projects/dev-panel && \\
   git remote set-url origin \\
     https://x-access-token:${GH_TOKEN}@github.com/franckbirba/dev-panel.git"
 
+# /home/deploy/.mcp.json — Shelly's MCP server config (devpanel-mcp, plane,
+# github). The devpanel-mcp env block here is load-bearing: src/mcp/server.js
+# defaults REDIS_HOST to the public IP 77.42.46.87 (firewalled), which makes
+# every list_jobs/enqueue_job hang forever. Render the template with secrets
+# from .env.production so we never drift between hosts.
+sed \
+  -e "s|__PLANE_API_KEY__|${PLANE_KEY}|" \
+  -e "s|__GITHUB_TOKEN__|${GH_TOKEN}|" \
+  -e "s|__PG_PASSWORD__|${PG_PASS}|" \
+  -e "s|__VOYAGE_API_KEY__|${VOYAGE_KEY}|" \
+  -e "s|__ADMIN_API_KEY__|${ADMIN_KEY}|" \
+  /home/deploy/projects/dev-panel/infra/agents-mcp.json.template \
+  > /home/deploy/.mcp.json
+chown deploy:deploy /home/deploy/.mcp.json
+chmod 600 /home/deploy/.mcp.json
+
 # Systemd units (worker + shelly + watchdog)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/

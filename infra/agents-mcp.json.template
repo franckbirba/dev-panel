@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "plane-mcp": {
+      "command": "/home/deploy/.local/bin/uvx",
+      "args": ["--python", "3.12", "plane-mcp-server", "stdio"],
+      "env": {
+        "PLANE_API_KEY": "__PLANE_API_KEY__",
+        "PLANE_WORKSPACE_SLUG": "devpanl",
+        "PLANE_BASE_URL": "https://plane.devpanl.dev"
+      }
+    },
+    "github-mcp": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "__GITHUB_TOKEN__"
+      }
+    },
+    "devpanel-mcp": {
+      "command": "node",
+      "args": ["/home/deploy/projects/dev-panel/src/mcp/server.js"],
+      "env": {
+        "DEVPANEL_STORAGE": "/home/deploy/projects/dev-panel/storage",
+        "REDIS_HOST": "10.0.0.2",
+        "REDIS_PORT": "6379",
+        "PG_HOST": "10.0.0.2",
+        "PG_PORT": "5432",
+        "PG_PASSWORD": "__PG_PASSWORD__",
+        "VOYAGE_API_KEY": "__VOYAGE_API_KEY__",
+        "ADMIN_API_KEY": "__ADMIN_API_KEY__",
+        "WORKER_API": "http://localhost:3099"
+      }
+    }
+  }
+}
