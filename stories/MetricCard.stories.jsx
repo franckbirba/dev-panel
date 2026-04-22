@@ -1,5 +1,5 @@
 import React from 'react';
-import { MetricCard } from '../../src/dashboard/components/metric-card.jsx';
+import { MetricCard } from '@/components/metric-card.jsx';
 
 export default {
   title: 'devpanel/MetricCard',

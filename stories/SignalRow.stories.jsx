@@ -1,5 +1,5 @@
 import React from 'react';
-import { SignalRow } from '../../src/dashboard/components/signal-row.jsx';
+import { SignalRow } from '@/components/signal-row.jsx';
 
 export default {
   title: 'devpanel/SignalRow',
