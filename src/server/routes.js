@@ -1,6 +1,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { timingSafeEqual } from 'crypto';
+import { requireAuth } from './middleware/require-auth.js';
 import {
   getProjectByApiKey,
   createProject,
@@ -449,8 +450,15 @@ export function createRouter(config = {}) {
   // PROJECT MANAGEMENT (No project auth - admin endpoints)
   // ============================================================================
 
-  // List all projects
-  router.get('/projects', authLimiter, authenticateAdmin, (req, res) => {
+  // List all projects — requireAuth so a logged-in human (cookie session)
+  // gets the full list with api_keys, allowing the dashboard to hydrate the
+  // localStorage project switcher on a fresh browser. Admin key still works
+  // for scripts; project keys are NOT enough (a project key shouldn't expose
+  // sibling projects' keys).
+  router.get('/projects', authLimiter, requireAuth, (req, res) => {
+    if (req.user?.type === 'project_key') {
+      return res.status(403).json({ error: 'project key cannot list all projects' });
+    }
     try {
       const projects = listProjects();
       res.json({ projects });

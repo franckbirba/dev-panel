@@ -128,6 +128,31 @@ export async function importByApiKey(apiUrl, apiKey) {
   return entry;
 }
 
+// Hydrate the local project store from the server using the cookie session.
+// Called once after login on a fresh browser so the user gets all their
+// projects without having to paste keys again. Returns the number of
+// projects synced (or 0 if the request failed / not authorized).
+export async function hydrateFromSession(apiUrl) {
+  try {
+    const res = await fetch(`${apiUrl}/api/projects`, { credentials: 'include' });
+    if (!res.ok) return 0;
+    const { projects = [] } = await res.json();
+    for (const p of projects) {
+      if (!p.api_key) continue;
+      addOrUpdateProject({
+        id: p.id,
+        name: p.name,
+        api_key: p.api_key,
+        github_repo: p.github_repo,
+        plane_project_id: p.plane_project_id
+      });
+    }
+    return projects.length;
+  } catch {
+    return 0;
+  }
+}
+
 // Bulk-import all projects via admin key. Returns added count.
 export async function importAllViaAdmin(apiUrl, adminKey) {
   const res = await fetch(`${apiUrl}/api/projects/summary`, {

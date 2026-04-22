@@ -18,7 +18,8 @@ import { CapturesView } from "@/views/captures-view";
 import { SignalsView } from "@/views/signals-view";
 import { IconLogo } from "@/components/icons";
 import {
-  migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject, getAdminKey
+  migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject,
+  getAdminKey, hydrateFromSession
 } from "@/lib/projects-store";
 import { useAuth } from "@/lib/use-auth";
 import { LoginView } from "@/views/login-view";
@@ -60,6 +61,15 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const sseRef = useRef(null);
+
+  // Fresh browser → empty projects map. Once authenticated, fetch the
+  // server-side project list so the user doesn't have to paste keys again.
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return;
+    hydrateFromSession("").then((n) => {
+      if (n > 0) setProjectVersion((v) => v + 1);
+    });
+  }, [authStatus]);
 
   // ⌘K opens the command palette globally
   useEffect(() => {
