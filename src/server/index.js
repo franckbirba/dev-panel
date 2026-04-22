@@ -69,9 +69,11 @@ export function createServer(storagePath = './storage') {
   // docs/superpowers/specs/2026-04-22-standalone-widget-design.md
   const widgetPath = path.join(__dirname, '..', '..', 'dist', 'widget.js');
   app.get('/widget.js', (req, res) => {
-    res.set('Cache-Control', 'public, max-age=300');
-    res.set('Content-Type', 'application/javascript; charset=utf-8');
-    res.sendFile(widgetPath, (err) => {
+    res.type('application/javascript');
+    // sendFile's maxAge is authoritative — setting Cache-Control via res.set()
+    // before sendFile() gets overridden by Express's 0-default maxAge logic.
+    // Pass it as an option and Express emits the right header.
+    res.sendFile(widgetPath, { maxAge: 300_000 }, (err) => {
       if (err && !res.headersSent) res.status(404).send('widget not built');
     });
   });
