@@ -83,7 +83,7 @@ services:
         required: false
     environment:
       NODE_ENV: production
-      ALLOWED_ORIGINS: https://devpanl.dev
+      ALLOWED_ORIGINS: https://devpanl.dev,https://edms.epitools.bj,https://candidat.epitools.bj,https://zeno.epitools.bj
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       ENABLE_MONITORING: "true"
