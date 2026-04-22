@@ -183,12 +183,20 @@ export async function takeScreenshot(rect) {
   try {
     const html2canvas = (await import('html2canvas')).default;
 
-    const canvas = await html2canvas(document.body, {
-      useCORS: true,
-      scale: 1,
-      logging: false,
-      width: Math.min(window.innerWidth, 1920),
-    });
+    // html2canvas hangs silently on pages with cross-origin images that
+    // lack CORS headers (Epitech Africa site hits this). Race against a
+    // 10s timeout so the UI can't get stuck on "capturing…" forever.
+    const canvas = await Promise.race([
+      html2canvas(document.body, {
+        useCORS: true,
+        scale: 1,
+        logging: false,
+        width: Math.min(window.innerWidth, 1920),
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('screenshot timeout after 10s')), 10_000)
+      )
+    ]);
 
     let finalCanvas = canvas;
 
