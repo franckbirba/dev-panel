@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, takeScreenshot } from './captureUtils.js';
+import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, captureViaDisplayMedia } from './captureUtils.js';
 import { SessionRecorder } from './sessionRecorder.js';
 import { InspectOverlay } from './InspectOverlay.jsx';
 import { RegionSelect } from './RegionSelect.jsx';
@@ -98,16 +98,12 @@ export function DevPanel({
     setMode('bug-report');
   }, []);
 
-  // Start bug report: take a full-page screenshot in the background, but
-  // don't block the UI on it. html2canvas is notoriously flaky on
-  // pages with cross-origin images (no CORS) or heavy DOMs — on those,
-  // it either hangs or takes >10s. So we open the form immediately and
-  // attach the screenshot if/when it arrives.
+  // Open the bug-report form immediately with no screenshot. The user
+  // triggers the capture explicitly from the "retake" button, which uses
+  // navigator.mediaDevices.getDisplayMedia() — a native browser screenshot
+  // that's pixel-perfect (no CSS guessing like html2canvas did).
   const startBugReport = useCallback(() => {
     setMode('bug-report');
-    takeScreenshot()
-      .then(shot => { if (shot) setScreenshot(shot); })
-      .catch(() => { /* best effort — form stays usable without */ });
   }, []);
 
   const postCapture = useCallback(async ({ kind, content, metadata }) => {
@@ -346,12 +342,12 @@ export function DevPanel({
           onCancel={reset}
           onPickElement={() => setMode('inspecting')}
           onRecapture={async () => {
-            setMode('capturing');
-            try {
-              const shot = await takeScreenshot();
-              if (shot) setScreenshot(shot);
-            } catch { /* best effort */ }
-            setMode('bug-report');
+            // Explicit user action — fire the native display-media prompt.
+            // No 'capturing' mode switch: the browser's share-picker is
+            // already its own modal, and we want the form visible behind
+            // it so the description doesn't get wiped.
+            const shot = await captureViaDisplayMedia();
+            if (shot) setScreenshot(shot);
           }}
           onAnnotate={() => screenshot && setMode('annotating')}
           submitting={submitting}

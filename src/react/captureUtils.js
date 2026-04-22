@@ -176,7 +176,52 @@ export function getComponentInfo(element) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. takeScreenshot(rect?) — html2canvas-based screenshot
+// 4. captureViaDisplayMedia() — native browser screenshot via getDisplayMedia.
+//    Triggers a permission prompt; user picks tab/window/screen. Pixel-perfect
+//    rendering (no CSS guessing like html2canvas). Returns a data URL or null
+//    on cancel/error.
+// ---------------------------------------------------------------------------
+
+export async function captureViaDisplayMedia() {
+  if (!navigator.mediaDevices?.getDisplayMedia) return null;
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' },
+      audio: false,
+      preferCurrentTab: true  // Chrome hint to default to the current tab.
+    });
+    const track = stream.getVideoTracks()[0];
+    // Grab a single frame. ImageCapture is the modern path; grab via video
+    // element as a fallback for browsers without it (Firefox).
+    let bitmap;
+    if (typeof ImageCapture !== 'undefined') {
+      const capture = new ImageCapture(track);
+      bitmap = await capture.grabFrame();
+    } else {
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+      bitmap = await createImageBitmap(video);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch (err) {
+    // User cancelled the picker, or permission denied. Both are fine.
+    if (err?.name !== 'NotAllowedError') {
+      console.warn('[captureUtils] captureViaDisplayMedia failed:', err);
+    }
+    return null;
+  } finally {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. takeScreenshot(rect?) — html2canvas-based screenshot (legacy fallback)
 // ---------------------------------------------------------------------------
 
 export async function takeScreenshot(rect) {

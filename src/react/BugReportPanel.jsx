@@ -311,9 +311,9 @@ export function BugReportPanel({
                   data-devtool-ignore
                   onClick={onRecapture}
                   style={{ background: 'none', border: '1px solid #333', color: '#a0aec0', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
-                  title="Take a fresh full-page screenshot"
+                  title="Capture a screenshot via the browser's share picker"
                 >
-                  retake
+                  {screenshot ? '📸 retake' : '📸 capture'}
                 </button>
               )}
               {onAnnotate && screenshot && (
@@ -355,7 +355,7 @@ export function BugReportPanel({
             />
           ) : (
             <div style={{ fontSize: '11px', color: '#888' }} data-devtool-ignore>
-              No screenshot yet — hit "retake".
+              Click "📸 capture" to attach a screenshot (optional).
             </div>
           )}
         </div>
