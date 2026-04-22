@@ -236,4 +236,39 @@ describe('POST /api/threads/capture/:id/messages — metadata round-trip', () =>
     expect(sysMsgs).toHaveLength(1);
     expect(sysMsgs[0].metadata).toEqual(meta);
   });
+
+  it('rejects unknown roles with 400', async () => {
+    const cap = createCapture({ project_id: project.id, content: 'x' });
+    const r = await request(app)
+      .post(`/api/threads/capture/${cap.id}/messages`)
+      .set('X-API-Key', project.api_key)
+      .send({ role: 'hacker', content: 'pwn' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/invalid role/i);
+  });
+
+  it("bumps capture status from 'new' to 'triaging' on a shelly reply", async () => {
+    const cap = createCapture({ project_id: project.id, content: 'hi' });
+    expect(cap.status).toBe('new');
+
+    const r = await request(app)
+      .post(`/api/threads/capture/${cap.id}/messages`)
+      .set('X-API-Key', project.api_key)
+      .send({ role: 'shelly', content: 'triaging this' });
+    expect(r.status).toBe(200);
+
+    const reloaded = getCapture(cap.id);
+    expect(reloaded.status).toBe('triaging');
+  });
+
+  it("does NOT change status on a non-shelly reply", async () => {
+    const cap = createCapture({ project_id: project.id, content: 'hi' });
+    const r = await request(app)
+      .post(`/api/threads/capture/${cap.id}/messages`)
+      .set('X-API-Key', project.api_key)
+      .send({ role: 'user', content: 'more context' });
+    expect(r.status).toBe(200);
+    const reloaded = getCapture(cap.id);
+    expect(reloaded.status).toBe('new');
+  });
 });

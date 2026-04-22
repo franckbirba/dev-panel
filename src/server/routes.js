@@ -1453,9 +1453,23 @@ export function createRouter(config = {}) {
       if (!content || typeof content !== 'string') {
         return res.status(400).json({ error: 'content required' });
       }
+      const ALLOWED_ROLES = new Set(['user', 'shelly', 'system', 'agent']);
       const role = reqRole || 'user';
+      if (!ALLOWED_ROLES.has(role)) {
+        return res.status(400).json({ error: `invalid role: ${role}` });
+      }
       const thread = getOrCreateThread(subject_type, subject_id);
       const id = appendThreadMessage({ thread_id: thread.thread_id, role, source: 'web', content, metadata: metadata ?? null });
+      // Capture-specific: a shelly reply on a 'new' capture bumps it to 'triaging'
+      // so the dashboard badge reflects active conversation (mirrors the old
+      // addCaptureMessage behaviour we removed).
+      if (subject_type === 'capture' && role === 'shelly') {
+        const { updateCapture, getCapture } = await import('./captures.js');
+        const cap = getCapture(subject_id);
+        if (cap && cap.status === 'new') {
+          updateCapture(subject_id, { status: 'triaging' });
+        }
+      }
       const { broadcast } = await import('./sse.js');
       broadcast('thread:message', {
         thread_id: thread.thread_id,
