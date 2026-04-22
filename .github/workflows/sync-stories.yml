@@ -1,0 +1,87 @@
+name: Sync Stories to devpanl Storybook
+
+on:
+  workflow_call:
+    inputs:
+      project-slug:
+        description: "Subdirectory name under /stories/ (e.g. zeno, edms, candidat). Lowercase, hyphen-safe, <=31 chars."
+        required: true
+        type: string
+      stories-path:
+        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'. Must contain only [a-zA-Z0-9_./-], <=100 chars."
+        required: false
+        type: string
+        default: "stories"
+    secrets:
+      SYNC_SSH_KEY:
+        description: "Private SSH key for the storybook-sync user on the services VPS."
+        required: true
+      SYNC_HOST:
+        description: "Services VPS host (e.g. services.devpanl.dev or IP)."
+        required: true
+      SYNC_HOST_FINGERPRINT:
+        description: "Pinned SSH host key line (output of `ssh-keyscan -H <host>`). If set, prevents MITM on first connect. Recommended for production."
+        required: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        env:
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          STORIES_PATH: ${{ inputs.stories-path }}
+        run: |
+          if ! printf '%s' "$PROJECT_SLUG" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; then
+            echo "ERROR: project-slug must match ^[a-z0-9][a-z0-9-]{0,30}\$ — got '$PROJECT_SLUG'"
+            exit 1
+          fi
+          if ! printf '%s' "$STORIES_PATH" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,100}$'; then
+            echo "ERROR: stories-path contains unsafe characters or is too long — got '$STORIES_PATH'"
+            exit 1
+          fi
+          if [ ! -d "$STORIES_PATH" ]; then
+            echo "ERROR: stories path '$STORIES_PATH' does not exist in the repo"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SYNC_SSH_KEY: ${{ secrets.SYNC_SSH_KEY }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
+          SYNC_HOST_FINGERPRINT: ${{ secrets.SYNC_HOST_FINGERPRINT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SYNC_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$SYNC_HOST_FINGERPRINT" ]; then
+            printf '%s\n' "$SYNC_HOST_FINGERPRINT" >> ~/.ssh/known_hosts
+            echo "Host fingerprint pinned via SYNC_HOST_FINGERPRINT secret."
+          else
+            echo "WARNING: SYNC_HOST_FINGERPRINT secret not set — falling back to ssh-keyscan."
+            echo "         Set it to the 'ssh-keyscan -H <host>' output to prevent MITM on first connect."
+            ssh-keyscan -H "$SYNC_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Rsync stories
+        env:
+          STORIES_PATH: ${{ inputs.stories-path }}
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
+        run: |
+          rsync -av --delete \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
+            "${STORIES_PATH}/" \
+            "storybook-sync@${SYNC_HOST}:${PROJECT_SLUG}/"
+
+      - name: Report
+        env:
+          STORIES_PATH: ${{ inputs.stories-path }}
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
+        run: |
+          echo "Synced '${STORIES_PATH}/' → ${PROJECT_SLUG}/ on ${SYNC_HOST}"
+          echo "Catalogue: https://ui.devpanl.dev"

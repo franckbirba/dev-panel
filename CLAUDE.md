@@ -148,3 +148,17 @@ Key rule (don't forget): **Shelly speaks like a human, not a log relay.** Reform
 
 @.agents/shelly/SOUL.md
 
+## UI catalogue — ui.devpanl.dev
+
+Before building any UI in any studio project, check the catalogue at
+https://ui.devpanl.dev (htpasswd: same credentials as bull-board / affine).
+It lists:
+
+- Shared design tokens (colors, spacing, radii, typography) under `shared/`.
+- Per-project components under `devpanel/`, `zeno/`, `edms/`, `candidat/`.
+
+Authoring rule: each project's stories live in its repo under `stories/`
+and are synced to the catalogue on every push to main by the reusable
+`sync-stories.yml` workflow. Full authoring conventions:
+`skills/storybook-authoring.md` in the `devpanl-claude-plugin` repo.
+

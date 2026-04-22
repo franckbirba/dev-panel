@@ -76,3 +76,16 @@ ssh: ## SSH into VPS
 secrets-rotate: ## Rotate all secrets (regenerate .env.production)
 	@$(SSH) "cd ~/dev-panel && mv .env.production .env.production.bak && bash infra/init.sh production"
 	@echo "⚠️  Review ~/dev-panel/.env.production and restart services"
+
+# ──────────────────────────────────────────────────────────────────────
+# Storybook (local)
+# ──────────────────────────────────────────────────────────────────────
+
+.PHONY: storybook-dev
+storybook-dev:
+	@echo "Running storybook against ./stories and ./stories-shared"
+	@docker build -t devpanl-storybook:local infra/storybook/
+	@docker run --rm -it -p 6006:6006 \
+		-v "$(PWD)/stories:/stories/devpanel:ro" \
+		-v "$(PWD)/stories-shared:/stories/shared:ro" \
+		devpanl-storybook:local
