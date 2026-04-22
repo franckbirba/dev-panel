@@ -102,6 +102,31 @@ export function DevPanel({
     setMode('bug-report');
   }, []);
 
+  const postCapture = useCallback(async ({ kind, content, metadata }) => {
+    const createRes = await fetch(`${apiUrl}/api/captures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ kind, content })
+    });
+    if (!createRes.ok) {
+      const errData = await createRes.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${createRes.status}`);
+    }
+    const capture = await createRes.json();
+    if (metadata) {
+      await fetch(`${apiUrl}/api/captures/${capture.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({
+          role: 'system',
+          content: '[context attached by DevPanel widget]',
+          metadata
+        })
+      }).catch(() => { /* context is best-effort */ });
+    }
+    return capture;
+  }, [apiUrl, apiKey]);
+
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);
     setMode('submitting');
@@ -111,89 +136,54 @@ export function DevPanel({
       ? `${name}: ${description.slice(0, 60)}`
       : description.slice(0, 80);
 
-    const payload = {
+    const metadata = {
       type: 'bug',
       title,
-      description,
-      created_by: 'user',
-      context: {
-        url: window.location.href,
-        userAgent: navigator.userAgent,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        timestamp: Date.now(),
-        component: componentInfo || null,
-        console: consoleBuffer.current?.getEntries?.() ?? [],
-        network: networkInterceptor.current?.getEntries?.() ?? [],
-        performance: perfMetrics.current?.getMetrics?.() ?? {},
-        sessionReplay: sessionRecorder.current?.getEvents?.() ?? []
-      },
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      timestamp: Date.now(),
+      component: componentInfo || null,
+      console: consoleBuffer.current?.getEntries?.() ?? [],
+      network: networkInterceptor.current?.getEntries?.() ?? [],
+      performance: perfMetrics.current?.getMetrics?.() ?? {},
+      sessionReplay: sessionRecorder.current?.getEvents?.() ?? [],
       screenshot: screenshot || null
     };
 
     try {
-      const response = await fetch(`${apiUrl}/api/tickets`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      setToast({ kind: 'success', message: `Bug #${data.id} reported` });
+      await postCapture({ kind: 'bug', content: description, metadata });
+      setToast({ kind: 'success', message: 'Bug reported' });
     } catch (err) {
       setToast({ kind: 'error', message: err.message });
     }
 
     reset();
-  }, [apiUrl, apiKey, componentInfo, screenshot, reset]);
+  }, [postCapture, componentInfo, screenshot, reset]);
 
   const submitFeature = useCallback(async (title, description) => {
     setSubmitting(true);
     setMode('submitting');
 
-    const payload = {
+    const metadata = {
       type: 'feature',
       title,
-      description,
-      created_by: 'user',
-      context: {
-        url: window.location.href,
-        userAgent: navigator.userAgent,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        timestamp: Date.now()
-      }
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      timestamp: Date.now()
     };
+    const content = `${title}\n\n${description}`;
 
     try {
-      const response = await fetch(`${apiUrl}/api/tickets`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      setToast({ kind: 'success', message: `Feature #${data.id} submitted` });
+      await postCapture({ kind: 'feature', content, metadata });
+      setToast({ kind: 'success', message: 'Feature submitted' });
     } catch (err) {
       setToast({ kind: 'error', message: err.message });
     }
 
     reset();
-  }, [apiUrl, apiKey, reset]);
+  }, [postCapture, reset]);
 
   const isRight = position === 'bottom-right';
   const sideKey = isRight ? 'right' : 'left';

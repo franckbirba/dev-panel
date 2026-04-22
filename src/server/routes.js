@@ -739,12 +739,17 @@ export function createRouter(config = {}) {
 
   router.post('/captures/:id/messages', authenticateProject, (req, res) => {
     try {
-      const { content = '', role = 'user' } = req.body || {};
+      const { content = '', role = 'user', metadata = null } = req.body || {};
       const c = getCapture(req.params.id);
       if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
       if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
       if (!['user', 'shelly', 'system'].includes(role)) return res.status(400).json({ error: 'bad role' });
-      addCaptureMessage({ capture_id: c.id, role, content: String(content).slice(0, 8000) });
+      addCaptureMessage({
+        capture_id: c.id,
+        role,
+        content: String(content).slice(0, 8000),
+        metadata: metadata && typeof metadata === 'object' ? metadata : null
+      });
       res.json(getCapture(c.id));
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
