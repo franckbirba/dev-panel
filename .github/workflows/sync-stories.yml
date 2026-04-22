@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       project-slug:
-        description: "Subdirectory name under /stories/ (e.g. zeno, edms, candidat). Lowercase, hyphen-safe."
+        description: "Subdirectory name under /stories/ (e.g. zeno, edms, candidat). Lowercase, hyphen-safe, <=31 chars."
         required: true
         type: string
       stories-path:
-        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'."
+        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'. Must contain only [a-zA-Z0-9_./-], <=100 chars."
         required: false
         type: string
         default: "stories"
@@ -19,6 +19,9 @@ on:
       SYNC_HOST:
         description: "Services VPS host (e.g. services.devpanl.dev or IP)."
         required: true
+      SYNC_HOST_FINGERPRINT:
+        description: "Pinned SSH host key line (output of `ssh-keyscan -H <host>`). If set, prevents MITM on first connect. Recommended for production."
+        required: false
 
 jobs:
   sync:
@@ -27,32 +30,58 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate inputs
+        env:
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          STORIES_PATH: ${{ inputs.stories-path }}
         run: |
-          slug='${{ inputs.project-slug }}'
-          if ! printf '%s' "$slug" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; then
-            echo "ERROR: project-slug must match ^[a-z0-9][a-z0-9-]{0,30}\$ — got '$slug'"
+          if ! printf '%s' "$PROJECT_SLUG" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; then
+            echo "ERROR: project-slug must match ^[a-z0-9][a-z0-9-]{0,30}\$ — got '$PROJECT_SLUG'"
             exit 1
           fi
-          if [ ! -d '${{ inputs.stories-path }}' ]; then
-            echo "ERROR: stories path '${{ inputs.stories-path }}' does not exist in the repo"
+          if ! printf '%s' "$STORIES_PATH" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,100}$'; then
+            echo "ERROR: stories-path contains unsafe characters or is too long — got '$STORIES_PATH'"
+            exit 1
+          fi
+          if [ ! -d "$STORIES_PATH" ]; then
+            echo "ERROR: stories path '$STORIES_PATH' does not exist in the repo"
             exit 1
           fi
 
       - name: Configure SSH
+        env:
+          SYNC_SSH_KEY: ${{ secrets.SYNC_SSH_KEY }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
+          SYNC_HOST_FINGERPRINT: ${{ secrets.SYNC_HOST_FINGERPRINT }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SYNC_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SYNC_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H '${{ secrets.SYNC_HOST }}' >> ~/.ssh/known_hosts 2>/dev/null
+          if [ -n "$SYNC_HOST_FINGERPRINT" ]; then
+            printf '%s\n' "$SYNC_HOST_FINGERPRINT" >> ~/.ssh/known_hosts
+            echo "Host fingerprint pinned via SYNC_HOST_FINGERPRINT secret."
+          else
+            echo "WARNING: SYNC_HOST_FINGERPRINT secret not set — falling back to ssh-keyscan."
+            echo "         Set it to the 'ssh-keyscan -H <host>' output to prevent MITM on first connect."
+            ssh-keyscan -H "$SYNC_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Rsync stories
+        env:
+          STORIES_PATH: ${{ inputs.stories-path }}
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
         run: |
           rsync -av --delete \
             -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
-            '${{ inputs.stories-path }}/' \
-            'storybook-sync@${{ secrets.SYNC_HOST }}:${{ inputs.project-slug }}/'
+            "${STORIES_PATH}/" \
+            "storybook-sync@${SYNC_HOST}:${PROJECT_SLUG}/"
 
       - name: Report
+        env:
+          STORIES_PATH: ${{ inputs.stories-path }}
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
         run: |
-          echo "Synced '${{ inputs.stories-path }}/' → ${{ inputs.project-slug }}/ on ${{ secrets.SYNC_HOST }}"
+          echo "Synced '${STORIES_PATH}/' → ${PROJECT_SLUG}/ on ${SYNC_HOST}"
           echo "Catalogue: https://ui.devpanl.dev"
