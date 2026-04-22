@@ -4,6 +4,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
 import { initMasterDatabase, createProject, getMasterDatabase } from '../../src/server/db.js';
+import { createCapture, getCapture, listCaptures, deleteCapture } from '../../src/server/captures.js';
+import { getOrCreateThread, appendMessage } from '../../src/server/threads.js';
 
 describe('captures migration (capture_messages → thread_messages)', () => {
   let tmp;
@@ -87,5 +89,79 @@ describe('captures migration (capture_messages → thread_messages)', () => {
         WHERE t.subject_type='capture' AND t.subject_id='cap-1'`
     ).get();
     expect(msgs.n).toBe(3);
+  });
+});
+
+describe('captures (thread-backed)', () => {
+  let project;
+  beforeEach(() => {
+    const tmp = mkdtempSync(join(tmpdir(), 'devpanel-cap-'));
+    initMasterDatabase(tmp);
+    project = createProject({ name: 'demo', github_owner: 'o', github_repo: 'r' });
+  });
+
+  it('createCapture seeds subject, thread, and a user message in thread_messages', () => {
+    const cap = createCapture({ project_id: project.id, content: 'found a bug' });
+    expect(cap.id).toBeTruthy();
+    expect(cap.status).toBe('new');
+    expect(cap.messages).toHaveLength(1);
+    expect(cap.messages[0]).toMatchObject({ role: 'user', content: 'found a bug' });
+
+    const db = getMasterDatabase();
+    const subj = db.prepare(
+      `SELECT * FROM subjects WHERE subject_type='capture' AND subject_id=?`
+    ).get(cap.id);
+    expect(subj).toBeTruthy();
+    const thread = db.prepare(
+      `SELECT * FROM threads WHERE subject_type='capture' AND subject_id=?`
+    ).get(cap.id);
+    expect(thread).toBeTruthy();
+    const msgs = db.prepare(
+      `SELECT role, source, content FROM thread_messages WHERE thread_id=?`
+    ).all(thread.thread_id);
+    expect(msgs).toEqual([{ role: 'user', source: 'web', content: 'found a bug' }]);
+  });
+
+  it('getCapture reads messages from thread_messages ordered by time', () => {
+    const cap = createCapture({ project_id: project.id, content: 'hi' });
+    const t = getOrCreateThread('capture', cap.id);
+    appendMessage({ thread_id: t.thread_id, role: 'shelly', source: 'telegram', content: 'yo' });
+
+    const reloaded = getCapture(cap.id);
+    expect(reloaded.messages).toHaveLength(2);
+    expect(reloaded.messages[0]).toMatchObject({ role: 'user', content: 'hi' });
+    expect(reloaded.messages[1]).toMatchObject({ role: 'shelly', content: 'yo' });
+  });
+
+  it('listCaptures returns message_count, last_message, last_role from thread_messages', () => {
+    const cap = createCapture({ project_id: project.id, content: 'foo' });
+    const t = getOrCreateThread('capture', cap.id);
+    appendMessage({ thread_id: t.thread_id, role: 'shelly', source: 'telegram', content: 'bar' });
+
+    const list = listCaptures({ project_id: project.id });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: cap.id,
+      message_count: 2,
+      last_message: 'bar',
+      last_role: 'shelly'
+    });
+  });
+
+  it('deleteCapture cascades subject + thread + messages', () => {
+    const cap = createCapture({ project_id: project.id, content: 'doomed' });
+    deleteCapture(cap.id);
+
+    const db = getMasterDatabase();
+    expect(db.prepare(`SELECT 1 FROM captures WHERE id=?`).get(cap.id)).toBeUndefined();
+    expect(db.prepare(
+      `SELECT 1 FROM subjects WHERE subject_type='capture' AND subject_id=?`
+    ).get(cap.id)).toBeUndefined();
+    expect(db.prepare(
+      `SELECT 1 FROM threads WHERE subject_type='capture' AND subject_id=?`
+    ).get(cap.id)).toBeUndefined();
+    expect(db.prepare(
+      `SELECT COUNT(*) AS n FROM thread_messages`
+    ).get().n).toBe(0);
   });
 });
