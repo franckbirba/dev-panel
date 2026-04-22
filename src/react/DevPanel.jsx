@@ -126,7 +126,7 @@ export function DevPanel({
         Array.isArray(metadata.console) && metadata.console.length > 0 ? `${metadata.console.length} console entries` : null,
         Array.isArray(metadata.network) && metadata.network.length > 0 ? `${metadata.network.length} network events` : null,
       ].filter(Boolean).join(' · ') || 'browser context';
-      await fetch(`${apiUrl}/api/captures/${capture.id}/messages`, {
+      await fetch(`${apiUrl}/api/threads/capture/${capture.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
         body: JSON.stringify({

@@ -15,7 +15,7 @@ import {
 } from './db.js';
 import {
   createCapture, getCapture, listCaptures,
-  addCaptureMessage, updateCapture, deleteCapture
+  updateCapture, deleteCapture
 } from './captures.js';
 import { upsertSubject, getSubject, setPriority } from './subjects.js';
 import { getOrCreateThread, listMessages as listThreadMessages, appendMessage as appendThreadMessage } from './threads.js';
@@ -710,10 +710,10 @@ export function createRouter(config = {}) {
   //   POST /captures                 create (content, optional kind)
   //   GET  /captures                 list for the current project
   //   GET  /captures/:id             capture + messages (thread)
-  //   POST /captures/:id/messages    append a user message
   //   PATCH /captures/:id            mutate status / attach plane ids
   //   DELETE /captures/:id           drop
   // All project-key auth — captures belong to a project.
+  // Note: messages are appended via POST /threads/capture/:id/messages (generic thread endpoint).
   // ============================================================================
 
   router.post('/captures', authenticateProject, (req, res) => {
@@ -742,23 +742,6 @@ export function createRouter(config = {}) {
       const c = getCapture(req.params.id);
       if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
       res.json(c);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-  });
-
-  router.post('/captures/:id/messages', authenticateProject, (req, res) => {
-    try {
-      const { content = '', role = 'user', metadata = null } = req.body || {};
-      const c = getCapture(req.params.id);
-      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
-      if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
-      if (!['user', 'shelly', 'system'].includes(role)) return res.status(400).json({ error: 'bad role' });
-      addCaptureMessage({
-        capture_id: c.id,
-        role,
-        content: String(content).slice(0, 8000),
-        metadata: metadata && typeof metadata === 'object' ? metadata : null
-      });
-      res.json(getCapture(c.id));
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
@@ -1466,16 +1449,31 @@ export function createRouter(config = {}) {
   router.post('/threads/:subject_type/:subject_id/messages', authenticateProject, async (req, res) => {
     try {
       const { subject_type, subject_id } = req.params;
-      const { content } = req.body || {};
+      const { content, role: reqRole, metadata } = req.body || {};
       if (!content || typeof content !== 'string') {
         return res.status(400).json({ error: 'content required' });
       }
+      const ALLOWED_ROLES = new Set(['user', 'shelly', 'system', 'agent']);
+      const role = reqRole || 'user';
+      if (!ALLOWED_ROLES.has(role)) {
+        return res.status(400).json({ error: `invalid role: ${role}` });
+      }
       const thread = getOrCreateThread(subject_type, subject_id);
-      const id = appendThreadMessage({ thread_id: thread.thread_id, role: 'user', source: 'web', content });
+      const id = appendThreadMessage({ thread_id: thread.thread_id, role, source: 'web', content, metadata: metadata ?? null });
+      // Capture-specific: a shelly reply on a 'new' capture bumps it to 'triaging'
+      // so the dashboard badge reflects active conversation (mirrors the old
+      // addCaptureMessage behaviour we removed).
+      if (subject_type === 'capture' && role === 'shelly') {
+        const { updateCapture, getCapture } = await import('./captures.js');
+        const cap = getCapture(subject_id);
+        if (cap && cap.status === 'new') {
+          updateCapture(subject_id, { status: 'triaging' });
+        }
+      }
       const { broadcast } = await import('./sse.js');
       broadcast('thread:message', {
         thread_id: thread.thread_id,
-        message: { id, role: 'user', source: 'web', content, created_at: new Date().toISOString() }
+        message: { id, role, source: 'web', content, metadata: metadata ?? null, created_at: new Date().toISOString() }
       });
       // Forward to Telegram with tag prefix; fire-and-forget.
       const text = prependTag(subject_type, subject_id, content);

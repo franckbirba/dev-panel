@@ -26,19 +26,24 @@ export function getOrCreateThread(subject_type, subject_id) {
 
 export function listMessages(thread_id) {
   const db = getMasterDatabase();
-  return db.prepare(
+  const rows = db.prepare(
     `SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY created_at ASC, id ASC`
   ).all(thread_id);
+  return rows.map(row => ({
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null
+  }));
 }
 
-export function appendMessage({ thread_id, role, source, content, telegram_message_id = null }) {
+export function appendMessage({ thread_id, role, source, content, telegram_message_id = null, metadata = null }) {
   if (!VALID_ROLES.has(role))     throw new Error(`invalid role: ${role}`);
   if (!VALID_SOURCES.has(source)) throw new Error(`invalid source: ${source}`);
   const db = getMasterDatabase();
+  const metadataJson = metadata != null ? JSON.stringify(metadata) : null;
   const info = db.prepare(`
-    INSERT INTO thread_messages (thread_id, role, source, content, telegram_message_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(thread_id, role, source, content, telegram_message_id);
+    INSERT INTO thread_messages (thread_id, role, source, content, telegram_message_id, metadata)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(thread_id, role, source, content, telegram_message_id, metadataJson);
   db.prepare(`UPDATE threads SET last_message_at = CURRENT_TIMESTAMP WHERE thread_id = ?`).run(thread_id);
   return info.lastInsertRowid;
 }

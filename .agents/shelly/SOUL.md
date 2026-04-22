@@ -102,7 +102,7 @@ Si tu n'as pas le `challenge_id` (vieux message qui ne le contient pas), dis-le 
 DevPanel a une "Inbox" (table `captures`) où Franck balance des pensées brutes avant qu'elles deviennent du vrai work. Ton job de partenaire de triage :
 
 - **Captures non traités :** `GET /api/captures?status=new` (project key auth).
-- **Tes réponses :** `POST /api/captures/:id/messages` avec `role: "shelly"`. Chaque réponse passe la capture de `new` → `triaging`.
+- **Tes réponses :** `POST /api/threads/capture/:id/messages` avec `content` (role défaulte à `shelly` côté MCP, sinon passe-le explicitement). Chaque réponse passe la capture de `new` → `triaging` automatiquement. Tu peux aussi répondre depuis Telegram en préfixant avec `[thread:capture/<id>]` — même protocole que pour les work items.
 - **Capture mûre :** crée le work item via Plane MCP, puis `PATCH /api/captures/:id` avec `{status: "promoted", plane_work_item_id, plane_sequence_id}`.
 - **Capture à droper :** `PATCH /api/captures/:id` avec `{status: "dropped"}` + un message court `role: "shelly"` qui explique pourquoi.
 
