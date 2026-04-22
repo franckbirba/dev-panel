@@ -1,11 +1,13 @@
-// /auth/* HTTP endpoints. Admin-key gates verify/deny (Shelly's MCP calls
-// these with X-Admin-Key). Browser polls /auth/check; on 'ready' we create
-// a Lucia session and set the cookie. /auth/logout invalidates the session.
+// /auth/* HTTP endpoints.
+// Browser flow: POST /auth/start → POST /auth/redeem (with the code Franck
+// typed). Set-Cookie devpanl_session is issued on successful redeem.
+// /auth/deny is admin-key gated (Shelly's MCP) — lets the user reject a
+// suspicious login attempt from Telegram.
 import express from 'express';
 import { timingSafeEqual } from 'crypto';
 import {
-  startChallenge, verifyChallenge, denyChallenge,
-  consumeChallenge, getLucia, singleUserId
+  startChallenge, redeemChallenge, denyChallenge, challengeStatus,
+  getLucia, singleUserId
 } from './auth.js';
 
 function checkAdminKey(req, res, next) {
@@ -26,34 +28,34 @@ export function createAuthRouter() {
   router.post('/start', async (req, res) => {
     const client_hint = req.body?.client_hint || null;
     const ip = req.ip || req.socket?.remoteAddress || null;
-    const challenge = await startChallenge({ client_hint, ip });
-    res.json(challenge);
+    res.json(await startChallenge({ client_hint, ip }));
   });
 
-  router.post('/verify', checkAdminKey, (req, res) => {
-    const { code, telegram_user_id } = req.body || {};
-    if (!code || typeof code !== 'string') return res.json({ ok: false, reason: 'unknown_code' });
-    res.json(verifyChallenge({ code, telegram_user_id }));
+  router.post('/redeem', async (req, res) => {
+    const { challenge_id, code } = req.body || {};
+    if (!challenge_id || !code) {
+      return res.status(400).json({ ok: false, reason: 'missing_fields' });
+    }
+    const result = redeemChallenge({ challenge_id, code });
+    if (!result.ok) return res.json(result);
+    // Mint Lucia session and set cookie.
+    const lucia = getLucia();
+    const session = await lucia.createSession(singleUserId(), {});
+    const cookie = lucia.createSessionCookie(session.id);
+    res.appendHeader('Set-Cookie', cookie.serialize());
+    res.json({ ok: true });
+  });
+
+  router.get('/status', (req, res) => {
+    const id = req.query.challenge_id;
+    if (!id) return res.status(400).json({ error: 'challenge_id required' });
+    res.json({ state: challengeStatus(id) });
   });
 
   router.post('/deny', checkAdminKey, (req, res) => {
-    const { code } = req.body || {};
-    if (!code || typeof code !== 'string') return res.json({ ok: false, reason: 'unknown_code' });
-    res.json(denyChallenge({ code }));
-  });
-
-  router.get('/check', async (req, res) => {
-    const code = req.query.code;
-    if (!code) return res.status(400).json({ error: 'code required' });
-    const state = consumeChallenge(code);
-    if (state === 'unknown') return res.json({ state: 'unknown' });
-    if (state === 'pending') return res.json({ state: 'pending' });
-    // ready — mint a Lucia session and set the cookie
-    const lucia = getLucia();
-    const session = await lucia.createSession(singleUserId(), {});
-    const sessionCookie = lucia.createSessionCookie(session.id);
-    res.appendHeader('Set-Cookie', sessionCookie.serialize());
-    res.json({ state: 'ready', ok: true });
+    const { challenge_id } = req.body || {};
+    if (!challenge_id) return res.json({ ok: false, reason: 'missing_challenge_id' });
+    res.json(denyChallenge({ challenge_id }));
   });
 
   router.post('/logout', async (req, res) => {

@@ -605,36 +605,15 @@ server.tool(
 const AUTH_API_BASE = process.env.API_BASE || 'http://localhost:3030';
 
 server.tool(
-  'auth_verify',
-  'Validate a 6-digit dashboard login code that Franck typed in Telegram in response to a [auth] message.',
-  {
-    code: z.string().regex(/^\d{6}$/).describe('The 6-digit code'),
-    telegram_user_id: z.number().describe('Franck\'s Telegram user id')
-  },
-  async ({ code, telegram_user_id }) => {
-    try {
-      const r = await fetch(`${AUTH_API_BASE}/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': process.env.ADMIN_API_KEY || '' },
-        body: JSON.stringify({ code, telegram_user_id })
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(await r.json()) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, reason: 'network_error', detail: err.message }) }], isError: true };
-    }
-  }
-);
-
-server.tool(
   'auth_deny',
-  'Reject a dashboard login attempt that Franck did not initiate (he replied "non" / "pas moi" to a [auth] message).',
-  { code: z.string().regex(/^\d{6}$/) },
-  async ({ code }) => {
+  'Reject a dashboard login attempt that Franck did not initiate (he replied "non" / "pas moi" to a [auth] message). Pass the challenge_id from the original [auth] message comment.',
+  { challenge_id: z.string().describe('The challenge_id (ch_xxx) from the [auth] message HTML comment') },
+  async ({ challenge_id }) => {
     try {
       const r = await fetch(`${AUTH_API_BASE}/auth/deny`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Key': process.env.ADMIN_API_KEY || '' },
-        body: JSON.stringify({ code })
+        body: JSON.stringify({ challenge_id })
       });
       return { content: [{ type: 'text', text: JSON.stringify(await r.json()) }] };
     } catch (err) {

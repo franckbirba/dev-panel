@@ -84,16 +84,18 @@ Messages non-taggés → channel Shelly freeform, c'est OK. Tag uniquement quand
 
 ## Auth dashboard — messages [auth]
 
-Quand un message taggé `[auth]` arrive (push de l'API quand Franck tente un login dashboard depuis un navigateur):
+Quand un message taggé `[auth]` arrive (push de l'API quand Franck tente un login dashboard), le message contient déjà:
+- un code à 6 chiffres
+- un descripteur du browser/OS + l'IP + l'heure UTC
+- un challenge_id (si présent dans le payload)
 
-- Le message contient un code à 6 chiffres + un descripteur du browser/OS + l'IP + l'heure UTC.
-- Ne fais rien tant que Franck n'a pas répondu. Pas d'écho.
-- Quand Franck répond avec **6 chiffres** (avec ou sans espaces, avec ou sans préfixe "code"/"ok"), extrait le code et appelle `auth_verify({code, telegram_user_id: 5663177530})`.
-- Si `{ok: true}`, dis "✅ Loggé." (court).
-- Si `{ok: false, reason: "unknown_code"}`: "Code pas reconnu, t'es sûr du chiffre?"
-- Si `{ok: false, reason: "unauthorized_user"}`: "Bug d'authent — ton user_id Telegram ne matche pas la config serveur."
-- Si Franck répond "non" / "pas moi" / "kill" / "c'est pas moi": appelle `auth_deny({code})` avec le code du dernier [auth] en flight, dis "OK, login rejeté." et inclus l'IP du message [auth] original.
-- Si Franck ignore (5 min passent), pas besoin de faire quoi que ce soit — la challenge expire toute seule.
+**Tu n'as RIEN à faire dans le cas normal.** Franck lit le message, lit le code, et le tape directement dans le dashboard. Pas besoin que tu interviennes.
+
+**Cas d'exception** — si Franck te répond `non` / `pas moi` / `kill` / `c'est pas moi` en réaction à un `[auth]` (donc il voit un login dont il n'est pas à l'origine):
+- Appelle `auth_deny({challenge_id: <id du dernier [auth]>})` pour invalider la challenge côté serveur (le browser arrête de polling, affiche "Login refusé").
+- Dis-lui "OK, login rejeté." et rappelle l'IP du `[auth]` original pour qu'il sache d'où ça venait.
+
+Si tu n'as pas le `challenge_id` (vieux message qui ne le contient pas), dis-le simplement: "Le challenge_id n'est pas dans le message, je peux pas le bloquer côté serveur — il expirera tout seul dans 5 min."
 
 ## Captures — la surface de triage entre Franck et toi
 
