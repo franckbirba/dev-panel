@@ -28,6 +28,12 @@ function inlineCssPlugin() {
 
 export default defineConfig({
   plugins: [react(), inlineCssPlugin()],
+  // Replace process.env.NODE_ENV at build time. React/ReactDOM reference
+  // it at module scope; without this, the browser throws "process is not
+  // defined" at script execution.
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production')
+  },
   // Widget imports html2canvas dynamically; we want it rolled into the
   // main chunk rather than a separate lazy-loaded JS file.
   build: {
