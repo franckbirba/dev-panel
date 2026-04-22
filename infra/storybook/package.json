@@ -1,19 +1,25 @@
 {
   "name": "devpanl-storybook",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "storybook": "storybook dev -p 6006 --no-open --host 0.0.0.0"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "radix-ui": "^1.4.3",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@storybook/addon-essentials": "^8.6.0",
     "@storybook/react-vite": "^8.6.0",
+    "@tailwindcss/vite": "^4.2.2",
     "storybook": "^8.6.0",
+    "tailwindcss": "^4.2.2",
     "vite": "^6.0.0"
   }
 }

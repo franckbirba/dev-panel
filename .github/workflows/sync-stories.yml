@@ -8,10 +8,15 @@ on:
         required: true
         type: string
       stories-path:
-        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'. Must contain only [a-zA-Z0-9_./-], <=100 chars."
+        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'. Must match [a-zA-Z0-9_./-], <=100 chars."
         required: false
         type: string
         default: "stories"
+      source-path:
+        description: "Optional additional path in the caller repo to sync as '<slug>/_src/'. Used to make real components available to stories via the '@/' alias."
+        required: false
+        type: string
+        default: ""
     secrets:
       SYNC_SSH_KEY:
         description: "Private SSH key for the deploy user on the services VPS."
@@ -39,6 +44,7 @@ jobs:
         env:
           PROJECT_SLUG: ${{ inputs.project-slug }}
           STORIES_PATH: ${{ inputs.stories-path }}
+          SOURCE_PATH: ${{ inputs.source-path }}
         run: |
           if ! printf '%s' "$PROJECT_SLUG" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; then
             echo "ERROR: project-slug must match ^[a-z0-9][a-z0-9-]{0,30}\$ — got '$PROJECT_SLUG'"
@@ -51,6 +57,16 @@ jobs:
           if [ ! -d "$STORIES_PATH" ]; then
             echo "ERROR: stories path '$STORIES_PATH' does not exist in the repo"
             exit 1
+          fi
+          if [ -n "$SOURCE_PATH" ]; then
+            if ! printf '%s' "$SOURCE_PATH" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,100}$'; then
+              echo "ERROR: source-path contains unsafe characters or is too long — got '$SOURCE_PATH'"
+              exit 1
+            fi
+            if [ ! -d "$SOURCE_PATH" ]; then
+              echo "ERROR: source-path '$SOURCE_PATH' does not exist in the repo"
+              exit 1
+            fi
           fi
 
       - name: Configure SSH
@@ -85,16 +101,39 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
             "${SYNC_USER}@${SYNC_HOST}" \
             "mkdir -p '${SYNC_BASE_PATH}/${PROJECT_SLUG}'"
-          rsync -av --delete \
+          rsync -av --delete --exclude="_src/" \
             -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
             "${STORIES_PATH}/" \
             "${SYNC_USER}@${SYNC_HOST}:${SYNC_BASE_PATH}/${PROJECT_SLUG}/"
 
+      - name: Rsync source (optional)
+        if: inputs.source-path != ''
+        env:
+          SOURCE_PATH: ${{ inputs.source-path }}
+          PROJECT_SLUG: ${{ inputs.project-slug }}
+          SYNC_HOST: ${{ secrets.SYNC_HOST }}
+          SYNC_USER: ${{ secrets.SYNC_USER }}
+          SYNC_BASE_PATH: ${{ secrets.SYNC_BASE_PATH }}
+        run: |
+          : "${SYNC_USER:=deploy}"
+          : "${SYNC_BASE_PATH:=/home/deploy/dev-panel/storybook-stories}"
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${SYNC_USER}@${SYNC_HOST}" \
+            "mkdir -p '${SYNC_BASE_PATH}/${PROJECT_SLUG}/_src'"
+          rsync -av --delete \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
+            "${SOURCE_PATH}/" \
+            "${SYNC_USER}@${SYNC_HOST}:${SYNC_BASE_PATH}/${PROJECT_SLUG}/_src/"
+
       - name: Report
         env:
           STORIES_PATH: ${{ inputs.stories-path }}
+          SOURCE_PATH: ${{ inputs.source-path }}
           PROJECT_SLUG: ${{ inputs.project-slug }}
           SYNC_HOST: ${{ secrets.SYNC_HOST }}
         run: |
           echo "Synced '${STORIES_PATH}/' → ${PROJECT_SLUG}/ on ${SYNC_HOST}"
+          if [ -n "$SOURCE_PATH" ]; then
+            echo "Synced '${SOURCE_PATH}/' → ${PROJECT_SLUG}/_src/ on ${SYNC_HOST}"
+          fi
           echo "Catalogue: https://ui.devpanl.dev"

@@ -126,6 +126,7 @@ jobs:
     with:
       project-slug: devpanel
       stories-path: stories
+      source-path: src/dashboard
     secrets:
       SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       SYNC_HOST: ${{ secrets.VPS_HOST }}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StatusChip } from '../../src/dashboard/components/status-chip.jsx';
+import { StatusChip } from '@/components/status-chip.jsx';
 
 export default {
   title: 'devpanel/StatusChip',
