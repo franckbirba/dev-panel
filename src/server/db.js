@@ -55,6 +55,18 @@ export function initMasterDatabase(storagePath = './storage') {
       PRIMARY KEY (job_id, memory_id)
     );
 
+    CREATE TABLE IF NOT EXISTS agent_job_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      event_subtype TEXT,
+      payload TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(job_id, seq)
+    );
+    CREATE INDEX IF NOT EXISTS idx_aje_job_seq ON agent_job_events(job_id, seq);
+
     CREATE TABLE IF NOT EXISTS workflow_instances (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       work_item_id    TEXT NOT NULL,

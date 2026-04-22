@@ -2,9 +2,11 @@
 import { Worker } from 'bullmq';
 import { createRequire } from 'module';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, createWriteStream } from 'fs';
 import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
+import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
+import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
@@ -125,17 +127,30 @@ function logMorningReview(entry) {
   writeFileSync(MODE_FILE, JSON.stringify(state, null, 2));
 }
 
+const AGENT_LOG_DIR = join(process.env.DEVPANEL_STORAGE || './storage', 'agent-logs');
+try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
+
 /**
- * Spawn claude -p and return the output
+ * Spawn `claude -p --output-format stream-json --verbose` and persist every
+ * event as it streams. Returns the final `result` text so parseResult() still
+ * validates the agent's structured summary.
+ *
+ * Side effects:
+ *  - Each JSON line is written to agent_job_events (via appendEvent).
+ *  - Raw stderr is appended to storage/agent-logs/<jobId>.err.log.
+ *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown') {
   return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['-p', prompt, '--print', '--dangerously-skip-permissions'], {
+    const proc = spawn('claude', [
+      '-p', prompt,
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--dangerously-skip-permissions'
+    ], {
       cwd: PROJECT_ROOT,
       env: {
         ...process.env,
-        // Propagate identity into the MCP subprocess so memory_write can
-        // record writes against this job and tag them with the agent role.
         JOB_ID: jobId,
         AGENT_ROLE: agentRole,
         PATH: [
@@ -152,23 +167,40 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown') {
 
     activeProcesses.set(jobId, { process: proc, startedAt: Date.now() });
 
-    let stdout = '';
-    let stderr = '';
+    const events = [];
+    const parser = createStreamParser(({ seq, event }) => {
+      events.push(event);
+      const { event_type, event_subtype } = classifyEvent(event);
+      appendEvent({ job_id: String(jobId), seq, event_type, event_subtype, payload: event });
+    });
 
-    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const errLogPath = join(AGENT_LOG_DIR, `${jobId}.err.log`);
+    const errStream = createWriteStream(errLogPath, { flags: 'a' });
+    let stderrTail = '';
+
+    proc.stdout.on('data', (chunk) => parser.push(chunk));
+    proc.stderr.on('data', (chunk) => {
+      errStream.write(chunk);
+      stderrTail += chunk.toString();
+      if (stderrTail.length > 4000) stderrTail = stderrTail.slice(-4000);
+    });
 
     proc.on('close', (code) => {
       activeProcesses.delete(jobId);
+      parser.flush();
+      errStream.end();
+      broadcastDone(String(jobId), { exit_code: code, events: events.length });
       if (code === 0) {
-        resolve(stdout);
+        resolve(getFinalResultText(events));
       } else {
-        reject(new Error(`claude -p exited with code ${code}\nstderr: ${stderr.slice(-1000)}`));
+        reject(new Error(`claude -p exited with code ${code}\nstderr: ${stderrTail.slice(-1000)}`));
       }
     });
 
     proc.on('error', (err) => {
       activeProcesses.delete(jobId);
+      errStream.end();
+      broadcastDone(String(jobId), { exit_code: null, error: err.message });
       reject(err);
     });
   });

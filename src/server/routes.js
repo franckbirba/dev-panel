@@ -1426,6 +1426,35 @@ export function createRouter(config = {}) {
     res.json({ ok: true });
   });
 
+  // Per-job agent event timeline. ?after=<seq> for incremental fetch,
+  // ?stream=1 turns the request into an SSE tail-follow. Backed by
+  // agent_job_events, which is populated as claude -p emits stream-json.
+  router.get('/admin/jobs/:id/events', authenticateAdmin, async (req, res) => {
+    const { listEvents, subscribe } = await import('./jobs-events.js');
+    const id = String(req.params.id);
+    if (req.query.stream === '1') {
+      // Flush historical events first, then attach for live updates.
+      const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
+      subscribe(id, res);
+      const past = listEvents(id, { after });
+      for (const ev of past) {
+        res.write(`event: job_event\ndata: ${JSON.stringify({ job_id: id, ...ev })}\n\n`);
+      }
+      return;
+    }
+    const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
+    const limit = Math.min(50000, Math.max(1, parseInt(req.query.limit, 10) || 10000));
+    res.json({ job_id: id, events: listEvents(id, { after, limit }) });
+  });
+
+  router.get('/admin/jobs/:id/stderr', authenticateAdmin, async (req, res) => {
+    const { readFileSync, existsSync } = await import('fs');
+    const { join } = await import('path');
+    const path = join(process.env.DEVPANEL_STORAGE || './storage', 'agent-logs', `${req.params.id}.err.log`);
+    if (!existsSync(path)) return res.status(404).type('text/plain').send('');
+    res.type('text/plain').send(readFileSync(path, 'utf8'));
+  });
+
   router.get('/admin/workflows/instances', authenticateAdmin, async (req, res) => {
     const { listActive, listByCycle } = await import('./workflow-instances.js');
     const rows = req.query.cycle_id ? listByCycle(req.query.cycle_id) : listActive();

@@ -1,194 +1,124 @@
-// tests/worker/stream-parser.test.js
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { parseStreamLine, createStreamProcessor } from '../../src/worker/stream-parser.js';
+import { describe, it, expect, vi } from 'vitest';
+import { createStreamParser, getFinalResultText, classifyEvent } from '../../src/worker/stream-parser.js';
 
-// Mock the jobs-events module to avoid needing a real database
-vi.mock('../../src/server/jobs-events.js', () => ({
-  insertJobEvent: vi.fn()
-}));
-
-import { insertJobEvent } from '../../src/server/jobs-events.js';
-
-describe('parseStreamLine', () => {
-  it('parses valid JSON line', () => {
-    const result = parseStreamLine('{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}');
-    expect(result).toEqual({
-      type: 'assistant',
-      message: { content: [{ type: 'text', text: 'hello' }] }
-    });
+describe('createStreamParser', () => {
+  it('parses one event per newline', () => {
+    const events = [];
+    const p = createStreamParser(e => events.push(e));
+    p.push('{"type":"system","subtype":"init"}\n');
+    p.push('{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\n');
+    expect(events).toHaveLength(2);
+    expect(events[0].seq).toBe(0);
+    expect(events[0].event.type).toBe('system');
+    expect(events[1].seq).toBe(1);
   });
 
-  it('returns null for empty line', () => {
-    expect(parseStreamLine('')).toBeNull();
-    expect(parseStreamLine('  ')).toBeNull();
+  it('buffers partial lines across chunks', () => {
+    const events = [];
+    const p = createStreamParser(e => events.push(e));
+    p.push('{"type":"sys');
+    p.push('tem","subtype":"init"}\n{"type":"result","result":"done"}');
+    expect(events).toHaveLength(1);
+    p.push('\n');
+    expect(events).toHaveLength(2);
+    expect(events[1].event.type).toBe('result');
   });
 
-  it('returns null for malformed JSON', () => {
-    expect(parseStreamLine('not json at all')).toBeNull();
-    expect(parseStreamLine('{broken')).toBeNull();
+  it('flush emits a trailing unterminated line', () => {
+    const events = [];
+    const p = createStreamParser(e => events.push(e));
+    p.push('{"type":"result","result":"ok"}');
+    expect(events).toHaveLength(0);
+    p.flush();
+    expect(events).toHaveLength(1);
+    expect(events[0].event.type).toBe('result');
   });
 
-  it('handles whitespace-padded lines', () => {
-    const result = parseStreamLine('  {"type":"system"}  ');
-    expect(result).toEqual({ type: 'system' });
+  it('skips malformed JSON without crashing', () => {
+    const events = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = createStreamParser(e => events.push(e));
+    p.push('{"type":"system"}\n');
+    p.push('not valid json\n');
+    p.push('{"type":"result","result":"ok"}\n');
+    expect(events).toHaveLength(2);
+    expect(events.map(e => e.event.type)).toEqual(['system', 'result']);
+    expect(p.stats().malformed).toBe(1);
+    warn.mockRestore();
+  });
+
+  it('keeps seq monotonic even across malformed lines', () => {
+    const events = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = createStreamParser(e => events.push(e));
+    p.push('{"type":"a"}\n');
+    p.push('garbage\n');
+    p.push('{"type":"b"}\n');
+    expect(events[0].seq).toBe(0);
+    expect(events[1].seq).toBe(2); // 1 was consumed by the malformed line
+    warn.mockRestore();
+  });
+
+  it('ignores empty lines', () => {
+    const events = [];
+    const p = createStreamParser(e => events.push(e));
+    p.push('\n\n{"type":"system"}\n\n');
+    expect(events).toHaveLength(1);
   });
 });
 
-describe('createStreamProcessor', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('getFinalResultText', () => {
+  it('returns the result event string', () => {
+    const events = [
+      { type: 'system', subtype: 'init' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }] } },
+      { type: 'result', subtype: 'success', result: '{"status":"done"}' }
+    ];
+    expect(getFinalResultText(events)).toBe('{"status":"done"}');
   });
 
-  it('processes a single complete line', () => {
-    const events = [];
-    const proc = createStreamProcessor('job-1', {
-      onEvent: (evt, seq) => events.push({ ...evt, seq })
-    });
-
-    proc.processChunk('{"type":"system","subtype":"init"}\n');
-
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('system');
-    expect(events[0].seq).toBe(1);
-    expect(insertJobEvent).toHaveBeenCalledWith({
-      job_id: 'job-1',
-      seq: 1,
-      event_type: 'system',
-      subtype: 'init',
-      payload_json: '{"type":"system","subtype":"init"}'
-    });
+  it('picks the latest result when multiple exist', () => {
+    const events = [
+      { type: 'result', subtype: 'error', result: 'first' },
+      { type: 'result', subtype: 'success', result: 'last' }
+    ];
+    expect(getFinalResultText(events)).toBe('last');
   });
 
-  it('handles chunks split across multiple data events', () => {
-    const events = [];
-    const proc = createStreamProcessor('job-2', {
-      onEvent: (evt) => events.push(evt)
-    });
-
-    // First chunk: partial line
-    proc.processChunk('{"type":"assis');
-    expect(events).toHaveLength(0);
-
-    // Second chunk: rest of line + newline
-    proc.processChunk('tant","message":{}}\n');
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('assistant');
+  it('returns empty string when no result event present', () => {
+    const events = [{ type: 'system' }, { type: 'assistant' }];
+    expect(getFinalResultText(events)).toBe('');
   });
 
-  it('processes multiple lines in one chunk', () => {
-    const events = [];
-    const proc = createStreamProcessor('job-3', {
-      onEvent: (evt) => events.push(evt)
-    });
-
-    proc.processChunk(
-      '{"type":"system","subtype":"init"}\n' +
-      '{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\n' +
-      '{"type":"result","subtype":"success","result":"done"}\n'
-    );
-
-    expect(events).toHaveLength(3);
-    expect(events[0].type).toBe('system');
-    expect(events[1].type).toBe('assistant');
-    expect(events[2].type).toBe('result');
+  it('stringifies an object result', () => {
+    const events = [{ type: 'result', result: { summary: 'x' } }];
+    expect(getFinalResultText(events)).toBe('{"summary":"x"}');
   });
+});
 
-  it('increments seq correctly', () => {
-    const seqs = [];
-    const proc = createStreamProcessor('job-4', {
-      onEvent: (_, seq) => seqs.push(seq)
-    });
-
-    proc.processChunk('{"type":"a"}\n{"type":"b"}\n{"type":"c"}\n');
-    expect(seqs).toEqual([1, 2, 3]);
-  });
-
-  it('skips malformed lines gracefully', () => {
-    const events = [];
-    const lines = [];
-    const proc = createStreamProcessor('job-5', {
-      onEvent: (evt) => events.push(evt),
-      onLine: (line) => lines.push(line)
-    });
-
-    proc.processChunk('{"type":"ok"}\nnot-json\n{"type":"also-ok"}\n');
-
-    expect(events).toHaveLength(2);
-    expect(events[0].type).toBe('ok');
-    expect(events[1].type).toBe('also-ok');
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toBe('not-json');
-  });
-
-  it('extracts final text from result event', () => {
-    const proc = createStreamProcessor('job-6');
-
-    proc.processChunk('{"type":"result","subtype":"success","result":"final answer"}\n');
-
-    expect(proc.getFinalText()).toBe('final answer');
-    expect(proc.getResult()).toEqual({
-      type: 'result',
-      subtype: 'success',
-      result: 'final answer'
+describe('classifyEvent', () => {
+  it('classifies system init', () => {
+    expect(classifyEvent({ type: 'system', subtype: 'init' })).toEqual({
+      event_type: 'system', event_subtype: 'init'
     });
   });
 
-  it('tracks assistant text as fallback for getFinalText', () => {
-    const proc = createStreamProcessor('job-7');
-
-    proc.processChunk('{"type":"assistant","message":{"content":[{"type":"text","text":"assistant says this"}]}}\n');
-
-    expect(proc.getFinalText()).toBe('assistant says this');
+  it('classifies assistant text vs tool_use', () => {
+    const text = { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } };
+    const tool = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } };
+    expect(classifyEvent(text).event_type).toBe('assistant');
+    expect(classifyEvent(tool).event_type).toBe('tool_use');
   });
 
-  it('result event overrides assistant text for getFinalText', () => {
-    const proc = createStreamProcessor('job-8');
-
-    proc.processChunk(
-      '{"type":"assistant","message":{"content":[{"type":"text","text":"intermediate"}]}}\n' +
-      '{"type":"result","subtype":"success","result":"final"}\n'
-    );
-
-    expect(proc.getFinalText()).toBe('final');
+  it('classifies user tool_result vs plain user', () => {
+    const result = { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } };
+    const plain = { type: 'user', message: { content: [{ type: 'text', text: 'go' }] } };
+    expect(classifyEvent(result).event_type).toBe('tool_result');
+    expect(classifyEvent(plain).event_type).toBe('user');
   });
 
-  it('flush processes remaining buffer', () => {
-    const events = [];
-    const proc = createStreamProcessor('job-9', {
-      onEvent: (evt) => events.push(evt)
-    });
-
-    proc.processChunk('{"type":"system"}');
-    expect(events).toHaveLength(0);
-
-    proc.flush();
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('system');
-  });
-
-  it('getEventCount returns correct count', () => {
-    const proc = createStreamProcessor('job-10');
-
-    proc.processChunk('{"type":"a"}\n{"type":"b"}\n');
-
-    expect(proc.getEventCount()).toBe(2);
-  });
-
-  it('handles empty chunks without errors', () => {
-    const proc = createStreamProcessor('job-11');
-    proc.processChunk('');
-    proc.processChunk('\n');
-    proc.processChunk('\n\n\n');
-    expect(proc.getEventCount()).toBe(0);
-  });
-
-  it('callback errors do not break the stream', () => {
-    const proc = createStreamProcessor('job-12', {
-      onEvent: () => { throw new Error('callback boom'); }
-    });
-
-    // Should not throw
-    proc.processChunk('{"type":"a"}\n{"type":"b"}\n');
-    expect(proc.getEventCount()).toBe(2);
+  it('falls back to unknown for missing type', () => {
+    expect(classifyEvent({}).event_type).toBe('unknown');
+    expect(classifyEvent(null).event_type).toBe('unknown');
   });
 });

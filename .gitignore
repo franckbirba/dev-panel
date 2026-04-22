@@ -11,3 +11,4 @@ storage/
 .claude/skills/ui-*/
 *.png
 *.zip
+.claude/scheduled_tasks.lock
