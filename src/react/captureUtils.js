@@ -13,6 +13,10 @@ export class ConsoleBuffer {
   #entries = [];
   #originals = {};
 
+  constructor(maxSize) {
+    if (maxSize != null) this.#maxSize = maxSize;
+  }
+
   attach() {
     for (const level of ['log', 'warn', 'error']) {
       this.#originals[level] = console[level].bind(console);
@@ -321,5 +325,23 @@ export class PerfMetrics {
 
   getMetrics() {
     return { ...this.#metrics };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. takeDOMSnapshot — serialise the current DOM, truncated to a size limit
+// ---------------------------------------------------------------------------
+
+const DOM_SNAPSHOT_MAX_BYTES = 500 * 1024; // 500 KB
+
+export function takeDOMSnapshot() {
+  try {
+    let html = document.documentElement.outerHTML;
+    if (html.length > DOM_SNAPSHOT_MAX_BYTES) {
+      html = html.slice(0, DOM_SNAPSHOT_MAX_BYTES) + '\n<!-- [truncated] -->';
+    }
+    return html;
+  } catch {
+    return null;
   }
 }
