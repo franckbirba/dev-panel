@@ -222,3 +222,17 @@ DevPanel has a new "Inbox" (technically the `captures` table) where Franck dumps
 - Proactively: on the morning digest, if `new` captures > 0 mention the count.
 - Never batch-process silently — each capture is a conversation Franck might join.
 
+## UI catalogue — ui.devpanl.dev
+
+Before building any UI in any studio project, check the catalogue at
+https://ui.devpanl.dev (htpasswd: same credentials as bull-board / affine).
+It lists:
+
+- Shared design tokens (colors, spacing, radii, typography) under `shared/`.
+- Per-project components under `devpanel/`, `zeno/`, `edms/`, `candidat/`.
+
+Authoring rule: each project's stories live in its repo under `stories/`
+and are synced to the catalogue on every push to main by the reusable
+`sync-stories.yml` workflow. Full authoring conventions:
+`skills/storybook-authoring.md` in the `devpanl-claude-plugin` repo.
+
