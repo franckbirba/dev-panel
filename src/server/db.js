@@ -191,8 +191,8 @@ export function initMasterDatabase(storagePath = './storage') {
   // Guarded by PRAGMA user_version — runs exactly once per database.
   // Spec: docs/superpowers/specs/2026-04-22-captures-on-threads-design.md
   const CAPTURES_ON_THREADS_VERSION = 1;
-  const currentVersion = masterDb.pragma('user_version', { simple: true });
-  if (currentVersion < CAPTURES_ON_THREADS_VERSION) {
+  const currentVersion1 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion1 < CAPTURES_ON_THREADS_VERSION) {
     const captureMessagesTable = masterDb.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='capture_messages'`
     ).get();
@@ -230,6 +230,20 @@ export function initMasterDatabase(storagePath = './storage') {
       masterDb.pragma(`user_version = ${CAPTURES_ON_THREADS_VERSION}`);
     });
     migrate();
+  }
+
+  // Migration v2: add nullable metadata column to thread_messages so the React
+  // widget can attach screenshot / console / network context to capture messages.
+  // Uses ALTER TABLE (not wrapped in a JS transaction — ALTER TABLE + transactions
+  // can be fragile in some SQLite/better-sqlite3 combos). The column-existence
+  // guard makes this idempotent.
+  const currentVersion2 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion2 < 2) {
+    const tmCols = new Set(masterDb.prepare("PRAGMA table_info(thread_messages)").all().map(c => c.name));
+    if (!tmCols.has('metadata')) {
+      masterDb.exec(`ALTER TABLE thread_messages ADD COLUMN metadata TEXT`);
+    }
+    masterDb.pragma(`user_version = 2`);
   }
 
   return masterDb;

@@ -1,11 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
+import express from 'express';
+import request from 'supertest';
 import { initMasterDatabase, createProject, getMasterDatabase } from '../../src/server/db.js';
 import { createCapture, getCapture, listCaptures, deleteCapture } from '../../src/server/captures.js';
 import { getOrCreateThread, appendMessage } from '../../src/server/threads.js';
+
+vi.mock('../../src/server/bullmq.js', () => ({
+  getQueue: () => ({ getJobs: async () => [] }),
+  QUEUES: { agent: 'agent' }
+}));
 
 describe('captures migration (capture_messages → thread_messages)', () => {
   let tmp;
@@ -163,5 +170,70 @@ describe('captures (thread-backed)', () => {
     expect(db.prepare(
       `SELECT COUNT(*) AS n FROM thread_messages`
     ).get().n).toBe(0);
+  });
+});
+
+describe('capture message metadata (screenshots/console/network)', () => {
+  let project;
+  beforeEach(() => {
+    const tmp = mkdtempSync(join(tmpdir(), 'devpanel-capmeta-'));
+    initMasterDatabase(tmp);
+    project = createProject({ name: 'demo', github_owner: 'o', github_repo: 'r' });
+  });
+
+  it('appendMessage persists and returns metadata as a deserialized object', () => {
+    const cap = createCapture({ project_id: project.id, content: 'bug' });
+    const t = getOrCreateThread('capture', cap.id);
+    appendMessage({
+      thread_id: t.thread_id,
+      role: 'system',
+      source: 'web',
+      content: 'Captured: screenshot',
+      metadata: { screenshot: 'data:image/png;base64,AAA', type: 'bug' }
+    });
+
+    const reloaded = getCapture(cap.id);
+    expect(reloaded.messages).toHaveLength(2);
+    expect(reloaded.messages[1].metadata).toEqual({
+      screenshot: 'data:image/png;base64,AAA',
+      type: 'bug'
+    });
+  });
+
+  it('messages without metadata return metadata=null', () => {
+    const cap = createCapture({ project_id: project.id, content: 'hi' });
+    const reloaded = getCapture(cap.id);
+    expect(reloaded.messages[0].metadata).toBeNull();
+  });
+});
+
+describe('POST /api/threads/capture/:id/messages — metadata round-trip', () => {
+  let app, project, tmp;
+  beforeEach(async () => {
+    tmp = mkdtempSync(join(tmpdir(), 'devpanel-caphttp-'));
+    initMasterDatabase(tmp);
+    project = createProject({ name: 'demo', github_owner: 'o', github_repo: 'r' });
+    const { createRouter } = await import('../../src/server/routes.js');
+    app = express();
+    app.use(express.json({ limit: '10mb' }));
+    app.use('/api', createRouter({ storagePath: tmp }));
+  });
+
+  it('persists metadata and returns it via getCapture', async () => {
+    const cap = createCapture({ project_id: project.id, content: 'widget bug' });
+    const meta = { screenshot: 'data:image/png;base64,AAA', type: 'bug', console: [] };
+
+    const r = await request(app)
+      .post(`/api/threads/capture/${cap.id}/messages`)
+      .set('X-API-Key', project.api_key)
+      .send({ role: 'system', content: 'Captured: screenshot', metadata: meta });
+
+    expect(r.status).toBe(200);
+    expect(r.body.id).toBeGreaterThan(0);
+
+    const reloaded = getCapture(cap.id);
+    const sysMsgs = reloaded.messages.filter(m => m.role === 'system');
+    expect(sysMsgs).toHaveLength(1);
+    expect(sysMsgs[0].metadata).toEqual(meta);
   });
 });

@@ -63,7 +63,7 @@ export function getCapture(id) {
         id: m.id,
         role: m.role,
         content: m.content,
-        metadata: null,
+        metadata: m.metadata ?? null,
         created_at: m.created_at
       }))
     : [];

@@ -1449,16 +1449,17 @@ export function createRouter(config = {}) {
   router.post('/threads/:subject_type/:subject_id/messages', authenticateProject, async (req, res) => {
     try {
       const { subject_type, subject_id } = req.params;
-      const { content } = req.body || {};
+      const { content, role: reqRole, metadata } = req.body || {};
       if (!content || typeof content !== 'string') {
         return res.status(400).json({ error: 'content required' });
       }
+      const role = reqRole || 'user';
       const thread = getOrCreateThread(subject_type, subject_id);
-      const id = appendThreadMessage({ thread_id: thread.thread_id, role: 'user', source: 'web', content });
+      const id = appendThreadMessage({ thread_id: thread.thread_id, role, source: 'web', content, metadata: metadata ?? null });
       const { broadcast } = await import('./sse.js');
       broadcast('thread:message', {
         thread_id: thread.thread_id,
-        message: { id, role: 'user', source: 'web', content, created_at: new Date().toISOString() }
+        message: { id, role, source: 'web', content, metadata: metadata ?? null, created_at: new Date().toISOString() }
       });
       // Forward to Telegram with tag prefix; fire-and-forget.
       const text = prependTag(subject_type, subject_id, content);
