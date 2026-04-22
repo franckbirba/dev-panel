@@ -563,26 +563,32 @@ server.tool(
 export async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
   const parsed = parseTag(raw_text);
   if (!parsed) return { appended: false, reason: 'no tag in message' };
-  if (!getSubject(parsed.subject_type, parsed.subject_id)) {
-    return { appended: false, reason: `unknown subject ${parsed.subject_type}/${parsed.subject_id}` };
+  // This MCP runs on the agents host; the dashboard DB lives on services.
+  // POST to the remote API with the admin key so the thread message lands
+  // in the one true DB (not the MCP's local SQLite, which would diverge).
+  const base = process.env.API_BASE || 'http://localhost:3030';
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return { appended: false, reason: 'ADMIN_API_KEY not set' };
+  try {
+    const r = await fetch(`${base}/api/threads/${parsed.subject_type}/${parsed.subject_id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+      body: JSON.stringify({
+        content: parsed.body,
+        role: role || 'shelly',
+        source: 'telegram',
+        telegram_message_id
+      })
+    });
+    if (!r.ok) {
+      const err = await r.text().catch(() => '');
+      return { appended: false, reason: `api ${r.status}: ${err.slice(0, 200)}` };
+    }
+    const data = await r.json();
+    return { appended: true, thread_id: data.thread_id };
+  } catch (err) {
+    return { appended: false, reason: `fetch failed: ${err.message}` };
   }
-  const thread = getOrCreateThread(parsed.subject_type, parsed.subject_id);
-  const id = appendFromTelegram({
-    thread_id: thread.thread_id,
-    role: role || 'shelly',
-    content: parsed.body,
-    telegram_message_id
-  });
-  if (id != null) {
-    try {
-      const { broadcast } = await import('../server/sse.js');
-      broadcast('thread:message', {
-        thread_id: thread.thread_id,
-        message: { id, role, source: 'telegram', content: parsed.body, created_at: new Date().toISOString() }
-      });
-    } catch (e) { /* SSE may not be initialised in MCP context */ }
-  }
-  return { appended: id != null, thread_id: thread.thread_id };
 }
 
 server.tool(

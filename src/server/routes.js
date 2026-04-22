@@ -1446,10 +1446,27 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.post('/threads/:subject_type/:subject_id/messages', authenticateProject, async (req, res) => {
+  // Accepts either project key OR admin key. The admin path is used by the
+  // devpanel MCP running on the agents host to forward inbound Telegram
+  // messages into the shared dashboard DB (single source of truth on services).
+  function authenticateProjectOrAdmin(req, res, next) {
+    const adminKey = req.headers['x-admin-key'];
+    const configuredKey = process.env.ADMIN_API_KEY;
+    if (adminKey && configuredKey) {
+      const a = Buffer.from(adminKey);
+      const b = Buffer.from(configuredKey);
+      if (a.length === b.length && timingSafeEqual(a, b)) {
+        req.isAdmin = true;
+        return next();
+      }
+    }
+    return authenticateProject(req, res, next);
+  }
+
+  router.post('/threads/:subject_type/:subject_id/messages', authenticateProjectOrAdmin, async (req, res) => {
     try {
       const { subject_type, subject_id } = req.params;
-      const { content, role: reqRole, metadata } = req.body || {};
+      const { content, role: reqRole, metadata, source: reqSource, telegram_message_id } = req.body || {};
       if (!content || typeof content !== 'string') {
         return res.status(400).json({ error: 'content required' });
       }
@@ -1458,8 +1475,17 @@ export function createRouter(config = {}) {
       if (!ALLOWED_ROLES.has(role)) {
         return res.status(400).json({ error: `invalid role: ${role}` });
       }
+      // Only admin callers may override source / pass telegram_message_id.
+      // Project-key callers always get source='web'.
+      const ALLOWED_SOURCES = new Set(['web', 'telegram', 'system']);
+      const source = req.isAdmin && reqSource && ALLOWED_SOURCES.has(reqSource) ? reqSource : 'web';
+      const tgId = req.isAdmin && Number.isFinite(telegram_message_id) ? telegram_message_id : null;
+
       const thread = getOrCreateThread(subject_type, subject_id);
-      const id = appendThreadMessage({ thread_id: thread.thread_id, role, source: 'web', content, metadata: metadata ?? null });
+      const id = appendThreadMessage({
+        thread_id: thread.thread_id, role, source, content,
+        metadata: metadata ?? null, telegram_message_id: tgId
+      });
       // Capture-specific: a shelly reply on a 'new' capture bumps it to 'triaging'
       // so the dashboard badge reflects active conversation (mirrors the old
       // addCaptureMessage behaviour we removed).
@@ -1473,21 +1499,25 @@ export function createRouter(config = {}) {
       const { broadcast } = await import('./sse.js');
       broadcast('thread:message', {
         thread_id: thread.thread_id,
-        message: { id, role, source: 'web', content, metadata: metadata ?? null, created_at: new Date().toISOString() }
+        message: { id, role, source, content, metadata: metadata ?? null, created_at: new Date().toISOString() }
       });
-      // Forward to Telegram with tag prefix; fire-and-forget.
-      const text = prependTag(subject_type, subject_id, content);
-      const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
-      const token = process.env.TELEGRAM_BOT_TOKEN;
-      const chat  = process.env.TELEGRAM_CHAT_ID;
-      if (url) {
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-          .catch(err => console.error('[threads] webhook send failed:', err.message));
-      } else if (token && chat) {
-        fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chat, text })
-        }).catch(err => console.error('[threads] telegram API send failed:', err.message));
+      // Forward to Telegram with tag prefix — ONLY for web-source messages.
+      // Admin-origin messages are already from Telegram (MCP inbound); re-forwarding
+      // would create a loop.
+      if (source === 'web') {
+        const text = prependTag(subject_type, subject_id, content);
+        const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        const chat  = process.env.TELEGRAM_CHAT_ID;
+        if (url) {
+          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+            .catch(err => console.error('[threads] webhook send failed:', err.message));
+        } else if (token && chat) {
+          fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chat, text })
+          }).catch(err => console.error('[threads] telegram API send failed:', err.message));
+        }
       }
       res.json({ id, thread_id: thread.thread_id });
     } catch (e) {
