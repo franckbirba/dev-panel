@@ -1,0 +1,52 @@
+import { Meta } from '@storybook/blocks';
+
+<Meta title="devpanel/Tokens" />
+
+# Design Tokens — dev-panel
+
+Source of truth: `src/dashboard/theme.js`. Agents copy CSS variables from
+this table; never invent new colors or spacing values.
+
+## Colors
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `bg` | `#0A0A0B` | App background |
+| `card` | `#13131A` | Card surface |
+| `elevated` | `#1C1C26` | Modal, popover, raised surface |
+| `border` | `#2A2A3A` | Default border |
+| `textPrimary` | `#E8E8ED` | Body text |
+| `textSecondary` | `#8B8B9B` | Labels, metadata |
+| `textMuted` | `#6B6B7B` | Captions, helper text |
+| `textDim` | `#4B4B5B` | Disabled, placeholder |
+| `success` | `#10B981` | Success state |
+| `warning` | `#F59E0B` | Warning state |
+| `error` | `#EF4444` | Error, destructive |
+| `info` | `#3B82F6` | Informational |
+
+## Typography
+
+| Role | Stack |
+|------|-------|
+| Headline | `'Epilogue', sans-serif` (400/600/700) |
+| Body | `'IBM Plex Sans', sans-serif` (400/500/600/700) |
+| Mono | `'IBM Plex Mono', monospace` (400/500/700) |
+
+## Spacing
+
+| Token | Value |
+|-------|-------|
+| `xs` | 4px |
+| `sm` | 8px |
+| `md` | 16px |
+| `lg` | 24px |
+| `xl` | 32px |
+
+## Radii
+
+| Token | Value |
+|-------|-------|
+| `sm` | 4px |
+| `md` | 6px |
+| `lg` | 10px |
+| `xl` | 14px |
