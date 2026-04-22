@@ -48,12 +48,13 @@ Next steps — manual, per project:
   3. Append the PUBLIC key to this host's authorized_keys, gated by a
      command= restriction that pins rsync to /<project>/:
 
-       command="rrsync -wo /var/lib/devpanl/storybook-stories/<project>",
+       command="/usr/bin/rrsync -wo /var/lib/devpanl/storybook-stories/<project>",
        no-agent-forwarding,no-port-forwarding,no-pty,no-X11-forwarding
        ssh-ed25519 AAAA... user@host
 
-     (rrsync ships with rsync; on Debian/Ubuntu:
-        /usr/share/doc/rsync/scripts/rrsync )
+     (rrsync ships with rsync; on Debian 12 / Ubuntu 22+ it's at
+        /usr/bin/rrsync — on older systems it may be at
+        /usr/share/doc/rsync/scripts/rrsync and need chmod +x)
 
   4. Create the project subdirectory:
        install -d -o storybook-sync -g storybook-sync \
