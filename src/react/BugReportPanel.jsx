@@ -144,6 +144,15 @@ function injectKeyframes() {
   }
 }
 
+// Production bundles minify component display names to 1-3 letters (e.g. "Xae").
+// When that's what we get, the label is misleading — hide it.
+function isUsefulComponentName(name) {
+  if (!name || typeof name !== 'string') return false;
+  if (name.length <= 3) return false;
+  if (/^[A-Z][a-z]{0,2}$/.test(name)) return false;
+  return true;
+}
+
 export function BugReportPanel({
   componentInfo,
   consoleEntries = [],
@@ -152,6 +161,9 @@ export function BugReportPanel({
   screenshot,
   onSubmit,
   onCancel,
+  onPickElement,
+  onRecapture,
+  onAnnotate,
   submitting = false,
 }) {
   injectKeyframes();
@@ -166,6 +178,8 @@ export function BugReportPanel({
 
   const { lcp, cls, fcp } = perfMetrics || {};
   const hasPerf = lcp != null || fcp != null;
+
+  const showComponentName = isUsefulComponentName(componentInfo?.name);
 
   const handleSubmit = () => {
     if (!description.trim() || submitting) return;
@@ -193,18 +207,19 @@ export function BugReportPanel({
       {/* Scroll area */}
       <div style={STYLE.scrollArea} data-devtool-ignore>
 
-        {/* Component info */}
-        {componentInfo && (
+        {/* Component info — only when we got something useful (prod builds
+            often minify names down to meaningless 1-3 letter symbols). */}
+        {componentInfo && (showComponentName || componentInfo.file) && (
           <div style={STYLE.section} data-devtool-ignore>
             <div style={{ ...STYLE.sectionTitle, color: '#ef4444' }} data-devtool-ignore>
-              Selected: {componentInfo.name}
+              Selected: {showComponentName ? componentInfo.name : 'element'}
             </div>
             {componentInfo.file && (
               <div style={{ ...STYLE.mono, color: '#888', marginBottom: '6px' }} data-devtool-ignore>
                 {componentInfo.file}
               </div>
             )}
-            {componentInfo.props && (
+            {componentInfo.props && Object.keys(componentInfo.props).length > 0 && (
               <pre style={{ ...STYLE.mono, color: '#a0aec0', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }} data-devtool-ignore>
                 {JSON.stringify(componentInfo.props, null, 2)}
               </pre>
@@ -274,12 +289,56 @@ export function BugReportPanel({
           </div>
         )}
 
-        {/* Screenshot */}
-        {screenshot && (
-          <div style={STYLE.section} data-devtool-ignore>
-            <div style={{ ...STYLE.sectionTitle, color: '#10b981' }} data-devtool-ignore>
-              Screenshot
+        {/* Description — most important, keep at top */}
+        <div data-devtool-ignore>
+          <textarea
+            style={STYLE.textarea}
+            placeholder="What went wrong? (required)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            autoFocus
+            data-devtool-ignore
+          />
+        </div>
+
+        {/* Screenshot + actions */}
+        <div style={STYLE.section} data-devtool-ignore>
+          <div style={{ ...STYLE.sectionTitle, color: '#10b981', justifyContent: 'space-between' }} data-devtool-ignore>
+            <span data-devtool-ignore>Screenshot</span>
+            <div style={{ display: 'flex', gap: '6px' }} data-devtool-ignore>
+              {onRecapture && (
+                <button
+                  data-devtool-ignore
+                  onClick={onRecapture}
+                  style={{ background: 'none', border: '1px solid #333', color: '#a0aec0', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                  title="Take a fresh full-page screenshot"
+                >
+                  retake
+                </button>
+              )}
+              {onAnnotate && screenshot && (
+                <button
+                  data-devtool-ignore
+                  onClick={onAnnotate}
+                  style={{ background: 'none', border: '1px solid #333', color: '#a0aec0', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                  title="Draw arrows or highlights on the screenshot"
+                >
+                  annotate
+                </button>
+              )}
+              {onPickElement && (
+                <button
+                  data-devtool-ignore
+                  onClick={onPickElement}
+                  style={{ background: 'none', border: '1px solid #333', color: '#a0aec0', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                  title="Select a specific element instead"
+                >
+                  pick element
+                </button>
+              )}
             </div>
+          </div>
+          {screenshot ? (
             <img
               src={screenshot.startsWith('data:') ? screenshot : `data:image/png;base64,${screenshot}`}
               alt="screenshot"
@@ -294,18 +353,11 @@ export function BugReportPanel({
               }}
               data-devtool-ignore
             />
-          </div>
-        )}
-
-        {/* Description */}
-        <div data-devtool-ignore>
-          <textarea
-            style={STYLE.textarea}
-            placeholder="Describe the bug..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            data-devtool-ignore
-          />
+          ) : (
+            <div style={{ fontSize: '11px', color: '#888' }} data-devtool-ignore>
+              No screenshot yet — hit "retake".
+            </div>
+          )}
         </div>
       </div>
 

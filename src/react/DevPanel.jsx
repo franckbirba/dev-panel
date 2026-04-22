@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ConsoleBuffer, NetworkInterceptor, PerfMetrics } from './captureUtils.js';
+import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, takeScreenshot } from './captureUtils.js';
 import { SessionRecorder } from './sessionRecorder.js';
 import { InspectOverlay } from './InspectOverlay.jsx';
 import { RegionSelect } from './RegionSelect.jsx';
@@ -85,20 +85,27 @@ export function DevPanel({
 
   const handleInspectSelect = useCallback((info) => {
     setComponentInfo(info);
-    setMode('region-select');
+    setMode('bug-report');
   }, []);
 
   const handleRegionCapture = useCallback((screenshotBase64) => {
-    if (screenshotBase64) {
-      setScreenshot(screenshotBase64);
-      setMode('annotating');
-    } else {
-      setMode('bug-report');
-    }
+    if (screenshotBase64) setScreenshot(screenshotBase64);
+    setMode('bug-report');
   }, []);
 
   const handleAnnotationDone = useCallback((annotated) => {
     setScreenshot(annotated);
+    setMode('bug-report');
+  }, []);
+
+  // Start bug report directly: take a full-page screenshot in the background
+  // and open the form. User can re-capture / pick element / annotate if needed.
+  const startBugReport = useCallback(async () => {
+    setMode('capturing');
+    try {
+      const shot = await takeScreenshot();
+      if (shot) setScreenshot(shot);
+    } catch { /* best effort */ }
     setMode('bug-report');
   }, []);
 
@@ -114,12 +121,17 @@ export function DevPanel({
     }
     const capture = await createRes.json();
     if (metadata) {
+      const summary = [
+        metadata.screenshot ? 'screenshot' : null,
+        Array.isArray(metadata.console) && metadata.console.length > 0 ? `${metadata.console.length} console entries` : null,
+        Array.isArray(metadata.network) && metadata.network.length > 0 ? `${metadata.network.length} network events` : null,
+      ].filter(Boolean).join(' · ') || 'browser context';
       await fetch(`${apiUrl}/api/captures/${capture.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
         body: JSON.stringify({
           role: 'system',
-          content: '[context attached by DevPanel widget]',
+          content: `Captured: ${summary}`,
           metadata
         })
       }).catch(() => { /* context is best-effort */ });
@@ -272,7 +284,7 @@ export function DevPanel({
           <button
             data-devtool-ignore
             style={{ ...menuBtnBase, backgroundColor: '#ef4444' }}
-            onClick={() => setMode('inspecting')}
+            onClick={startBugReport}
           >
             🐛 Report Bug
           </button>
@@ -312,6 +324,18 @@ export function DevPanel({
         />
       )}
 
+      {mode === 'capturing' && (
+        <div data-devtool-ignore style={{
+          position: 'fixed', inset: 0, zIndex: 99999,
+          background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: 'white', fontSize: '14px', fontFamily: 'system-ui, sans-serif'
+        }}>
+          <div style={{ background: '#1a1a2e', padding: '14px 20px', borderRadius: '10px', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
+            Capturing screenshot…
+          </div>
+        </div>
+      )}
+
       {(mode === 'bug-report' || mode === 'submitting') && (
         <BugReportPanel
           data-devtool-ignore
@@ -319,6 +343,16 @@ export function DevPanel({
           screenshot={screenshot}
           onSubmit={submitBug}
           onCancel={reset}
+          onPickElement={() => setMode('inspecting')}
+          onRecapture={async () => {
+            setMode('capturing');
+            try {
+              const shot = await takeScreenshot();
+              if (shot) setScreenshot(shot);
+            } catch { /* best effort */ }
+            setMode('bug-report');
+          }}
+          onAnnotate={() => screenshot && setMode('annotating')}
           submitting={submitting}
         />
       )}

@@ -203,7 +203,7 @@ export function CapturesView({ apiUrl, apiKey }) {
                   <span className="text-[10.5px] text-[var(--color-foreground-faint)] font-mono ml-auto">{timeAgo(c.updated_at)}</span>
                 </div>
                 <div className="text-[13px] text-[var(--color-foreground)] truncate">{c.content}</div>
-                {c.message_count > 1 && (
+                {c.message_count > 1 && c.last_role !== 'system' && (
                   <div className="text-[11.5px] text-[var(--color-foreground-faint)] mt-1 truncate">
                     <span className="opacity-70">{lastLabel}:</span> {c.last_message}
                   </div>
@@ -280,12 +280,12 @@ export function CapturesView({ apiUrl, apiKey }) {
                           </a>
                         )}
                         {meta && (meta.url || meta.viewport || meta.userAgent || meta.component) && (
-                          <details className="mt-2 text-[11px] opacity-75">
+                          <details className="mt-2 text-[11px] opacity-75" open>
                             <summary className="cursor-pointer select-none">context</summary>
                             <div className="mt-1 space-y-0.5 font-mono">
                               {meta.url && <div>url: <a href={meta.url} target="_blank" rel="noreferrer" className="underline">{meta.url}</a></div>}
                               {meta.viewport && <div>viewport: {meta.viewport.width}×{meta.viewport.height}</div>}
-                              {meta.component?.name && <div>component: {meta.component.name}</div>}
+                              {meta.component?.name && meta.component.name.length > 3 && <div>component: {meta.component.name}</div>}
                               {Array.isArray(meta.console) && meta.console.length > 0 && <div>console: {meta.console.length} entries</div>}
                               {Array.isArray(meta.network) && meta.network.length > 0 && <div>network: {meta.network.length} requests</div>}
                               {meta.userAgent && <div className="truncate" title={meta.userAgent}>ua: {meta.userAgent}</div>}
