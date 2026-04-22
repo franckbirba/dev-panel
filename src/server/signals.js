@@ -55,10 +55,15 @@ export async function buildSignalsFeed({
   }
 
   // --- captures ---
+  // Note: capture_messages was migrated into thread_messages (user_version=1).
+  // Retrieve the last message role via the threads/thread_messages tables.
   const captureRows = db.prepare(`
     SELECT c.*, p.name AS project_name,
-           (SELECT role FROM capture_messages WHERE capture_id = c.id
-              ORDER BY created_at DESC LIMIT 1) AS last_role
+           (SELECT tm.role
+              FROM threads t
+              JOIN thread_messages tm ON tm.thread_id = t.thread_id
+             WHERE t.subject_type = 'capture' AND t.subject_id = c.id
+             ORDER BY tm.created_at DESC LIMIT 1) AS last_role
       FROM captures c
       JOIN projects p ON p.id = c.project_id
      WHERE c.status IN ('new', 'triaging')

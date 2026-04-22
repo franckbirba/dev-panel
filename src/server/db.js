@@ -187,6 +187,51 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS deploy_events_project_created ON deploy_events(project_id, created_at DESC);
   `);
 
+  // Migration: move capture_messages into thread_messages + drop the old table.
+  // Guarded by PRAGMA user_version — runs exactly once per database.
+  // Spec: docs/superpowers/specs/2026-04-22-captures-on-threads-design.md
+  const CAPTURES_ON_THREADS_VERSION = 1;
+  const currentVersion = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion < CAPTURES_ON_THREADS_VERSION) {
+    const captureMessagesTable = masterDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='capture_messages'`
+    ).get();
+
+    const migrate = masterDb.transaction(() => {
+      if (captureMessagesTable) {
+        // 1. Subjects: one row per existing capture.
+        masterDb.prepare(`
+          INSERT OR IGNORE INTO subjects (subject_type, subject_id, project_id, title)
+          SELECT 'capture', id, project_id, substr(content, 1, 120) FROM captures
+        `).run();
+
+        // 2. Threads: one row per existing capture.
+        masterDb.prepare(`
+          INSERT OR IGNORE INTO threads (subject_type, subject_id, project_id)
+          SELECT 'capture', id, project_id FROM captures
+        `).run();
+
+        // 3. Messages: copy every capture_messages row into thread_messages
+        //    with source='web' (all pre-migration messages came from the dashboard).
+        masterDb.prepare(`
+          INSERT INTO thread_messages (thread_id, role, source, content, created_at)
+          SELECT t.thread_id, cm.role, 'web', cm.content, cm.created_at
+            FROM capture_messages cm
+            JOIN threads t
+              ON t.subject_type='capture' AND t.subject_id=cm.capture_id
+           ORDER BY cm.id ASC
+        `).run();
+
+        // 4. Drop the old table.
+        masterDb.exec(`DROP TABLE capture_messages`);
+      }
+      // 5. Bump version — always, even if there was nothing to migrate
+      //    (fresh DB).
+      masterDb.pragma(`user_version = ${CAPTURES_ON_THREADS_VERSION}`);
+    });
+    migrate();
+  }
+
   return masterDb;
 }
 
