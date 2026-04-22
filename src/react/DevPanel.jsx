@@ -98,15 +98,16 @@ export function DevPanel({
     setMode('bug-report');
   }, []);
 
-  // Start bug report directly: take a full-page screenshot in the background
-  // and open the form. User can re-capture / pick element / annotate if needed.
-  const startBugReport = useCallback(async () => {
-    setMode('capturing');
-    try {
-      const shot = await takeScreenshot();
-      if (shot) setScreenshot(shot);
-    } catch { /* best effort */ }
+  // Start bug report: take a full-page screenshot in the background, but
+  // don't block the UI on it. html2canvas is notoriously flaky on
+  // pages with cross-origin images (no CORS) or heavy DOMs — on those,
+  // it either hangs or takes >10s. So we open the form immediately and
+  // attach the screenshot if/when it arrives.
+  const startBugReport = useCallback(() => {
     setMode('bug-report');
+    takeScreenshot()
+      .then(shot => { if (shot) setScreenshot(shot); })
+      .catch(() => { /* best effort — form stays usable without */ });
   }, []);
 
   const postCapture = useCallback(async ({ kind, content, metadata }) => {
