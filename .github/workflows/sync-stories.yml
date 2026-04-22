@@ -1,0 +1,58 @@
+name: Sync Stories to devpanl Storybook
+
+on:
+  workflow_call:
+    inputs:
+      project-slug:
+        description: "Subdirectory name under /stories/ (e.g. zeno, edms, candidat). Lowercase, hyphen-safe."
+        required: true
+        type: string
+      stories-path:
+        description: "Path in the caller repo that holds the stories tree. Defaults to 'stories'."
+        required: false
+        type: string
+        default: "stories"
+    secrets:
+      SYNC_SSH_KEY:
+        description: "Private SSH key for the storybook-sync user on the services VPS."
+        required: true
+      SYNC_HOST:
+        description: "Services VPS host (e.g. services.devpanl.dev or IP)."
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          slug='${{ inputs.project-slug }}'
+          if ! printf '%s' "$slug" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; then
+            echo "ERROR: project-slug must match ^[a-z0-9][a-z0-9-]{0,30}\$ — got '$slug'"
+            exit 1
+          fi
+          if [ ! -d '${{ inputs.stories-path }}' ]; then
+            echo "ERROR: stories path '${{ inputs.stories-path }}' does not exist in the repo"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SYNC_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H '${{ secrets.SYNC_HOST }}' >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync stories
+        run: |
+          rsync -av --delete \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
+            '${{ inputs.stories-path }}/' \
+            'storybook-sync@${{ secrets.SYNC_HOST }}:${{ inputs.project-slug }}/'
+
+      - name: Report
+        run: |
+          echo "Synced '${{ inputs.stories-path }}/' → ${{ inputs.project-slug }}/ on ${{ secrets.SYNC_HOST }}"
+          echo "Catalogue: https://ui.devpanl.dev"
