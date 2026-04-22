@@ -70,11 +70,12 @@ sed \
 chown deploy:deploy /home/deploy/.mcp.json
 chmod 600 /home/deploy/.mcp.json
 
-# Systemd units (worker + shelly + watchdog)
+# Systemd units (worker + shelly + watchdog + relay)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-relay.service /etc/systemd/system/
 
 # Watchdog script must be executable and on the deploy user's PATH.
 install -d -o deploy -g deploy /home/deploy/bin /home/deploy/logs
@@ -83,8 +84,9 @@ install -o deploy -g deploy -m 0755 \
   /home/deploy/bin/shelly-watchdog.sh
 
 systemctl daemon-reload
-systemctl enable devpanel-worker shelly.service shelly-watchdog.timer
+systemctl enable devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service
 systemctl restart devpanel-worker
+systemctl restart shelly-relay.service
 # Reload shelly only if it's running; do not start a kill cascade if a human
 # is debugging by attaching to the tmux. Watchdog will pick it up if needed.
 if systemctl is-active --quiet shelly.service; then

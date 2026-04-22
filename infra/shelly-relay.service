@@ -1,0 +1,19 @@
+[Unit]
+Description=Shelly relay — HTTP → tmux send-keys bridge for dashboard push
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/projects/dev-panel
+# tmux socket lives under /tmp/tmux-1001/ (deploy uid=1001); runs as deploy
+ExecStart=/usr/bin/node /home/deploy/projects/dev-panel/infra/shelly-relay.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/deploy/logs/shelly-relay.log
+StandardError=append:/home/deploy/logs/shelly-relay.log
+
+[Install]
+WantedBy=multi-user.target
