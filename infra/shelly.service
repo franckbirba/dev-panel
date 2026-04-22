@@ -12,6 +12,18 @@ Group=deploy
 WorkingDirectory=/home/deploy/projects/dev-panel
 Environment=HOME=/home/deploy
 Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+# devpanel-mcp (spawned by Shelly's claude session) connects to BullMQ Redis
+# and pgvector Postgres on the services VPS via the private LAN. Without
+# these, src/mcp/server.js falls back to the public IP 77.42.46.87 which is
+# firewalled — every list_jobs/enqueue_job/memory_search call hangs forever
+# and Shelly looks "stuck". Mirror what devpanel-worker.service sets.
+Environment=REDIS_HOST=10.0.0.2
+Environment=REDIS_PORT=6379
+Environment=PG_HOST=10.0.0.2
+Environment=PG_PORT=5432
+Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
+Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
 
 # Make sure log destination exists.
 ExecStartPre=-/bin/mkdir -p /home/deploy/logs
