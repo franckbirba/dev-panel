@@ -491,6 +491,28 @@ services:
       - "traefik.http.routers.bullboard.middlewares=bullboard-auth"
       - "traefik.http.middlewares.bullboard-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Storybook — shared UI catalogue for every studio project
+  # Stories arrive via rsync from each project's repo on every push to main
+  # ──────────────────────────────────────────────────────────────────────
+  storybook:
+    image: ghcr.io/franckbirba/devpanl-storybook:latest
+    container_name: devpanel-storybook
+    profiles: [core, all]
+    restart: unless-stopped
+    volumes:
+      - storybook-stories:/stories:ro
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.storybook.rule=Host(`ui.devpanl.dev`)"
+      - "traefik.http.routers.storybook.entrypoints=websecure"
+      - "traefik.http.routers.storybook.tls.certresolver=le"
+      - "traefik.http.services.storybook.loadbalancer.server.port=6006"
+      - "traefik.http.routers.storybook.middlewares=storybook-auth"
+      - "traefik.http.middlewares.storybook-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+
 # ══════════════════════════════════════════════════════════════════════════
 # VOLUMES & NETWORKS
 # ══════════════════════════════════════════════════════════════════════════
@@ -508,6 +530,7 @@ volumes:
   penpot-plugins:
   penpot-pgdata:
   uptime-kuma-data:
+  storybook-stories:
 
 networks:
   devpanel_net:
