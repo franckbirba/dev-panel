@@ -125,7 +125,7 @@ jobs:
       project-slug: devpanel
       stories-path: stories
     secrets:
-      SYNC_SSH_KEY: ${{ secrets.STORYBOOK_SYNC_SSH_KEY }}
+      SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       SYNC_HOST: ${{ secrets.VPS_HOST }}
 
   sync-shared-stories:
@@ -135,5 +135,5 @@ jobs:
       project-slug: shared
       stories-path: stories-shared
     secrets:
-      SYNC_SSH_KEY: ${{ secrets.STORYBOOK_SYNC_SSH_KEY }}
+      SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       SYNC_HOST: ${{ secrets.VPS_HOST }}

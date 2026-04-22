@@ -501,7 +501,7 @@ services:
     profiles: [core, all]
     restart: unless-stopped
     volumes:
-      - storybook-stories:/stories:ro
+      - ./storybook-stories:/stories:ro
     networks:
       - devpanel_net
     labels:
@@ -530,7 +530,6 @@ volumes:
   penpot-plugins:
   penpot-pgdata:
   uptime-kuma-data:
-  storybook-stories:
 
 networks:
   devpanel_net:

@@ -14,13 +14,19 @@ on:
         default: "stories"
     secrets:
       SYNC_SSH_KEY:
-        description: "Private SSH key for the storybook-sync user on the services VPS."
+        description: "Private SSH key for the deploy user on the services VPS."
         required: true
       SYNC_HOST:
         description: "Services VPS host (e.g. services.devpanl.dev or IP)."
         required: true
       SYNC_HOST_FINGERPRINT:
         description: "Pinned SSH host key line (output of `ssh-keyscan -H <host>`). If set, prevents MITM on first connect. Recommended for production."
+        required: false
+      SYNC_USER:
+        description: "SSH user on the services VPS. Defaults to 'deploy'. Override only if you've set up a dedicated rsync user."
+        required: false
+      SYNC_BASE_PATH:
+        description: "Absolute path on the VPS where story subdirs live. Defaults to '/home/deploy/dev-panel/storybook-stories'."
         required: false
 
 jobs:
@@ -71,11 +77,18 @@ jobs:
           STORIES_PATH: ${{ inputs.stories-path }}
           PROJECT_SLUG: ${{ inputs.project-slug }}
           SYNC_HOST: ${{ secrets.SYNC_HOST }}
+          SYNC_USER: ${{ secrets.SYNC_USER }}
+          SYNC_BASE_PATH: ${{ secrets.SYNC_BASE_PATH }}
         run: |
+          : "${SYNC_USER:=deploy}"
+          : "${SYNC_BASE_PATH:=/home/deploy/dev-panel/storybook-stories}"
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${SYNC_USER}@${SYNC_HOST}" \
+            "mkdir -p '${SYNC_BASE_PATH}/${PROJECT_SLUG}'"
           rsync -av --delete \
             -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
             "${STORIES_PATH}/" \
-            "storybook-sync@${SYNC_HOST}:${PROJECT_SLUG}/"
+            "${SYNC_USER}@${SYNC_HOST}:${SYNC_BASE_PATH}/${PROJECT_SLUG}/"
 
       - name: Report
         env:
