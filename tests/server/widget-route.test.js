@@ -42,4 +42,9 @@ describe('GET /widget.js', () => {
     const r = await request(app).get('/widget.js');
     expect(r.headers['content-type']).toMatch(/javascript/);
   });
+
+  it('sets Cross-Origin-Resource-Policy: cross-origin (so other sites can embed)', async () => {
+    const r = await request(app).get('/widget.js');
+    expect(r.headers['cross-origin-resource-policy']).toBe('cross-origin');
+  });
 });

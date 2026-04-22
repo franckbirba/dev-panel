@@ -70,6 +70,10 @@ export function createServer(storagePath = './storage') {
   const widgetPath = path.join(__dirname, '..', '..', 'dist', 'widget.js');
   app.get('/widget.js', (req, res) => {
     res.type('application/javascript');
+    // Helmet defaults CORP to same-origin which blocks cross-origin <script>
+    // loads — the whole point of /widget.js is to be embedded by other
+    // staff sites (edms.epitools.bj etc.), so override to cross-origin.
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
     // sendFile's maxAge is authoritative — setting Cache-Control via res.set()
     // before sendFile() gets overridden by Express's 0-default maxAge logic.
     // Pass it as an option and Express emits the right header.
