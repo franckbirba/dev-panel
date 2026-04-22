@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, takeScreenshot } from './captureUtils.js';
+import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, takeScreenshot, takeDOMSnapshot } from './captureUtils.js';
 import { SessionRecorder } from './sessionRecorder.js';
 import { InspectOverlay } from './InspectOverlay.jsx';
 import { RegionSelect } from './RegionSelect.jsx';
@@ -21,7 +21,8 @@ const ANIMATIONS = `
 export function DevPanel({
   apiUrl = 'http://localhost:3030',
   apiKey,
-  position = 'bottom-right'
+  position = 'bottom-right',
+  getState = null
 }) {
   if (!apiKey) {
     console.warn('DevPanel: apiKey is required. Component will not render.');
@@ -123,6 +124,8 @@ export function DevPanel({
     if (metadata) {
       const summary = [
         metadata.screenshot ? 'screenshot' : null,
+        metadata.dom ? 'DOM snapshot' : null,
+        metadata.appState ? 'app state' : null,
         Array.isArray(metadata.console) && metadata.console.length > 0 ? `${metadata.console.length} console entries` : null,
         Array.isArray(metadata.network) && metadata.network.length > 0 ? `${metadata.network.length} network events` : null,
       ].filter(Boolean).join(' · ') || 'browser context';
@@ -148,6 +151,17 @@ export function DevPanel({
       ? `${name}: ${description.slice(0, 60)}`
       : description.slice(0, 80);
 
+    let appState = null;
+    if (typeof getState === 'function') {
+      try {
+        const raw = getState();
+        const serialized = JSON.stringify(raw);
+        appState = serialized.length > 200 * 1024
+          ? serialized.slice(0, 200 * 1024) + '... [truncated]'
+          : raw;
+      } catch { appState = null; }
+    }
+
     const metadata = {
       type: 'bug',
       title,
@@ -157,10 +171,12 @@ export function DevPanel({
       timestamp: Date.now(),
       component: componentInfo || null,
       console: consoleBuffer.current?.getEntries?.() ?? [],
-      network: networkInterceptor.current?.getEntries?.() ?? [],
+      network: networkInterceptor.current?.getErrors?.() ?? [],
       performance: perfMetrics.current?.getMetrics?.() ?? {},
       sessionReplay: sessionRecorder.current?.getEvents?.() ?? [],
-      screenshot: screenshot || null
+      screenshot: screenshot || null,
+      dom: takeDOMSnapshot(),
+      appState
     };
 
     try {
@@ -171,7 +187,7 @@ export function DevPanel({
     }
 
     reset();
-  }, [postCapture, componentInfo, screenshot, reset]);
+  }, [postCapture, componentInfo, screenshot, getState, reset]);
 
   const submitFeature = useCallback(async (title, description) => {
     setSubmitting(true);
