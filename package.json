@@ -15,7 +15,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "vite build",
+    "build:dashboard": "vite build",
+    "build:widget": "vite build --config vite.widget.config.js",
+    "build": "npm run build:dashboard && npm run build:widget",
     "dev:dashboard": "vite --config vite.config.js"
   },
   "keywords": [

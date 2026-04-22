@@ -41,7 +41,7 @@ jobs:
           # dist/ is required because docker-compose mounts ./dist:/app/dist;
           # without uploading the freshly-built bundle the container serves
           # the stale dashboard from whatever shipped on the VPS last time.
-          source: "infra/*,docker-compose.yml,Makefile,dist/dashboard/**"
+          source: "infra/*,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
           target: ~/dev-panel/
           strip_components: 0
       - uses: appleboy/ssh-action@v1

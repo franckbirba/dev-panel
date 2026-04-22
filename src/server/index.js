@@ -63,6 +63,19 @@ export function createServer(storagePath = './storage') {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const dashboardDistDir = path.join(__dirname, '..', '..', 'dist', 'dashboard');
 
+  // Standalone DevPanel widget bundle — served at /widget.js so any staff
+  // site can embed with a single <script> tag. 5-minute cache so bumps
+  // propagate quickly without explicit versioning. Spec:
+  // docs/superpowers/specs/2026-04-22-standalone-widget-design.md
+  const widgetPath = path.join(__dirname, '..', '..', 'dist', 'widget.js');
+  app.get('/widget.js', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.sendFile(widgetPath, (err) => {
+      if (err && !res.headersSent) res.status(404).send('widget not built');
+    });
+  });
+
   // Serve built dashboard assets with fallthrough
   app.use('/dashboard', express.static(dashboardDistDir, { fallthrough: true }));
 
