@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { StatusChip } from "@/components/status-chip";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,7 +20,7 @@ function DetailRow({ label, children }) {
   );
 }
 
-export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose }) {
+export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose, onTimeline }) {
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
@@ -77,6 +77,9 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
         <div className="flex-1" />
         {adminKey && (
           <div className="flex gap-2">
+            <button onClick={() => onTimeline && onTimeline(jobId)} className="text-[11px] font-mono text-info hover:underline cursor-pointer">
+              Timeline
+            </button>
             {job.status === "failed" && (
               <button onClick={() => jobAction("retry")} disabled={acting} className="text-[11px] font-mono text-info hover:underline cursor-pointer disabled:opacity-50">
                 Retry
@@ -99,10 +102,10 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose 
         <div className="flex flex-col">
           <DetailRow label="Name">{job.name}</DetailRow>
           <DetailRow label="Attempts">
-            {job.attempts}/{job.max_attempts || "∞"}
+            {job.attempts}/{job.max_attempts || "\u221e"}
           </DetailRow>
           <DetailRow label="Created">
-            {job.timestamp ? new Date(job.timestamp).toLocaleString() : "—"}
+            {job.timestamp ? new Date(job.timestamp).toLocaleString() : "\u2014"}
           </DetailRow>
           {job.processed_on && (
             <DetailRow label="Processed">

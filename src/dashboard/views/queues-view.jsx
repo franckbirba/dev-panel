@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { QueueCard } from '@/components/queue-card';
 import { JobList } from '@/components/job-list';
 import { JobDetail } from '@/components/job-detail';
+import { JobTimeline } from '@/components/job-timeline';
 import { useAdminEvents } from '../lib/use-admin-events.js';
 import { PipelinesPane } from '../components/PipelinesPane.jsx';
 
@@ -10,6 +11,7 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
   const [selectedQueue, setSelectedQueue] = useState(null);
   const [selectedJob, setSelectedJob] = useState(null);
   const [adminKey, setAdminKey] = useState(() => localStorage.getItem('devpanel_admin_key') || '');
+  const [timelineJobId, setTimelineJobId] = useState(null);
   useEffect(() => { localStorage.setItem('devpanel_admin_key', adminKey); }, [adminKey]);
   const liveEvents = useAdminEvents(adminKey);
 
@@ -40,7 +42,7 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
         >
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] animate-glow-pulse" />
           <span className="font-medium">Redis unreachable</span>
-          <span className="opacity-70">— waiting for connection</span>
+          <span className="opacity-70">\u2014 waiting for connection</span>
         </div>
       )}
 
@@ -67,14 +69,25 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
                   <JobList queueName={selectedQueue} apiUrl={apiUrl} apiKey={apiKey} onSelectJob={setSelectedJob} />
                 </div>
                 {selectedJob && (
-                  <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className={`${timelineJobId ? 'w-[400px]' : 'flex-1'} min-w-0 overflow-hidden shrink-0`}>
                     <JobDetail
                       queueName={selectedQueue}
                       jobId={selectedJob.id}
                       apiUrl={apiUrl}
                       apiKey={apiKey}
                       adminKey={adminKey}
-                      onClose={() => setSelectedJob(null)}
+                      onClose={() => { setSelectedJob(null); setTimelineJobId(null); }}
+                      onTimeline={(id) => setTimelineJobId(timelineJobId === id ? null : id)}
+                    />
+                  </div>
+                )}
+                {timelineJobId && (
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <JobTimeline
+                      jobId={timelineJobId}
+                      apiUrl={apiUrl}
+                      adminKey={adminKey}
+                      onClose={() => setTimelineJobId(null)}
                     />
                   </div>
                 )}
@@ -111,7 +124,7 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
           {adminKey && (
             <ul className="terminal-pane max-h-72 overflow-y-auto space-y-0.5">
               {liveEvents.length === 0 && (
-                <li className="opacity-50">waiting for events…</li>
+                <li className="opacity-50">waiting for events\u2026</li>
               )}
               {liveEvents.map((e, i) => (
                 <li key={i} className="py-0.5">
