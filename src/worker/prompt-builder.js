@@ -151,5 +151,41 @@ export function parseResult(output) {
     }
   }
 
+  const multilineCandidate = extractTrailingJsonObject(output);
+  if (multilineCandidate) {
+    try {
+      const parsed = JSON.parse(multilineCandidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const err = validate(parsed);
+        if (!err) return { ok: true, data: parsed };
+        return { ok: false, error: err, raw: parsed };
+      }
+    } catch { /* fall through */ }
+  }
+
   return { ok: false, error: 'no json object found in output' };
+}
+
+// Scan backwards from the last `}` to find the matching `{`,
+// so a pretty-printed JSON block at the end of stdout parses.
+// Ignores braces inside JSON strings (handles escaped quotes).
+function extractTrailingJsonObject(output) {
+  const end = output.lastIndexOf('}');
+  if (end < 0) return null;
+  let depth = 0;
+  let inString = false;
+  for (let i = end; i >= 0; i--) {
+    const ch = output[i];
+    if (inString) {
+      if (ch === '"' && output[i - 1] !== '\\') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '}') depth++;
+    else if (ch === '{') {
+      depth--;
+      if (depth === 0) return output.slice(i, end + 1);
+    }
+  }
+  return null;
 }

@@ -148,14 +148,16 @@ export function DevPanel({
       ? `${name}: ${description.slice(0, 60)}`
       : description.slice(0, 80);
 
+    const APP_STATE_MAX_BYTES = 200 * 1024;
     let appState = null;
     if (typeof getState === 'function') {
       try {
-        const raw = getState();
-        const serialized = JSON.stringify(raw);
-        appState = serialized.length > 200 * 1024
-          ? serialized.slice(0, 200 * 1024) + '... [truncated]'
-          : raw;
+        const serialized = JSON.stringify(getState());
+        if (serialized != null) {
+          appState = serialized.length > APP_STATE_MAX_BYTES
+            ? { truncated: true, json: serialized.slice(0, APP_STATE_MAX_BYTES) }
+            : { truncated: false, json: serialized };
+        }
       } catch { appState = null; }
     }
 

@@ -48,4 +48,19 @@ describe('parseResult', () => {
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/no json/i);
   });
+
+  it('accepts pretty-printed multi-line JSON at end of output', () => {
+    const pretty = JSON.stringify(VALID, null, 2);
+    const out = parseResult(`some preamble text\nmore stuff\n${pretty}`);
+    expect(out.ok).toBe(true);
+    expect(out.data.status).toBe('done');
+  });
+
+  it('handles braces inside strings without tripping the brace counter', () => {
+    const withBraces = { ...VALID, summary: 'see {bug} in {code}' };
+    const pretty = JSON.stringify(withBraces, null, 2);
+    const out = parseResult(`noise\n${pretty}\n`);
+    expect(out.ok).toBe(true);
+    expect(out.data.summary).toBe('see {bug} in {code}');
+  });
 });
