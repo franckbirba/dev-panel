@@ -745,6 +745,33 @@ export function createRouter(config = {}) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
+  // Back-compat shim for the @devpanel/react widget shipped in EDMS and other
+  // consumer apps. Old bundles still POST here with {role, content, metadata}.
+  // We write directly to the capture's thread, bypassing the Telegram forward
+  // (context messages aren't worth pushing to Shelly — only the creation
+  // itself gets forwarded, if ever).
+  router.post('/captures/:id/messages', authenticateProject, (req, res) => {
+    try {
+      const c = getCapture(req.params.id);
+      if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
+      const { content, role: reqRole, metadata } = req.body || {};
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({ error: 'content required' });
+      }
+      const ALLOWED_ROLES = new Set(['user', 'shelly', 'system', 'agent']);
+      const role = reqRole || 'user';
+      if (!ALLOWED_ROLES.has(role)) {
+        return res.status(400).json({ error: `invalid role: ${role}` });
+      }
+      const thread = getOrCreateThread('capture', c.id);
+      const id = appendThreadMessage({
+        thread_id: thread.thread_id, role, source: 'web', content,
+        metadata: metadata ?? null
+      });
+      res.json({ id, thread_id: thread.thread_id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
   router.patch('/captures/:id', authenticateProject, (req, res) => {
     try {
       const c = getCapture(req.params.id);
