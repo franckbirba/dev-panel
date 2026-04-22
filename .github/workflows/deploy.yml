@@ -117,3 +117,23 @@ jobs:
   # does not whitelist GitHub Actions runner IPs. Run scripts/deploy-agents.sh
   # locally from a machine that has the hetzner-vps SSH key. Mirrors the
   # equivalent CI step.
+
+  sync-devpanel-stories:
+    needs: deploy-core
+    uses: ./.github/workflows/sync-stories.yml
+    with:
+      project-slug: devpanel
+      stories-path: stories
+    secrets:
+      SYNC_SSH_KEY: ${{ secrets.STORYBOOK_SYNC_SSH_KEY }}
+      SYNC_HOST: ${{ secrets.VPS_HOST }}
+
+  sync-shared-stories:
+    needs: deploy-core
+    uses: ./.github/workflows/sync-stories.yml
+    with:
+      project-slug: shared
+      stories-path: stories-shared
+    secrets:
+      SYNC_SSH_KEY: ${{ secrets.STORYBOOK_SYNC_SSH_KEY }}
+      SYNC_HOST: ${{ secrets.VPS_HOST }}
