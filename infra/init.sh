@@ -31,7 +31,7 @@ stage() {
   fi
   if [ -f "$ENV_FILE" ]; then
     local file_val
-    file_val=$(grep "^${key}=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2-)
+    file_val=$(grep "^${key}=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true)
     if [ -n "$file_val" ]; then
       echo "$file_val"; return
     fi
@@ -53,7 +53,8 @@ OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
 # oauth2-proxy cookie secret must be exactly 16/24/32 bytes (base64, url-safe)
 OAUTH2_PROXY_COOKIE_SECRET_V="${OAUTH2_PROXY_COOKIE_SECRET:-}"
 if [ -z "$OAUTH2_PROXY_COOKIE_SECRET_V" ] && [ -f "$ENV_FILE" ]; then
-  OAUTH2_PROXY_COOKIE_SECRET_V=$(grep "^OAUTH2_PROXY_COOKIE_SECRET=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2-)
+  # `|| true` so `set -o pipefail` doesn't kill us when the key isn't in $ENV_FILE yet
+  OAUTH2_PROXY_COOKIE_SECRET_V=$(grep "^OAUTH2_PROXY_COOKIE_SECRET=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true)
 fi
 if [ -z "$OAUTH2_PROXY_COOKIE_SECRET_V" ]; then
   OAUTH2_PROXY_COOKIE_SECRET_V=$(openssl rand -base64 32 | tr -- '+/' '-_' | tr -d '=' | head -c 32)
