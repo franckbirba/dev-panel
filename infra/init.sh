@@ -47,6 +47,17 @@ PLANE_MINIO_ROOT_PASSWORD_V=$(stage PLANE_MINIO_ROOT_PASSWORD)
 PENPOT_SECRET_KEY_V=$(stage PENPOT_SECRET_KEY)
 PENPOT_DB_PASSWORD_V=$(stage PENPOT_DB_PASSWORD)
 PLANE_API_KEY_V=$(stage PLANE_API_KEY)
+OAUTH2_PROXY_CLIENT_ID_V=$(stage OAUTH2_PROXY_CLIENT_ID)
+OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
+
+# oauth2-proxy cookie secret must be exactly 16/24/32 bytes (base64, url-safe)
+OAUTH2_PROXY_COOKIE_SECRET_V="${OAUTH2_PROXY_COOKIE_SECRET:-}"
+if [ -z "$OAUTH2_PROXY_COOKIE_SECRET_V" ] && [ -f "$ENV_FILE" ]; then
+  OAUTH2_PROXY_COOKIE_SECRET_V=$(grep "^OAUTH2_PROXY_COOKIE_SECRET=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2-)
+fi
+if [ -z "$OAUTH2_PROXY_COOKIE_SECRET_V" ]; then
+  OAUTH2_PROXY_COOKIE_SECRET_V=$(openssl rand -base64 32 | tr -- '+/' '-_' | tr -d '=' | head -c 32)
+fi
 
 # ── Generate .env ───────────────────────────────────────────────────────────
 
@@ -108,6 +119,13 @@ PLANE_API_KEY=${PLANE_API_KEY_V}
 # Penpot
 PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY_V}
 PENPOT_DB_PASSWORD=${PENPOT_DB_PASSWORD_V}
+
+# oauth2-proxy — Google SSO for traefik dashboard, bull-board, storybook
+# Client ID/secret from Google Cloud Console (OAuth 2.0 Web application).
+# Redirect URI registered there must be: https://auth.devpanl.dev/oauth2/callback
+OAUTH2_PROXY_CLIENT_ID=${OAUTH2_PROXY_CLIENT_ID_V}
+OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET_V}
+OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET_V}
 ENVEOF
 
 # ── Generate htpasswd for Traefik (only in production) ──────────────────────

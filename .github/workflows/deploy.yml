@@ -41,7 +41,7 @@ jobs:
           # dist/ is required because docker-compose mounts ./dist:/app/dist;
           # without uploading the freshly-built bundle the container serves
           # the stale dashboard from whatever shipped on the VPS last time.
-          source: "infra/*,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
+          source: "infra/*,infra/config/**,infra/nginx/**,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
           target: ~/dev-panel/
           strip_components: 0
       - uses: appleboy/ssh-action@v1
@@ -54,7 +54,8 @@ jobs:
             AFFINE_DB_PASSWORD,PLANE_DB_PASSWORD,PLANE_SECRET_KEY,
             PLANE_MINIO_ROOT_USER,PLANE_MINIO_ROOT_PASSWORD,
             PENPOT_SECRET_KEY,PENPOT_DB_PASSWORD,
-            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,AUTHORIZED_TELEGRAM_USER_ID,TRAEFIK_USER,TRAEFIK_PASS
+            TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,AUTHORIZED_TELEGRAM_USER_ID,TRAEFIK_USER,TRAEFIK_PASS,
+            OAUTH2_PROXY_CLIENT_ID,OAUTH2_PROXY_CLIENT_SECRET
           script: |
             cd ~/dev-panel
 
@@ -74,6 +75,8 @@ jobs:
             export AUTHORIZED_TELEGRAM_USER_ID="${AUTHORIZED_TELEGRAM_USER_ID:-$TELEGRAM_CHAT_ID}"
             export TRAEFIK_USER="$TRAEFIK_USER"
             export TRAEFIK_PASS="$TRAEFIK_PASS"
+            export OAUTH2_PROXY_CLIENT_ID="$OAUTH2_PROXY_CLIENT_ID"
+            export OAUTH2_PROXY_CLIENT_SECRET="$OAUTH2_PROXY_CLIENT_SECRET"
             # Private LAN IP for redis/postgres port binding (see docker-compose.yml)
             export LAN_HOST="10.0.0.2"
 
@@ -114,6 +117,8 @@ jobs:
           AUTHORIZED_TELEGRAM_USER_ID: ${{ secrets.AUTHORIZED_TELEGRAM_USER_ID }}
           TRAEFIK_USER: ${{ secrets.TRAEFIK_USER }}
           TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}
+          OAUTH2_PROXY_CLIENT_ID: ${{ secrets.OAUTH2_PROXY_CLIENT_ID }}
+          OAUTH2_PROXY_CLIENT_SECRET: ${{ secrets.OAUTH2_PROXY_CLIENT_SECRET }}
 
   # deploy-agents intentionally omitted from CI — the agents-node firewall
   # does not whitelist GitHub Actions runner IPs. Run scripts/deploy-agents.sh

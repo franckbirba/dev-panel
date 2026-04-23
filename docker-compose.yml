@@ -49,8 +49,48 @@ services:
       - "traefik.http.routers.dashboard.tls=true"
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.routers.dashboard.service=api@internal"
-      - "traefik.http.routers.dashboard.middlewares=auth"
-      - "traefik.http.middlewares.auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+      - "traefik.http.routers.dashboard.middlewares=oauth-google@docker"
+
+  # ──────────────────────────────────────────────────────────────────────
+  # oauth2-proxy — Google SSO gate for internal admin UIs
+  # Fronts: traefik dashboard, bull-board, storybook (ui.devpanl.dev).
+  # AFFiNE uses its own app login and is NOT behind this proxy.
+  # ──────────────────────────────────────────────────────────────────────
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: devpanel-oauth2-proxy
+    profiles: [core, all]
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_PROVIDER: google
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_DOMAINS: .devpanl.dev
+      OAUTH2_PROXY_WHITELIST_DOMAINS: .devpanl.dev
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/oauth2-proxy/emails.txt
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_REDIRECT_URL: https://auth.devpanl.dev/oauth2/callback
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+    volumes:
+      - ./infra/config/oauth2-proxy-emails.txt:/etc/oauth2-proxy/emails.txt:ro
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.oauth2proxy.rule=Host(`auth.devpanl.dev`)"
+      - "traefik.http.routers.oauth2proxy.entrypoints=websecure"
+      - "traefik.http.routers.oauth2proxy.tls=true"
+      - "traefik.http.routers.oauth2proxy.tls.certresolver=letsencrypt"
+      - "traefik.http.services.oauth2proxy.loadbalancer.server.port=4180"
+      # ForwardAuth middleware used by every gated service
+      - "traefik.http.middlewares.oauth-google.forwardauth.address=http://oauth2-proxy:4180/oauth2/auth"
+      - "traefik.http.middlewares.oauth-google.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.oauth-google.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,Authorization"
 
   redis:
     image: redis:7-alpine
@@ -185,9 +225,7 @@ services:
       - "traefik.http.routers.affine.entrypoints=websecure"
       - "traefik.http.routers.affine.tls=true"
       - "traefik.http.routers.affine.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.affine.middlewares=affine-auth"
       - "traefik.http.services.affine.loadbalancer.server.port=3010"
-      - "traefik.http.middlewares.affine-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
 
   # ══════════════════════════════════════════════════════════════════════════
   # PLANE STACK
@@ -488,8 +526,7 @@ services:
       - "traefik.http.routers.bullboard.tls=true"
       - "traefik.http.routers.bullboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
-      - "traefik.http.routers.bullboard.middlewares=bullboard-auth"
-      - "traefik.http.middlewares.bullboard-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+      - "traefik.http.routers.bullboard.middlewares=oauth-google@docker"
 
   # ──────────────────────────────────────────────────────────────────────
   # Storybook — shared UI catalogue for every studio project
@@ -511,8 +548,7 @@ services:
       - "traefik.http.routers.storybook.tls=true"
       - "traefik.http.routers.storybook.tls.certresolver=letsencrypt"
       - "traefik.http.services.storybook.loadbalancer.server.port=6006"
-      - "traefik.http.routers.storybook.middlewares=storybook-auth"
-      - "traefik.http.middlewares.storybook-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+      - "traefik.http.routers.storybook.middlewares=oauth-google@docker"
 
 # ══════════════════════════════════════════════════════════════════════════
 # VOLUMES & NETWORKS

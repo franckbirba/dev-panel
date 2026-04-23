@@ -6,6 +6,7 @@ storage/
 .env.local
 .env.production
 .htpasswd
+client_secret_*.json
 .worktrees/
 .playwright-mcp/
 .claude/skills/ui-*/
