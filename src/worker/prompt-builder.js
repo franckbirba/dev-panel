@@ -15,9 +15,23 @@ export function buildPrompt(jobData) {
     workflow = null, workflow_instance_id = null, workflow_revision = null,
     parent_workflow = null, parent_revision = null, failed_step = null,
     issues_found = [], blockers = [],
-    plane = {}, work_item = {}, context = {},
+    plane = {}, work_item: work_itemRaw, task = {}, context: contextRaw = {},
     required_skills = [], allowed_mcp = [], memory_namespace = 'dev-panel'
   } = jobData;
+
+  // Legacy dispatches (telegram→shelly) carry data.task.{id,title,description,branch}.
+  // New dispatches carry data.work_item + data.context. Fall back to task.*
+  // when work_item / context don't fill the field.
+  const wi = work_itemRaw || {};
+  const work_item = {
+    ...wi,
+    title: wi.title ?? task?.title,
+    description: wi.description ?? task?.description
+  };
+  const context = {
+    ...contextRaw,
+    branch: contextRaw?.branch ?? task?.branch
+  };
 
   const sections = [];
 

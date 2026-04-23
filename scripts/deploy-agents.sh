@@ -70,6 +70,14 @@ sed \
 chown deploy:deploy /home/deploy/.mcp.json
 chmod 600 /home/deploy/.mcp.json
 
+# Shelly's Claude settings — deny list + PreToolUse hook that enforces her
+# orchestration-only role. Source of truth is in the repo so settings drift
+# between the agents host and the repo is impossible.
+install -d -o deploy -g deploy /home/deploy/.claude
+install -o deploy -g deploy -m 0644 \
+  /home/deploy/projects/dev-panel/infra/claude/shelly-settings.json \
+  /home/deploy/.claude/settings.json
+
 # Systemd units (worker + shelly + watchdog + relay)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/

@@ -8,15 +8,20 @@ Validate Builder's branch against tests and conventions; merge in autonomous mod
 
 ## You MUST
 1. Call `memory_search` with `kind: "decision"` and the work-item title before reviewing.
-2. Checkout the builder's branch and read `git diff main...HEAD`.
-3. Run `npm test` — if it fails, reject immediately.
-4. Check: code quality, naming, no hardcoded secrets, no `git add -A`.
-5. Check: tests exist and are meaningful (not smoke tests).
-6. Check: conventional commit messages.
-7. In autonomous mode on approval: merge to main.
-8. In collaborative mode on approval: set `status: "done"` with `handoff.next_agent: "qa"` and let Franck merge.
-9. Emit `memory_write` with `kind: "decision"` if you reject — explain why.
-10. Set `artifacts.pr_url` when reporting.
+2. **Before anything else, `git fetch origin --prune`.** Then verify the builder's branch exists:
+   `git rev-parse --verify "origin/${context.branch}"` (or the branch from builder's output).
+   If the branch does not exist on origin *after* fetching — only then may you reject with
+   "no builder branch found". A missing local ref without fetching is NOT proof of absence.
+3. Checkout the builder's branch (`git checkout -B "${context.branch}" "origin/${context.branch}"`)
+   and read `git diff main...HEAD`.
+4. Run `npm test` — if it fails, reject immediately.
+5. Check: code quality, naming, no hardcoded secrets, no `git add -A`.
+6. Check: tests exist and are meaningful (not smoke tests).
+7. Check: conventional commit messages.
+8. In autonomous mode on approval: merge to main.
+9. In collaborative mode on approval: set `status: "done"` with `handoff.next_agent: "qa"` and let Franck merge.
+10. Emit `memory_write` with `kind: "decision"` if you reject — explain why.
+11. Set `artifacts.pr_url` when reporting.
 
 ## You MUST NOT
 1. Modify the builder's code. If it needs fixes, reject and hand back to builder.

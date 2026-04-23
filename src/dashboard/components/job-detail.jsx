@@ -134,19 +134,30 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose,
             <pre className="mt-2 p-3 bg-background rounded-lg text-[11px] font-mono text-foreground/80 whitespace-pre-wrap wrap-break-word">{JSON.stringify(job.data, null, 2)}</pre>
           </div>
 
-          {/* Stacktrace */}
-          {job.stacktrace && job.stacktrace.length > 0 && (
+          {/* Stacktrace + failed reason: only for jobs actually in a failed state.
+              BullMQ retains failedReason/stacktrace across attempts, so a retry
+              that ultimately succeeds (status=completed) would otherwise show
+              a stale "Error" box. See also job-list.jsx. */}
+          {job.status === 'failed' && job.stacktrace && job.stacktrace.length > 0 && (
             <div className="mt-4">
               <span className="text-error text-[11px] font-mono font-semibold uppercase tracking-wide">Stacktrace</span>
               <pre className="mt-2 p-3 bg-error/5 border border-error/20 rounded-lg text-[11px] font-mono text-error/80 whitespace-pre-wrap wrap-break-word">{job.stacktrace.join("\n")}</pre>
             </div>
           )}
 
-          {/* Failed reason */}
-          {job.failed_reason && (
+          {job.status === 'failed' && job.failed_reason && (
             <div className="mt-4">
               <span className="text-error text-[11px] font-mono font-semibold uppercase tracking-wide">Error</span>
               <p className="mt-1 text-error text-[12px] font-mono">{job.failed_reason}</p>
+            </div>
+          )}
+
+          {job.status !== 'failed' && (job.failed_reason || (job.stacktrace?.length > 0)) && (
+            <div className="mt-4">
+              <span className="text-muted-foreground text-[11px] font-mono font-semibold uppercase tracking-wide">
+                Earlier attempt failed ({job.attempts || 1} total)
+              </span>
+              <p className="mt-1 text-muted-foreground text-[11px] font-mono">{job.failed_reason}</p>
             </div>
           )}
 

@@ -1,0 +1,40 @@
+{
+  "enabledPlugins": {
+    "telegram@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "permissions": {
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash",
+      "Read",
+      "Grep",
+      "Glob",
+      "Agent",
+      "WebFetch"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit|Bash|Read|Grep|Glob|Agent|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Shelly is orchestration-only. No filesystem (Read/Grep/Glob), no code tools (Edit/Write/NotebookEdit/Bash), no subagents (Agent), no raw web (WebFetch). If an MCP tool is missing or broken, tell Franck and open a ticket — do not patch, explore, or work around it.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}

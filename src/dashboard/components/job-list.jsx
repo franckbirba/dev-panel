@@ -27,7 +27,7 @@ function JobRow({ job, onSelect }) {
           {job.attempts}/{job.max_attempts || "∞"}
         </Badge>
       )}
-      {job.failed_reason && (
+      {job.failed_reason && job.status === 'failed' && (
         <span className="text-error text-[10px] font-mono truncate max-w-[200px]">{job.failed_reason}</span>
       )}
     </button>
