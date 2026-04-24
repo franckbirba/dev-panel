@@ -1,5 +1,6 @@
 // src/server/workflow-instances.js
 import { getMasterDatabase } from './db.js';
+import { mirror } from './master-mirror.js';
 
 export function createInstance({
   work_item_id, workflow_name, current_step,
@@ -16,6 +17,11 @@ export function createInstance({
   ).run(work_item_id, workflow_name, current_step,
         module_id, cycle_id, now, now,
         metadata ? JSON.stringify(metadata) : null);
+  mirror('/admin/mirror/workflow-instances/create', {
+    work_item_id, workflow_name, current_step,
+    module_id, cycle_id, started_at: now, last_event_at: now,
+    metadata: metadata ?? null
+  });
   return info.lastInsertRowid;
 }
 
@@ -49,6 +55,17 @@ export function updateInstance({ work_item_id, workflow_name }, patch) {
         typeof fields.metadata === 'string' ? fields.metadata :
           (fields.metadata ? JSON.stringify(fields.metadata) : null),
         current.id);
+  mirror('/admin/mirror/workflow-instances/update', {
+    work_item_id, workflow_name,
+    revision: fields.revision,
+    current_step: fields.current_step,
+    status: fields.status,
+    last_event_at: fields.last_event_at,
+    exhausted_at: fields.exhausted_at ?? null,
+    last_job_id: fields.last_job_id ?? null,
+    metadata: typeof fields.metadata === 'string' ? fields.metadata :
+      (fields.metadata ? JSON.stringify(fields.metadata) : null)
+  });
   return loadInstanceById(current.id);
 }
 

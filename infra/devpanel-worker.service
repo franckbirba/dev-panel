@@ -32,6 +32,11 @@ Environment=PG_DATABASE=agent_memory
 Environment=AGENT_MEMORY_NAMESPACE=dev-panel
 Environment=VOYAGE_MODEL=voyage-code-3
 Environment=WORKER_EVENTS_URL=https://devpanl.dev/api/admin/events/publish
+# Mirror master-db writes into the services dashboard SQLite (bridge until
+# orchestration tables move to shared Postgres). Worker keeps its local SQLite
+# for engine reads; every createInstance/updateInstance/appendEvent/logStep
+# fires a best-effort POST to DEVPANEL_REMOTE_MASTER.
+Environment=DEVPANEL_REMOTE_MASTER=https://devpanl.dev/api
 
 # Plane REST config (non-secrets). PLANE_API_KEY is in .env.agent.
 Environment=PLANE_BASE_URL=https://plane.devpanl.dev

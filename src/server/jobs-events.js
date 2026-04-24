@@ -2,6 +2,7 @@
 // See src/worker/stream-parser.js for the event shape.
 
 import { getMasterDatabase } from './db.js';
+import { mirror } from './master-mirror.js';
 
 // Per-job SSE subscriber pools. Live tail-follow uses these — see
 // GET /api/admin/jobs/:id/events?stream=1 in routes.js.
@@ -21,6 +22,9 @@ export function appendEvent({ job_id, seq, event_type, event_subtype = null, pay
     return null;
   }
   const row = { job_id, seq, event_type, event_subtype, payload_json: payloadJson, created_at: new Date().toISOString() };
+  mirror('/admin/mirror/job-events', {
+    job_id, seq, event_type, event_subtype, payload: payloadJson
+  });
   broadcastToSubscribers(job_id, row);
   return row;
 }
