@@ -23,6 +23,23 @@ const STATUS_TONE = {
   dropped:  'text-muted-foreground/60 border-border',
 };
 
+// djb2 string hash → HSL hue. Same env string always gets the same pill color
+// across dashboards, without hardcoding a palette. Saturation/lightness are
+// fixed so pills look consistent against the surface palette.
+function envHue(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+function envPillStyle(env) {
+  const hue = envHue(env);
+  return {
+    backgroundColor: `hsl(${hue}, 55%, 20%)`,
+    color:           `hsl(${hue}, 75%, 82%)`,
+    border:          `1px solid hsl(${hue}, 55%, 30%)`
+  };
+}
+
 function StatusChip({ status }) {
   return (
     <Badge variant={STATUS_VARIANT[status] || 'outline'} className={STATUS_TONE[status] || ''}>
@@ -49,6 +66,7 @@ export function CapturesView({ apiUrl, apiKey }) {
   const [error, setError]       = useState(null);
   const [busy, setBusy]         = useState(false);
   const [reporterFilter, setReporterFilter] = useState('');
+  const [envFilter, setEnvFilter] = useState('');
   const captureInputRef = useRef(null);
   const replyInputRef   = useRef(null);
   const threadEndRef    = useRef(null);
@@ -61,8 +79,12 @@ export function CapturesView({ apiUrl, apiKey }) {
       const fullBody = await full.json();
       setAllList(fullBody.captures);
 
-      if (reporterFilter) {
-        const r = await fetch(`${apiUrl}/api/captures?reporter_id=${encodeURIComponent(reporterFilter)}`, { headers: { 'X-API-Key': apiKey } });
+      const qs = [];
+      if (reporterFilter) qs.push(`reporter_id=${encodeURIComponent(reporterFilter)}`);
+      if (envFilter)      qs.push(`environment=${encodeURIComponent(envFilter)}`);
+
+      if (qs.length > 0) {
+        const r = await fetch(`${apiUrl}/api/captures?${qs.join('&')}`, { headers: { 'X-API-Key': apiKey } });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const { captures } = await r.json();
         setList(captures);
@@ -71,7 +93,7 @@ export function CapturesView({ apiUrl, apiKey }) {
       }
       setError(null);
     } catch (e) { setError(e.message); }
-  }, [apiUrl, apiKey, reporterFilter]);
+  }, [apiUrl, apiKey, reporterFilter, envFilter]);
 
   const loadThread = useCallback(async (id) => {
     if (!id || !apiKey) return;
@@ -168,6 +190,10 @@ export function CapturesView({ apiUrl, apiKey }) {
     }, new Map())
   );
 
+  const environments = Array.from(new Set(
+    allList.map(c => c.environment).filter(Boolean)
+  )).sort();
+
   return (
     <div className="h-full flex flex-col">
       {/* Header + hero composer */}
@@ -218,6 +244,18 @@ export function CapturesView({ apiUrl, apiKey }) {
                 ))}
               </select>
             )}
+            {environments.length > 0 && (
+              <select
+                value={envFilter}
+                onChange={(e) => setEnvFilter(e.target.value)}
+                className="text-[11px] bg-transparent border border-[var(--color-border-subtle)] rounded px-1 py-0.5 normal-case font-normal tracking-normal"
+              >
+                <option value="">all envs</option>
+                {environments.map((env) => (
+                  <option key={env} value={env}>{env}</option>
+                ))}
+              </select>
+            )}
           </div>
           {list.length === 0 && (
             <div className="p-6 text-center text-[12px] text-[var(--color-foreground-faint)]">
@@ -241,6 +279,14 @@ export function CapturesView({ apiUrl, apiKey }) {
                   {(c.reporter_name || c.reporter_email) && (
                     <span className="text-[10.5px] text-[var(--color-foreground-muted)] truncate max-w-[120px]">
                       {c.reporter_name || c.reporter_email}
+                    </span>
+                  )}
+                  {c.environment && (
+                    <span
+                      className="text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-wide"
+                      style={envPillStyle(c.environment)}
+                    >
+                      {c.environment}
                     </span>
                   )}
                   <span className="text-[10.5px] text-[var(--color-foreground-faint)] font-mono ml-auto">{timeAgo(c.updated_at)}</span>
