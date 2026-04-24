@@ -183,6 +183,32 @@ export function initMasterDatabase(storagePath = './storage') {
       ON thread_messages(telegram_message_id)
       WHERE telegram_message_id IS NOT NULL;
 
+    CREATE TABLE IF NOT EXISTS telegram_drops (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      raw_text             TEXT NOT NULL,
+      role                 TEXT,
+      telegram_message_id  INTEGER,
+      reason               TEXT NOT NULL DEFAULT 'no_tag',
+      created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS telegram_drops_recent ON telegram_drops(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS telegram_outbound (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_message_id    INTEGER,
+      subject_type         TEXT,
+      subject_id           TEXT,
+      text                 TEXT NOT NULL,
+      transport            TEXT NOT NULL,
+      status               TEXT NOT NULL,
+      error                TEXT,
+      attempts             INTEGER NOT NULL DEFAULT 0,
+      created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+      delivered_at         DATETIME
+    );
+    CREATE INDEX IF NOT EXISTS telegram_outbound_recent ON telegram_outbound(created_at DESC);
+    CREATE INDEX IF NOT EXISTS telegram_outbound_status ON telegram_outbound(status, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS deploy_events (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id    TEXT NOT NULL,

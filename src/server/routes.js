@@ -49,6 +49,68 @@ import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket } from './alerts.js';
 
+// Forward a dashboard->Telegram message with delivery tracking. Tries webhook
+// first (Shelly's tmux relay), then Bot API. Every attempt writes a
+// telegram_outbound row so silent failures surface in the admin UI.
+async function forwardToTelegram({ text, thread_message_id, subject_type, subject_id }) {
+  const db = getMasterDatabase();
+  const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat = process.env.TELEGRAM_CHAT_ID;
+  const transport = url ? 'webhook' : (token && chat ? 'bot_api' : 'none');
+  const row = db.prepare(
+    `INSERT INTO telegram_outbound
+     (thread_message_id, subject_type, subject_id, text, transport, status, attempts)
+     VALUES (?, ?, ?, ?, ?, 'pending', 0)`
+  ).run(thread_message_id ?? null, subject_type ?? null, subject_id ?? null, text, transport);
+  const outboundId = row.lastInsertRowid;
+  if (transport === 'none') {
+    db.prepare(
+      `UPDATE telegram_outbound SET status='failed', error=?, attempts=1 WHERE id=?`
+    ).run('no transport configured (set SHELLY_TELEGRAM_WEBHOOK or TELEGRAM_BOT_TOKEN+CHAT_ID)', outboundId);
+    const { broadcast: b } = await import('./sse.js');
+    b('telegram:outbound_failed', { id: outboundId, reason: 'no_transport' });
+    return;
+  }
+  const attempt = async (kind, runFetch) => {
+    try {
+      const r = await runFetch();
+      if (!r.ok) {
+        const err = await r.text().catch(() => '');
+        throw new Error(`${kind} ${r.status}: ${err.slice(0, 200)}`);
+      }
+      db.prepare(
+        `UPDATE telegram_outbound SET status='delivered', delivered_at=CURRENT_TIMESTAMP,
+         attempts=attempts+1, transport=? WHERE id=?`
+      ).run(kind, outboundId);
+      return true;
+    } catch (err) {
+      db.prepare(
+        `UPDATE telegram_outbound SET status='pending', error=?, attempts=attempts+1 WHERE id=?`
+      ).run(err.message, outboundId);
+      return false;
+    }
+  };
+  if (url) {
+    const ok = await attempt('webhook', () =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+    );
+    if (ok) return;
+  }
+  if (token && chat) {
+    const ok = await attempt('bot_api', () =>
+      fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chat, text })
+      })
+    );
+    if (ok) return;
+  }
+  db.prepare(`UPDATE telegram_outbound SET status='failed' WHERE id=?`).run(outboundId);
+  const { broadcast: b } = await import('./sse.js');
+  b('telegram:outbound_failed', { id: outboundId });
+}
+
 // ============================================================================
 // MIDDLEWARE - API Key Auth
 // ============================================================================
@@ -1457,6 +1519,50 @@ export function createRouter(config = {}) {
     res.type('text/plain').send(readFileSync(path, 'utf8'));
   });
 
+  // Untagged Telegram inbound (was silently dropped by the MCP before).
+  // The MCP posts here so Franck can see what Shelly received but didn't route.
+  router.post('/admin/telegram-drops', authenticateAdmin, express.json(), (req, res) => {
+    try {
+      const { raw_text, role, telegram_message_id } = req.body || {};
+      if (!raw_text) return res.status(400).json({ error: 'raw_text required' });
+      const db = getMasterDatabase();
+      const info = db.prepare(
+        `INSERT INTO telegram_drops (raw_text, role, telegram_message_id, reason)
+         VALUES (?, ?, ?, 'no_tag')`
+      ).run(raw_text, role ?? null, telegram_message_id ?? null);
+      res.json({ id: info.lastInsertRowid });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get('/admin/telegram-drops', authenticateAdmin, (req, res) => {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const db = getMasterDatabase();
+    const rows = db.prepare(
+      `SELECT id, raw_text, role, telegram_message_id, reason, created_at
+       FROM telegram_drops ORDER BY id DESC LIMIT ?`
+    ).all(limit);
+    res.json({ drops: rows });
+  });
+
+  // Recent outbound Telegram forward attempts + their delivery status.
+  router.get('/admin/telegram-outbound', authenticateAdmin, (req, res) => {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const status = req.query.status;
+    const db = getMasterDatabase();
+    const rows = status
+      ? db.prepare(
+          `SELECT id, thread_message_id, subject_type, subject_id, text, transport, status, error, attempts, created_at, delivered_at
+           FROM telegram_outbound WHERE status = ? ORDER BY id DESC LIMIT ?`
+        ).all(status, limit)
+      : db.prepare(
+          `SELECT id, thread_message_id, subject_type, subject_id, text, transport, status, error, attempts, created_at, delivered_at
+           FROM telegram_outbound ORDER BY id DESC LIMIT ?`
+        ).all(limit);
+    res.json({ messages: rows });
+  });
+
   router.get('/admin/workflows/instances', authenticateAdmin, async (req, res) => {
     const { listActive, listByCycle } = await import('./workflow-instances.js');
     const rows = req.query.cycle_id ? listByCycle(req.query.cycle_id) : listActive();
@@ -1561,21 +1667,13 @@ export function createRouter(config = {}) {
       });
       // Forward to Telegram with tag prefix — ONLY for web-source messages.
       // Admin-origin messages are already from Telegram (MCP inbound); re-forwarding
-      // would create a loop.
+      // would create a loop. Delivery is tracked in telegram_outbound so failures
+      // stop being silent.
       if (source === 'web') {
         const text = prependTag(subject_type, subject_id, content);
-        const url = process.env.SHELLY_TELEGRAM_WEBHOOK;
-        const token = process.env.TELEGRAM_BOT_TOKEN;
-        const chat  = process.env.TELEGRAM_CHAT_ID;
-        if (url) {
-          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-            .catch(err => console.error('[threads] webhook send failed:', err.message));
-        } else if (token && chat) {
-          fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chat, text })
-          }).catch(err => console.error('[threads] telegram API send failed:', err.message));
-        }
+        forwardToTelegram({
+          text, thread_message_id: id, subject_type, subject_id
+        }).catch(err => console.error('[threads] telegram forward failed:', err.message));
       }
       res.json({ id, thread_id: thread.thread_id });
     } catch (e) {

@@ -60,12 +60,33 @@ describe('MCP thread_append', () => {
     });
   });
 
-  it('refuses untagged text', async () => {
+  it('defaults role to "user" when caller omits it (inbound Telegram = Franck)', async () => {
+    const result = await handleThreadAppend({
+      raw_text: '[thread:work_item/WI-1] hey shelly',
+      telegram_message_id: 9999
+    });
+    expect(result.appended).toBe(true);
+    expect(result.role).toBe('user');
+
+    const db = getMasterDatabase();
+    const thread = getOrCreateThread('work_item', 'WI-1');
+    const msg = db.prepare(
+      `SELECT role FROM thread_messages WHERE thread_id=? AND telegram_message_id=?`
+    ).get(thread.thread_id, 9999);
+    expect(msg.role).toBe('user');
+  });
+
+  it('records untagged messages to telegram_drops instead of silently discarding', async () => {
     const result = await handleThreadAppend({
       raw_text: 'no tag here', role: 'shelly', telegram_message_id: 1
     });
     expect(result.appended).toBe(false);
     expect(result.reason).toMatch(/no tag/i);
+
+    const db = getMasterDatabase();
+    const drops = db.prepare(`SELECT raw_text, reason FROM telegram_drops`).all();
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toMatchObject({ raw_text: 'no tag here', reason: 'no_tag' });
   });
 
   it('returns a useful error when the subject does not exist', async () => {

@@ -689,20 +689,25 @@ server.tool(
 
 export async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
   const parsed = parseTag(raw_text);
-  if (!parsed) return { appended: false, reason: 'no tag in message' };
-  // This MCP runs on the agents host; the dashboard DB lives on services.
-  // POST to the remote API with the admin key so the thread message lands
-  // in the one true DB (not the MCP's local SQLite, which would diverge).
+  if (!parsed) {
+    await recordUntaggedDrop({ raw_text, role, telegram_message_id });
+    return { appended: false, reason: 'no tag in message' };
+  }
   const base = process.env.API_BASE || 'http://localhost:3030';
   const adminKey = process.env.ADMIN_API_KEY;
   if (!adminKey) return { appended: false, reason: 'ADMIN_API_KEY not set' };
+  // Default role = 'user'. thread_append is called by the Telegram plugin when
+  // an inbound message arrives — inbound means Franck typing. Shelly's own
+  // replies go through a separate path. Previous 'shelly' default caused every
+  // Franck message to show up in the dashboard as if Shelly authored it.
+  const resolvedRole = role || 'user';
   try {
     const r = await fetch(`${base}/api/threads/${parsed.subject_type}/${parsed.subject_id}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
       body: JSON.stringify({
         content: parsed.body,
-        role: role || 'shelly',
+        role: resolvedRole,
         source: 'telegram',
         telegram_message_id
       })
@@ -712,18 +717,31 @@ export async function handleThreadAppend({ raw_text, role, telegram_message_id }
       return { appended: false, reason: `api ${r.status}: ${err.slice(0, 200)}` };
     }
     const data = await r.json();
-    return { appended: true, thread_id: data.thread_id };
+    return { appended: true, thread_id: data.thread_id, role: resolvedRole };
   } catch (err) {
     return { appended: false, reason: `fetch failed: ${err.message}` };
   }
 }
 
+async function recordUntaggedDrop({ raw_text, role, telegram_message_id }) {
+  const base = process.env.API_BASE || 'http://localhost:3030';
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return;
+  try {
+    await fetch(`${base}/api/admin/telegram-drops`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+      body: JSON.stringify({ raw_text, role: role || null, telegram_message_id: telegram_message_id ?? null })
+    }).catch(() => {});
+  } catch {}
+}
+
 server.tool(
   'thread_append',
-  'Forward a tagged Telegram message into the dashboard\'s thread for the matching subject. Use when the user (or another bot) sends a message starting with [thread:type/id].',
+  'Forward a tagged Telegram message into the dashboard\'s thread for the matching subject. Use when the user (or another bot) sends a message starting with [thread:type/id]. Default role is "user" (Franck typing from Telegram); Shelly must pass role="shelly" explicitly when relaying her own replies.',
   {
     raw_text: z.string().describe('Full message text including the [thread:type/id] prefix'),
-    role: z.string().default('shelly').describe('user | shelly | agent'),
+    role: z.string().default('user').describe('user | shelly | agent — defaults to user (inbound Telegram = Franck)'),
     telegram_message_id: z.number().describe('Telegram message_id for dedup')
   },
   async ({ raw_text, role, telegram_message_id }) => {
