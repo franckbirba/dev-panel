@@ -1699,6 +1699,50 @@ export function createRouter(config = {}) {
     res.json({ messages: rows });
   });
 
+  // Per-agent roll-up: which agents have run, how often, success rate, last-seen.
+  // Feeds /dashboard/agents. Aggregates off agent_job_log which the worker
+  // mirrors here from hetzner in real time.
+  router.get('/admin/agents', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const rows = db.prepare(`
+        SELECT
+          agent,
+          COUNT(*) AS total,
+          SUM(CASE WHEN status='ok'    THEN 1 ELSE 0 END) AS ok,
+          SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error,
+          SUM(CASE WHEN status='stub'  THEN 1 ELSE 0 END) AS stub,
+          SUM(CASE WHEN timestamp > datetime('now','-24 hours') THEN 1 ELSE 0 END) AS last_24h,
+          MAX(timestamp) AS last_seen,
+          AVG(duration_ms) AS avg_duration_ms
+        FROM agent_job_log
+        GROUP BY agent
+        ORDER BY MAX(timestamp) DESC
+      `).all();
+      res.json({ agents: rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Per-agent recent job log. Used when you drill into one agent card.
+  router.get('/admin/agents/:agent/recent', authenticateAdmin, (req, res) => {
+    try {
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+      const db = getMasterDatabase();
+      const rows = db.prepare(`
+        SELECT id, job_id, step, status, error, duration_ms, timestamp
+        FROM agent_job_log
+        WHERE agent = ?
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(req.params.agent, limit);
+      res.json({ steps: rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   router.get('/admin/workflows/instances', authenticateAdmin, async (req, res) => {
     const { listActive, listByCycle } = await import('./workflow-instances.js');
     const rows = req.query.cycle_id ? listByCycle(req.query.cycle_id) : listActive();

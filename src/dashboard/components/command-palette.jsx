@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { listLocalProjects, setCurrentProject } from '@/lib/projects-store';
 import {
-  IconSignals, IconToday, IconInbox, IconQueues, IconOps,
+  IconSignals, IconToday, IconInbox, IconQueues, IconOps, IconAgents,
   IconShelly, IconProjects, IconSettings, IconPlus, IconSearch
 } from './icons';
 
@@ -11,6 +11,7 @@ const NAV = [
   { id: 'captures',  label: 'Inbox',     icon: IconInbox,     hint: 'Operations' },
   { id: 'today',     label: 'Today',     icon: IconToday,     hint: 'Operations' },
   { id: 'signals',   label: 'Signals',   icon: IconSignals,   hint: 'Operations' },
+  { id: 'agents',    label: 'Agents',    icon: IconAgents,    hint: 'Infrastructure' },
   { id: 'queues',    label: 'Queues',    icon: IconQueues,    hint: 'Infrastructure' },
   { id: 'shelly',    label: 'Shelly',    icon: IconShelly,    hint: 'Infrastructure' },
   { id: 'ops',       label: 'Ops',       icon: IconOps,       hint: 'Infrastructure' },

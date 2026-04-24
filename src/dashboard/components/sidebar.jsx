@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   IconSignals, IconToday, IconInbox, IconProjects,
-  IconQueues, IconShelly, IconSettings, IconSidebar, IconOps
+  IconQueues, IconShelly, IconSettings, IconSidebar, IconOps, IconAgents
 } from './icons';
 
 // Flat nav. Order = priority. Divider separates daily-use from setup.
@@ -14,6 +14,7 @@ const PRIMARY = [
   { id: 'signals',  label: 'Signals', icon: IconSignals },
 ];
 const SECONDARY = [
+  { id: 'agents',    label: 'Agents',    icon: IconAgents   },
   { id: 'queues',    label: 'Queues',    icon: IconQueues   },
   { id: 'shelly',    label: 'Shelly',    icon: IconShelly   },
   { id: 'ops',       label: 'Ops',       icon: IconOps      },

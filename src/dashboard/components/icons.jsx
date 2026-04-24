@@ -39,6 +39,13 @@ export const IconShelly = I(<>
   <path d="M11 14h2" /><path d="M12 2v2" /><path d="M8 20H6a2 2 0 01-2-2v-2" /><path d="M16 20h2a2 2 0 002-2v-2" />
 </>);
 
+export const IconAgents = I(<>
+  <circle cx="12" cy="8" r="3" />
+  <circle cx="5" cy="17" r="2.5" />
+  <circle cx="19" cy="17" r="2.5" />
+  <path d="M12 11v2" /><path d="M10 14l-3 1.5" /><path d="M14 14l3 1.5" />
+</>);
+
 export const IconOps = I(<>
   <path d="M12 2v4" /><path d="M12 18v4" /><path d="M4.93 4.93l2.83 2.83" /><path d="M16.24 16.24l2.83 2.83" />
   <path d="M2 12h4" /><path d="M18 12h4" /><path d="M4.93 19.07l2.83-2.83" /><path d="M16.24 7.76l2.83-2.83" />
