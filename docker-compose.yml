@@ -133,6 +133,12 @@ services:
       REDIS_PORT: 6379
       # PG_*, VOYAGE_*, AGENT_MEMORY_NAMESPACE all come from env_file (.env.production)
       # — init.sh generates them in sync with AFFINE_DB_PASSWORD
+      # Orchestration state: 0 = legacy sqlite + master-mirror bridge (current),
+      # 1 = shared Postgres (migration 003 tables on 10.0.0.2 agent_memory db).
+      # Flip to "1" only after running scripts/backfill-sqlite-to-pg.mjs so the
+      # dashboard doesn't briefly read an empty pg. Both services (here) and
+      # worker (infra/devpanel-worker.service) must agree on the value.
+      DEVPANEL_PG_ORCHESTRATION: "${DEVPANEL_PG_ORCHESTRATION:-0}"
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist

@@ -36,7 +36,17 @@ Environment=WORKER_EVENTS_URL=https://devpanl.dev/api/admin/events/publish
 # orchestration tables move to shared Postgres). Worker keeps its local SQLite
 # for engine reads; every createInstance/updateInstance/appendEvent/logStep
 # fires a best-effort POST to DEVPANEL_REMOTE_MASTER.
+# Mirror is only used while DEVPANEL_PG_ORCHESTRATION is off — once the flag
+# flips, writes go straight to shared pg and this variable is ignored.
 Environment=DEVPANEL_REMOTE_MASTER=https://devpanl.dev/api
+
+# Orchestration state backend: "0" = sqlite + mirror bridge (legacy),
+# "1" = shared Postgres (migration 003 tables on 10.0.0.2 agent_memory db).
+# Must match the devpanel-api container's DEVPANEL_PG_ORCHESTRATION. Flip to
+# "1" only after scripts/backfill-sqlite-to-pg.mjs has replayed sqlite rows
+# into pg, and after services API has also been flipped (services-reads-first
+# avoids a brief blind-dashboard window).
+Environment=DEVPANEL_PG_ORCHESTRATION=0
 
 # Plane REST config (non-secrets). PLANE_API_KEY is in .env.agent.
 Environment=PLANE_BASE_URL=https://plane.devpanl.dev
