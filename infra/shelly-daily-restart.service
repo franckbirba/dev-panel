@@ -1,9 +1,11 @@
 [Unit]
 Description=Daily restart of shelly.service — clear tmux session context
 Documentation=file:///home/deploy/projects/dev-panel/.agents/shelly/SOUL.md
-After=shelly.service
-Requires=shelly.service
+# Intentionally no Requires=/After=shelly.service. Systemd sends SIGTERM to
+# dependents when their dep restarts — a self-restart loop would kill us.
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) daily-restart" >> /home/deploy/logs/shelly-restarts.log && /usr/bin/systemctl restart shelly.service'
+# Log to journalctl (date is added by journald). Then fire the restart.
+ExecStart=/usr/bin/logger -t shelly-daily-restart "firing scheduled restart"
+ExecStart=/usr/bin/systemctl restart shelly.service
