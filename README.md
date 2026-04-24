@@ -1,258 +1,111 @@
 # dev-panel
 
-[![npm version](https://img.shields.io/npm/v/dev-panel.svg)](https://www.npmjs.com/package/dev-panel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/franckbirba/dev-panel.svg)](https://github.com/franckbirba/dev-panel/stargazers)
 
-A plug & play bug/feature reporting system for React apps with multi-project support, GitHub sync, and MCP integration for AI-assisted ticket management.
+Control plane for a solo-with-agents studio. One repo holds a floating React widget, a captures/threads triage surface, a BullMQ-backed workflow engine that dispatches ephemeral `claude -p` jobs, a persistent orchestration agent (Shelly) in Telegram, shared pgvector memory, and the dashboard that ties it all together.
 
-> Users report bugs via a floating widget, PMs review tickets via CLI, and approved tickets are published as GitHub Issues.
+> **Status:** not a general-purpose library. This repo operates [devpanl.dev](https://devpanl.dev) and the agents behind it. The React widget is still embeddable in other apps; everything else is infrastructure-of-one.
 
-## Features
+## What lives here
 
-- **Bug Reporting** — Users report bugs with screenshots directly from your React app
-- **Feature Requests** — Collect feature ideas with full context capture
-- **Multi-Project** — Centralized server with isolated databases per project
-- **GitHub Sync** — Import repos, publish tickets as issues, bi-directional status sync
-- **Doc Indexing** — Full-text search across project markdown docs (FTS5)
-- **MCP Server** — AI assistants (Claude, Cursor, etc.) can manage tickets via Model Context Protocol
-- **Production Ready** — Docker, Traefik, Let's Encrypt, CI/CD included
+| Surface | Path | Purpose |
+|---|---|---|
+| React widget | `src/react/DevPanel.jsx` | Floating bug/feature/capture reporter, screenshot, optional `user` prop (reporter identity) |
+| Express API | `src/server/*` | Captures, threads, work-items, signals, bulk admin, SSE, MCP ingest endpoints |
+| Dashboard | `src/dashboard/*` | Captures as the default landing, Today, Agents, Work items, Queues, Ops |
+| Workflow engine | `src/worker/engine.js` | YAML-defined agent chains with revision/replan/exhaustion |
+| BullMQ worker | `src/worker/index.js` | Spawns `claude -p` stream-json, persists events, runs automation hooks |
+| Orchestration MCP | `src/mcp/server.js` | 23 tools: dispatch, list/cancel jobs, plane work items + attachments, memory, threads |
+| Shelly | `.agents/shelly/SOUL.md` | Persistent Claude Code tmux session on the agents host; reads Telegram |
 
-## Architecture
+## Two-host topology (prod)
 
 ```
-React DevPanel UI --> Express API --> SQLite storage --> CLI review --> GitHub Issues
-                         |
-                    MCP Server (AI assistants)
+┌────────── services VPS (10.0.0.2) ──────────┐   ┌────────── agents VPS (10.0.0.3) ─────────┐
+│  devpanel-api (docker)                      │   │  devpanel-worker (systemd)               │
+│  devpanel-postgres  ← shared pg, pgvector   │◄──┤  shelly.service (tmux + claude CLI)      │
+│  devpanel-redis     ← BullMQ queue          │   │  shelly-watchdog.timer (60s)             │
+│  Plane, AFFiNE, Traefik, bull-board         │   │  shelly-daily-restart.timer (04:00 CET)  │
+│  +oauth2-proxy on internal UIs              │   │  ephemeral `claude -p` per job           │
+└─────────────────────────────────────────────┘   └──────────────────────────────────────────┘
 ```
 
-Four layers with clean separation:
+All orchestration state (`workflow_instances`, `agent_job_log`, `agent_job_events`, `agent_memory_writes`, `memories`) lives in the shared Postgres on the services node. Worker and API hit the same pg over the private LAN — no split-brain.
 
-- **React UI** (`src/react/DevPanel.jsx`) — Floating widget with screenshot capture
-- **API Server** (`src/server/`) — Express REST API with API key auth and rate limiting
-- **Database** (`src/server/db.js`) — Master `projects.db` + per-project `tickets.db` (SQLite via better-sqlite3)
-- **CLI** (`bin/dev-panel.js` + `src/cli/commands/`) — Commander.js-based management tool
-
-## Quick Start
-
-### 1. Install
+## Local dev
 
 ```bash
-npm install dev-panel
+npm install
+
+# API + dashboard
+node bin/dev-panel.js serve            # :3030
+npm run dev:dashboard                  # :5173, proxies /api to :3030
+
+# Tests (pg-backed suites spin a throwaway postgres:16-alpine container)
+npx vitest run
 ```
 
-### 2. Start the server
+Required env for the pg-backed flows: `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `REDIS_HOST`, `REDIS_PORT`. See `infra/devpanel-worker.service` for the production values; docker-compose wires the same values for the container.
 
-```bash
-npx dev-panel serve
-```
-
-### 3. Create a project
-
-```bash
-# Import from GitHub (fetches open issues, milestones, docs)
-npx dev-panel import https://github.com/your-org/your-repo -t ghp_xxxxx
-
-# Or create manually
-npx dev-panel admin create -n my-project -o your-org -r your-repo
-```
-
-This returns an **API key** (prefixed `dp_`) for the project.
-
-### 4. Add the React widget
+## React widget (the only part meant to be embedded elsewhere)
 
 ```jsx
 import { DevPanel } from 'dev-panel/react';
 
-function App() {
-  return (
-    <>
-      <YourApp />
-      <DevPanel
-        apiUrl="http://localhost:3030"
-        apiKey="dp_your_project_key_here"
-      />
-    </>
-  );
-}
+<DevPanel
+  apiUrl="https://devpanl.dev"
+  apiKey="dp_your_project_key"
+  user={{ id: '42', name: 'Alice', email: 'alice@example.com' }}  // optional
+/>
 ```
 
-**Props:**
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `apiUrl` | string | `http://localhost:3030` | API server URL |
-| `apiKey` | string | *required* | Project API key |
+`user` is forwarded as the capture's reporter; omit it for anonymous captures. The widget captures URL, user agent, viewport, timestamp, and an optional screenshot.
 
-The widget captures URL, user agent, viewport dimensions, and timestamp automatically. Bug reports support optional screenshot attachments.
+Standalone embed (no bundler):
 
-## CLI Reference
+```html
+<script src="https://devpanl.dev/widget.js"></script>
+<script>DevPanel.mount({ apiUrl: 'https://devpanl.dev', apiKey: 'dp_...' });</script>
+```
 
-### Server
+## CLI
 
 ```bash
-dev-panel serve [-p 3030] [-H localhost] [-s ./storage]
+node bin/dev-panel.js <command>
 ```
 
-### Project Management
+Live commands: `serve`, `init`, `admin`, `list`, `review`, `publish`, `reject`, `sync`, `stats`, `import`, `sync-docs`, `clarify`, `workflow <dispatch|list>`. Per-command flags via `--help`.
 
-```bash
-dev-panel admin create -n <name> -o <owner> -r <repo> [-t <token>]
-dev-panel admin list
-dev-panel admin show <name>
-dev-panel admin delete <name> --yes
+## MCP server
 
-dev-panel import <github-url> [-t <token>]    # Import repo + issues + milestones + docs
-```
+Shelly and ephemeral workers talk to the devpanel MCP server (23 tools). Names:
 
-### Ticket Workflow
+- **Projects / tickets:** `list_projects`, `get_bugs`, `get_context`, `update_status`, `get_messages`, `post_message`, `get_project_info`
+- **Dispatch + queue:** `enqueue_job`, `devpanel_workflow_dispatch`, `list_jobs`, `cancel_job`, `set_mode`, `get_mode`
+- **Plane:** `plane_dispatch_work_item`, `plane_close_cycle`, `plane_list_attachments`, `plane_download_attachment`, `plane_upload_attachment`
+- **Memory (pgvector):** `memory_write`, `memory_search`, `memory_list`
+- **Threads / auth:** `thread_append`, `auth_deny`
 
-```bash
-dev-panel list [-s pending|published|rejected|closed] [-p <project>] [-l 50]
-dev-panel review <id>                          # Formatted output for AI assistants
-dev-panel publish <id> [-t <title>] [-l <labels>] [-a <assignee>]
-dev-panel reject <id> [-r <reason>]
-dev-panel sync [--auto]                        # Sync status with GitHub issues
-dev-panel stats [-p <project>]
-```
+Wire via `.mcp.json` — template at `infra/agents-mcp.json.template` (rendered by `scripts/deploy-agents.sh` with the right secrets + the private-LAN pg/redis hosts).
 
-### Documentation
+## Deploy
 
-```bash
-dev-panel sync-docs [project]                  # Sync markdown docs from GitHub (incremental)
-```
+- **Services API:** `git push origin main` → `.github/workflows/deploy.yml` builds the image and refreshes the `devpanel` container. Only the dev-panel container is touched — Plane, Penpot, AFFiNE, Traefik, redis, postgres are persistent team infra and stay up. See `CLAUDE.md` → "Deploy isolation" for the rules.
+- **Agents VPS (worker + Shelly):** `bash scripts/deploy-agents.sh` — pulls main, rewrites `.env.agent` from services secrets, reinstalls systemd units, restarts worker + shelly.
 
-### Clarifications
+Full stack rebuild (rare, manual only): `ssh deploy@…/services 'cd ~/dev-panel && docker compose --profile all up -d'`. Never from CI.
 
-```bash
-dev-panel clarify list [-p <project>]
-dev-panel clarify answer <project> <ticket-id> <answer>
-```
+## Services
 
-## API Endpoints
-
-All project-scoped endpoints require `X-API-Key` header. Admin endpoints require `X-Admin-Key` header.
-
-### Public
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check |
-
-### Admin
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/projects` | List all projects |
-| POST | `/api/projects/import` | Import GitHub repo as project |
-
-### Tickets
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/tickets` | Create ticket (rate-limited: 30/min) |
-| GET | `/api/tickets` | List tickets (`?status`, `?limit`) |
-| GET | `/api/tickets/:id` | Get ticket details |
-| PATCH | `/api/tickets/:id` | Update ticket |
-| DELETE | `/api/tickets/:id` | Delete/reject ticket |
-| GET | `/api/tickets/:id/screenshot` | Get screenshot image |
-
-### Documentation
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/docs` | List docs |
-| GET | `/api/docs/search` | Full-text search (`?q`, `?limit`) |
-| POST | `/api/docs/sync` | Sync docs from GitHub |
-
-### Other
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/milestones` | List milestones (`?state`) |
-| GET | `/api/clarifications` | List pending clarification questions |
-| POST | `/api/tickets/:id/answer` | Answer a clarification |
-| GET | `/api/stats` | Ticket statistics |
-
-## MCP Server
-
-dev-panel exposes an MCP server for AI assistants (Claude Code, Cursor, etc.):
-
-```json
-{
-  "mcpServers": {
-    "dev-panel": {
-      "command": "node",
-      "args": ["node_modules/dev-panel/src/mcp/server.js"]
-    }
-  }
-}
-```
-
-**Available tools:**
-
-| Tool | Description |
-|------|-------------|
-| `list_projects` | Get all projects with GitHub info |
-| `get_bugs` | List tickets (supports status/limit filters) |
-| `get_context` | Full-text search project documentation |
-| `update_status` | Change ticket status |
-| `ask_clarification` | Post clarification question on ticket |
-| `get_project_info` | Get project stats |
-
-## Production Deployment
-
-Complete production infrastructure with Traefik, Let's Encrypt, AFFiNE, Plane, Penpot, and monitoring. See **[infra/docs/README.md](infra/docs/README.md)** for full docs.
-
-### Quick Deploy
-
-```bash
-# Local: build image
-make build
-make push
-
-# Production: deploy everything
-make deploy-all
-```
-
-### Or deploy via GitHub Actions
-
-Push to `main` → auto-builds → pushes to GHCR → deploys to VPS.
-
-### Manual Setup
-
-```bash
-# 1. Initialize .env
-make init
-
-# 2. Fill in secrets
-vim .env  # GITHUB_TOKEN, TELEGRAM_BOT_TOKEN, etc.
-
-# 3. Deploy
-make deploy-core       # Core only (traefik, devpanel, affine)
-make deploy-plane      # Add Plane project management
-make deploy-penpot     # Add Penpot design tool
-make deploy-monitoring # Add monitoring stack
-```
-
-### Services
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| DevPanel | https://devpanl.dev | Main app |
-| AFFiNE | https://affine.devpanl.dev | Docs & knowledge base |
-| Plane | https://plane.devpanl.dev | Project management |
-| Penpot | https://penpot.devpanl.dev | Design tool |
-| Traefik | https://traefik.devpanl.dev | Reverse proxy dashboard |
-| Uptime Kuma | https://status.devpanl.dev | Service monitoring |
-| Bull Board | https://queues.devpanl.dev | Job queue dashboard |
-
-## Package Exports
-
-```javascript
-import { createServer, startServer } from 'dev-panel';        // Server
-import { DevPanel } from 'dev-panel/react';                    // React widget
-import { createMCPServer } from 'dev-panel/mcp';               // MCP server
-```
+| Service | URL |
+|---|---|
+| DevPanel | https://devpanl.dev |
+| Plane | https://plane.devpanl.dev |
+| AFFiNE | https://affine.devpanl.dev |
+| Penpot | https://penpot.devpanl.dev |
+| Traefik | https://traefik.devpanl.dev |
+| Bull Board | https://queues.devpanl.dev |
+| Storybook catalogue | https://ui.devpanl.dev |
 
 ## License
 
