@@ -30,6 +30,10 @@ done
 echo "==> deploying to agents (${AGENTS_HOST})"
 ssh "$AGENTS_HOST" bash -s <<EOF
 set -e
+# System deps — jq is required by Shelly's PreToolUse hook that scopes Read
+# to the telegram inbox. Without it every Read call fails.
+command -v jq >/dev/null 2>&1 || apt-get install -y jq >/dev/null
+
 # Code + deps (as deploy user)
 su - deploy -c 'cd /home/deploy/projects/dev-panel && git pull --ff-only'
 su - deploy -c 'cd /home/deploy/projects/dev-panel && npm install --production --silent'
