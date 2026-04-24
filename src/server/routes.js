@@ -783,12 +783,18 @@ export function createRouter(config = {}) {
 
   router.post('/captures', authenticateProject, (req, res) => {
     try {
-      const { content = '', kind = 'idea' } = req.body || {};
+      const { content = '', kind = 'idea', reporter } = req.body || {};
       if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
+      if (reporter !== undefined && reporter !== null) {
+        if (typeof reporter !== 'object' || Array.isArray(reporter)) {
+          return res.status(400).json({ error: 'reporter must be an object' });
+        }
+      }
       const capture = createCapture({
         project_id: req.project.id,
         content: String(content).slice(0, 4000),
-        kind: String(kind).slice(0, 32)
+        kind: String(kind).slice(0, 32),
+        reporter: reporter ?? null
       });
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -797,8 +803,9 @@ export function createRouter(config = {}) {
   router.get('/captures', authenticateProject, (req, res) => {
     try {
       const status = req.query.status ? String(req.query.status) : null;
+      const reporter_id = req.query.reporter_id ? String(req.query.reporter_id) : null;
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
-      res.json({ captures: listCaptures({ project_id: req.project.id, status, limit }) });
+      res.json({ captures: listCaptures({ project_id: req.project.id, status, reporter_id, limit }) });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 

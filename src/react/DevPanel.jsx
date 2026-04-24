@@ -6,6 +6,7 @@ import { RegionSelect } from './RegionSelect.jsx';
 import { AnnotationCanvas } from './AnnotationCanvas.jsx';
 import { BugReportPanel } from './BugReportPanel.jsx';
 import { FeaturePanel } from './FeaturePanel.jsx';
+import { buildCaptureRequestPayload } from './reporterPayload.js';
 
 const ANIMATIONS = `
   @keyframes devpanel-fade-in {
@@ -22,7 +23,8 @@ export function DevPanel({
   apiUrl = 'http://localhost:3030',
   apiKey,
   position = 'bottom-right',
-  getState = null
+  getState = null,
+  user = null
 }) {
   if (!apiKey) {
     console.warn('DevPanel: apiKey is required. Component will not render.');
@@ -111,7 +113,7 @@ export function DevPanel({
     const createRes = await fetch(`${apiUrl}/api/captures`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-      body: JSON.stringify({ kind, content })
+      body: JSON.stringify(buildCaptureRequestPayload(user, kind, content))
     });
     if (!createRes.ok) {
       const errData = await createRes.json().catch(() => ({}));
@@ -137,7 +139,7 @@ export function DevPanel({
       }).catch(() => { /* context is best-effort */ });
     }
     return capture;
-  }, [apiUrl, apiKey]);
+  }, [apiUrl, apiKey, user]);
 
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);

@@ -43,10 +43,12 @@ function timeAgo(iso) {
 
 export function CapturesView({ apiUrl, apiKey }) {
   const [list, setList]         = useState([]);
+  const [allList, setAllList]   = useState([]);  // unfiltered — used for filter dropdown options
   const [selected, setSelected] = useState(null);
   const [thread, setThread]     = useState(null);
   const [error, setError]       = useState(null);
   const [busy, setBusy]         = useState(false);
+  const [reporterFilter, setReporterFilter] = useState('');
   const captureInputRef = useRef(null);
   const replyInputRef   = useRef(null);
   const threadEndRef    = useRef(null);
@@ -54,13 +56,22 @@ export function CapturesView({ apiUrl, apiKey }) {
   const loadList = useCallback(async () => {
     if (!apiKey) return;
     try {
-      const r = await fetch(`${apiUrl}/api/captures`, { headers: { 'X-API-Key': apiKey } });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { captures } = await r.json();
-      setList(captures);
+      const full = await fetch(`${apiUrl}/api/captures`, { headers: { 'X-API-Key': apiKey } });
+      if (!full.ok) throw new Error(`HTTP ${full.status}`);
+      const fullBody = await full.json();
+      setAllList(fullBody.captures);
+
+      if (reporterFilter) {
+        const r = await fetch(`${apiUrl}/api/captures?reporter_id=${encodeURIComponent(reporterFilter)}`, { headers: { 'X-API-Key': apiKey } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const { captures } = await r.json();
+        setList(captures);
+      } else {
+        setList(fullBody.captures);
+      }
       setError(null);
     } catch (e) { setError(e.message); }
-  }, [apiUrl, apiKey]);
+  }, [apiUrl, apiKey, reporterFilter]);
 
   const loadThread = useCallback(async (id) => {
     if (!id || !apiKey) return;
@@ -150,6 +161,13 @@ export function CapturesView({ apiUrl, apiKey }) {
 
   const counts = list.reduce((acc, c) => { acc[c.status] = (acc[c.status] || 0) + 1; return acc; }, {});
 
+  const reporters = Array.from(
+    allList.reduce((m, c) => {
+      if (c.reporter_id) m.set(c.reporter_id, c.reporter_name || c.reporter_email || c.reporter_id);
+      return m;
+    }, new Map())
+  );
+
   return (
     <div className="h-full flex flex-col">
       {/* Header + hero composer */}
@@ -188,6 +206,18 @@ export function CapturesView({ apiUrl, apiKey }) {
             {counts.new      ? <span className="text-[var(--color-warning)] normal-case font-normal tracking-normal">· {counts.new} new</span>      : null}
             {counts.triaging ? <span className="text-[var(--color-info)] normal-case font-normal tracking-normal">· {counts.triaging} triaging</span> : null}
             {counts.promoted ? <span className="text-[var(--color-success)] normal-case font-normal tracking-normal">· {counts.promoted} promoted</span> : null}
+            {reporters.length > 0 && (
+              <select
+                value={reporterFilter}
+                onChange={(e) => setReporterFilter(e.target.value)}
+                className="ml-auto text-[11px] bg-transparent border border-[var(--color-border-subtle)] rounded px-1 py-0.5 normal-case font-normal tracking-normal"
+              >
+                <option value="">all reporters</option>
+                {reporters.map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
+            )}
           </div>
           {list.length === 0 && (
             <div className="p-6 text-center text-[12px] text-[var(--color-foreground-faint)]">
@@ -208,6 +238,11 @@ export function CapturesView({ apiUrl, apiKey }) {
               >
                 <div className="flex items-center gap-2 mb-1.5">
                   <StatusChip status={c.status} />
+                  {(c.reporter_name || c.reporter_email) && (
+                    <span className="text-[10.5px] text-[var(--color-foreground-muted)] truncate max-w-[120px]">
+                      {c.reporter_name || c.reporter_email}
+                    </span>
+                  )}
                   <span className="text-[10.5px] text-[var(--color-foreground-faint)] font-mono ml-auto">{timeAgo(c.updated_at)}</span>
                 </div>
                 <div className="text-[13px] text-[var(--color-foreground)] truncate">{c.content}</div>
@@ -239,6 +274,12 @@ export function CapturesView({ apiUrl, apiKey }) {
                 <span className="text-[11.5px] font-mono text-[var(--color-foreground-faint)]">
                   {thread.kind} · {timeAgo(thread.created_at)}
                 </span>
+                {(thread.reporter_name || thread.reporter_email) && (
+                  <span className="text-[11.5px] text-[var(--color-foreground-muted)]">
+                    by {thread.reporter_name || thread.reporter_email}
+                    {thread.reporter_email && thread.reporter_name ? ` (${thread.reporter_email})` : ''}
+                  </span>
+                )}
                 {thread.plane_sequence_id && (
                   <span className="text-[11.5px] text-[var(--color-success)] font-mono">→ DEVPA-{thread.plane_sequence_id}</span>
                 )}

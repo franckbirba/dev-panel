@@ -238,6 +238,24 @@ export function initMasterDatabase(storagePath = './storage') {
     masterDb.pragma(`user_version = 2`);
   }
 
+  // Migration v3: reporter identity on captures.
+  // Four nullable columns + two indexes. Splits the common fields (id/name/email)
+  // into columns for filtering, keeps any extra host-provided fields as JSON
+  // in reporter_extra. Guarded by user_version. See spec:
+  // docs/superpowers/specs/2026-04-24-widget-reporter-identity-design.md
+  const REPORTER_IDENTITY_VERSION = 3;
+  const currentVersion3 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion3 < REPORTER_IDENTITY_VERSION) {
+    const capCols = new Set(masterDb.prepare("PRAGMA table_info(captures)").all().map(c => c.name));
+    if (!capCols.has('reporter_id'))    masterDb.exec(`ALTER TABLE captures ADD COLUMN reporter_id TEXT`);
+    if (!capCols.has('reporter_name'))  masterDb.exec(`ALTER TABLE captures ADD COLUMN reporter_name TEXT`);
+    if (!capCols.has('reporter_email')) masterDb.exec(`ALTER TABLE captures ADD COLUMN reporter_email TEXT`);
+    if (!capCols.has('reporter_extra')) masterDb.exec(`ALTER TABLE captures ADD COLUMN reporter_extra TEXT`);
+    masterDb.exec(`CREATE INDEX IF NOT EXISTS idx_captures_reporter_id    ON captures(reporter_id)`);
+    masterDb.exec(`CREATE INDEX IF NOT EXISTS idx_captures_reporter_email ON captures(reporter_email)`);
+    masterDb.pragma(`user_version = ${REPORTER_IDENTITY_VERSION}`);
+  }
+
   return masterDb;
 }
 
