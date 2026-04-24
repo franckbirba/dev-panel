@@ -29,7 +29,7 @@ export async function handleDeploy(jobData) {
   });
 
   // Pre-check
-  logStep({ job_id, agent: 'deploy', step: 'stack-status', status: 'ok' });
+  await logStep({ job_id, agent: 'deploy', step: 'stack-status', status: 'ok' });
   try { await run('make', ['status'], { cwd: process.cwd() }); }
   catch (e) {
     return {

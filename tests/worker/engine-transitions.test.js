@@ -58,7 +58,7 @@ describe('triggerNext — forward transitions', () => {
   beforeEach(() => { enqueued = []; enqueue.mockClear(); });
 
   it('builder.done → enqueues reviewer, updates instance.current_step', async () => {
-    createInstance({ work_item_id: 'wi-fwd1', workflow_name: 'work-item', current_step: 'builder' });
+    await createInstance({ work_item_id: 'wi-fwd1', workflow_name: 'work-item', current_step: 'builder' });
     await triggerNext({
       jobData: fakeJob('builder', 'wi-fwd1'),
       result: { status: 'done', summary: 'ok' },
@@ -67,20 +67,20 @@ describe('triggerNext — forward transitions', () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0].agent).toBe('reviewer');
     expect(enqueued[0].workflow).toBe('work-item');
-    const inst = loadInstance({ work_item_id: 'wi-fwd1', workflow_name: 'work-item' });
+    const inst = await loadInstance({ work_item_id: 'wi-fwd1', workflow_name: 'work-item' });
     expect(inst.current_step).toBe('reviewer');
     expect(inst.status).toBe('running');
   });
 
   it('qa.done → instance terminal, no enqueue', async () => {
-    createInstance({ work_item_id: 'wi-fwd2', workflow_name: 'work-item', current_step: 'qa' });
+    await createInstance({ work_item_id: 'wi-fwd2', workflow_name: 'work-item', current_step: 'qa' });
     await triggerNext({
       jobData: fakeJob('qa', 'wi-fwd2'),
       result: { status: 'done', summary: 'green' },
       flows: FLOWS, enqueue
     });
     expect(enqueued).toHaveLength(0);
-    const inst = loadInstance({ work_item_id: 'wi-fwd2', workflow_name: 'work-item' });
+    const inst = await loadInstance({ work_item_id: 'wi-fwd2', workflow_name: 'work-item' });
     expect(inst.status).toBe('done');
   });
 });
@@ -89,7 +89,7 @@ describe('triggerNext — retreat allowlist', () => {
   const enqueue = vi.fn(async () => ({ id: 'x' }));
 
   it('reviewer emits handoff.next_agent=builder → retreat override applied', async () => {
-    createInstance({ work_item_id: 'wi-r1', workflow_name: 'work-item', current_step: 'reviewer' });
+    await createInstance({ work_item_id: 'wi-r1', workflow_name: 'work-item', current_step: 'reviewer' });
     enqueue.mockClear();
     await triggerNext({
       jobData: fakeJob('reviewer', 'wi-r1'),
@@ -103,7 +103,7 @@ describe('triggerNext — retreat allowlist', () => {
   });
 
   it('reviewer emits handoff.next_agent=deploy → out of allowlist, rejected', async () => {
-    createInstance({ work_item_id: 'wi-r2', workflow_name: 'work-item', current_step: 'reviewer' });
+    await createInstance({ work_item_id: 'wi-r2', workflow_name: 'work-item', current_step: 'reviewer' });
     enqueue.mockClear();
     await triggerNext({
       jobData: fakeJob('reviewer', 'wi-r2'),
@@ -119,7 +119,7 @@ describe('triggerNext — replan and revision guard', () => {
   const enqueue = vi.fn(async () => ({ id: 'x' }));
 
   it('qa.failed → enqueues pm replan with parent context, parent goes awaiting_approval', async () => {
-    createInstance({ work_item_id: 'wi-rp1', workflow_name: 'work-item', current_step: 'qa' });
+    await createInstance({ work_item_id: 'wi-rp1', workflow_name: 'work-item', current_step: 'qa' });
     enqueue.mockClear();
     await triggerNext({
       jobData: fakeJob('qa', 'wi-rp1'),
@@ -132,13 +132,13 @@ describe('triggerNext — replan and revision guard', () => {
     expect(payload.workflow).toBe('replan');
     expect(payload.parent_workflow).toBe('work-item');
     expect(payload.failed_step).toBe('qa');
-    const parent = loadInstance({ work_item_id: 'wi-rp1', workflow_name: 'work-item' });
+    const parent = await loadInstance({ work_item_id: 'wi-rp1', workflow_name: 'work-item' });
     expect(parent.status).toBe('awaiting_approval');
   });
 
   it('revision cap reached → on_exhaustion=block, no enqueue', async () => {
-    createInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item', current_step: 'qa' });
-    updateInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item' }, { revision: 3 });
+    await createInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item', current_step: 'qa' });
+    await updateInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item' }, { revision: 3 });
     enqueue.mockClear();
     await triggerNext({
       jobData: { ...fakeJob('qa', 'wi-rp2'), workflow_revision: 3 },
@@ -146,7 +146,7 @@ describe('triggerNext — replan and revision guard', () => {
       flows: FLOWS, enqueue
     });
     expect(enqueue.mock.calls).toHaveLength(0);
-    const parent = loadInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item' });
+    const parent = await loadInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item' });
     expect(parent.status).toBe('exhausted');
     expect(parent.exhausted_at).toBeGreaterThan(0);
   });
@@ -156,7 +156,7 @@ describe('triggerNext — predicate gating', () => {
   const enqueue = vi.fn(async () => ({ id: 'x' }));
 
   it('reviewer.failed with no p1+ issue → predicate false, transition falls through to terminal', async () => {
-    createInstance({ work_item_id: 'wi-pred', workflow_name: 'work-item', current_step: 'reviewer' });
+    await createInstance({ work_item_id: 'wi-pred', workflow_name: 'work-item', current_step: 'reviewer' });
     enqueue.mockClear();
     await triggerNext({
       jobData: fakeJob('reviewer', 'wi-pred'),
@@ -164,7 +164,7 @@ describe('triggerNext — predicate gating', () => {
       flows: FLOWS, enqueue
     });
     expect(enqueue.mock.calls).toHaveLength(0);
-    const parent = loadInstance({ work_item_id: 'wi-pred', workflow_name: 'work-item' });
+    const parent = await loadInstance({ work_item_id: 'wi-pred', workflow_name: 'work-item' });
     expect(parent.status).toBe('failed');
   });
 });
@@ -173,11 +173,11 @@ describe('triggerNext — replan resume', () => {
   const enqueue = vi.fn(async () => ({ id: 'x' }));
 
   it('replan pm.done → bumps parent revision and re-enqueues first step of parent workflow', async () => {
-    createInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item', current_step: 'qa' });
-    const parentRow = loadInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' });
-    updateInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' },
+    await createInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item', current_step: 'qa' });
+    const parentRow = await loadInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' });
+    await updateInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' },
                    { status: 'awaiting_approval', revision: 1 });
-    const replanId = createInstance({
+    const replanId = await createInstance({
       work_item_id: 'wi-rs1', workflow_name: 'replan',
       current_step: 'pm',
       metadata: {
@@ -198,7 +198,7 @@ describe('triggerNext — replan resume', () => {
     expect(enqueue.mock.calls[0][0].agent).toBe('builder');
     expect(enqueue.mock.calls[0][0].workflow).toBe('work-item');
     expect(enqueue.mock.calls[0][0].workflow_revision).toBe(2);
-    const parent = loadInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' });
+    const parent = await loadInstance({ work_item_id: 'wi-rs1', workflow_name: 'work-item' });
     expect(parent.revision).toBe(2);
     expect(parent.status).toBe('running');
   });

@@ -1,16 +1,45 @@
 // Persistence + fan-out for agent job events captured from claude -p stream-json.
 // See src/worker/stream-parser.js for the event shape.
+//
+// Dual-path behind DEVPANEL_PG_ORCHESTRATION. The SSE subscriber Map is pure
+// in-memory fan-out (one node handles one job's stream) so it stays identical
+// across paths — only persistence moves.
 
 import { getMasterDatabase } from './db.js';
 import { mirror } from './master-mirror.js';
+import { pool } from './pg.js';
+
+function pgEnabled() {
+  const v = process.env.DEVPANEL_PG_ORCHESTRATION;
+  return v === '1' || v === 'true';
+}
 
 // Per-job SSE subscriber pools. Live tail-follow uses these — see
 // GET /api/admin/jobs/:id/events?stream=1 in routes.js.
 const subscribers = new Map(); // job_id -> Set<res>
 
-export function appendEvent({ job_id, seq, event_type, event_subtype = null, payload }) {
-  const db = getMasterDatabase();
+export async function appendEvent({ job_id, seq, event_type, event_subtype = null, payload }) {
   const payloadJson = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  if (pgEnabled()) {
+    // ON CONFLICT DO NOTHING mirrors the sqlite "swallow dup on retry" semantics.
+    // RETURNING lets us tell insert-vs-dup: 0 rows means dup, skip broadcast.
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO agent_job_events (job_id, seq, event_type, event_subtype, payload)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       ON CONFLICT (job_id, seq) DO NOTHING
+       RETURNING created_at`,
+      [job_id, seq, event_type, event_subtype, payloadJson]
+    );
+    if (inserted.length === 0) return null;
+    const row = {
+      job_id, seq, event_type, event_subtype,
+      payload_json: payloadJson,
+      created_at: inserted[0].created_at.toISOString()
+    };
+    broadcastToSubscribers(job_id, row);
+    return row;
+  }
+  const db = getMasterDatabase();
   try {
     db.prepare(
       `INSERT INTO agent_job_events (job_id, seq, event_type, event_subtype, payload)
@@ -29,16 +58,30 @@ export function appendEvent({ job_id, seq, event_type, event_subtype = null, pay
   return row;
 }
 
-export function listEvents(job_id, { after = -1, limit = 10000 } = {}) {
+export async function listEvents(job_id, { after = -1, limit = 10000 } = {}) {
+  if (pgEnabled()) {
+    const { rows } = await pool.query(
+      `SELECT seq, event_type, event_subtype,
+              payload::text AS payload_json, created_at
+         FROM agent_job_events
+        WHERE job_id = $1 AND seq > $2
+        ORDER BY seq ASC
+        LIMIT $3`,
+      [String(job_id), after, limit]
+    );
+    return rows.map(r => ({
+      ...r,
+      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at
+    }));
+  }
   const db = getMasterDatabase();
-  const rows = db.prepare(
+  return db.prepare(
     `SELECT seq, event_type, event_subtype, payload AS payload_json, created_at
        FROM agent_job_events
       WHERE job_id = ? AND seq > ?
       ORDER BY seq ASC
       LIMIT ?`
   ).all(String(job_id), after, limit);
-  return rows;
 }
 
 // ---------------------------------------------------------------------------

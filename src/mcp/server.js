@@ -634,7 +634,7 @@ server.tool(
       work_item_id: args.work_item_id || null,
       embedding
     });
-    if (jobId) recordMemoryWrite(jobId, id);
+    if (jobId) await recordMemoryWrite(jobId, id);
     return { content: [{ type: 'text', text: JSON.stringify({ id }) }] };
   }
 );

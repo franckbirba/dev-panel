@@ -171,7 +171,12 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown') {
     const parser = createStreamParser(({ seq, event }) => {
       events.push(event);
       const { event_type, event_subtype } = classifyEvent(event);
-      appendEvent({ job_id: String(jobId), seq, event_type, event_subtype, payload: event });
+      // Fire-and-forget: the stream parser callback is sync, and `seq` is
+      // monotonic so out-of-order persistence is harmless (listEvents sorts
+      // by seq). Errors are surfaced to stderr but don't abort the stream —
+      // a transient pg hiccup shouldn't kill an agent mid-run.
+      appendEvent({ job_id: String(jobId), seq, event_type, event_subtype, payload: event })
+        .catch(err => console.error('[worker] appendEvent failed', seq, err.message));
     });
 
     const errLogPath = join(AGENT_LOG_DIR, `${jobId}.err.log`);
@@ -267,7 +272,7 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // Parse result (strict: returns { ok, data } | { ok: false, error })
   const parsed = parseResult(output);
   if (!parsed.ok) {
-    logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
+    await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
               status: 'error', error: parsed.error });
     await notifyJob({
       job_id: jobData.job_id, agent: jobData.agent,
@@ -278,7 +283,7 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     });
     throw new Error(`parseResult failed: ${parsed.error}`);
   }
-  logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
+  await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
 
   await runAutomation({ jobData, result: parsed.data, startedAt });
 

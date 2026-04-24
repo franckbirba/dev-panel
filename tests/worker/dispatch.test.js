@@ -26,7 +26,7 @@ describe('enqueueWorkflowStart', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue.mock.calls[0][0].agent).toBe('builder');
     expect(enqueue.mock.calls[0][0].workflow_revision).toBe(1);
-    const inst = loadInstance({ work_item_id: 'wi-d1', workflow_name: 'work-item' });
+    const inst = await loadInstance({ work_item_id: 'wi-d1', workflow_name: 'work-item' });
     expect(inst.status).toBe('running');
     expect(inst.current_step).toBe('builder');
   });

@@ -118,7 +118,7 @@ program
     }
     if (action === 'list') {
       const { listActive } = await import('../src/server/workflow-instances.js');
-      console.table(listActive());
+      console.table(await listActive());
       return;
     }
     console.error(`unknown action: ${action}`);

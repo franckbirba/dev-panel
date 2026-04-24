@@ -127,7 +127,7 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
   const workItemId = jobData.plane?.work_item_id;
   if (!workItemId) throw new Error('triggerNext: missing plane.work_item_id');
 
-  const instance = loadInstance({
+  const instance = await loadInstance({
     work_item_id: workItemId,
     workflow_name: flow.name
   });
@@ -137,14 +137,14 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
 
   const step = findStep(flow, jobData.agent);
   if (!step) {
-    updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { status: 'failed', last_job_id: jobData.job_id });
     throw new Error(`no step for agent ${jobData.agent} in workflow ${flow.name}`);
   }
 
   let branch = pickBranch(step, result.status, result);
   if (!branch) {
-    updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { status: result.status || 'failed', last_job_id: jobData.job_id });
     _emit('workflow.finished', {
       instance_id: instance.id, status: result.status || 'failed'
@@ -158,7 +158,7 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
 
   // Terminal branch
   if (effective.terminal) {
-    updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { status: result.status, last_job_id: jobData.job_id });
     _emit('workflow.finished', { instance_id: instance.id, status: result.status });
     await maybeResumeParent(instance, flow, result, flows, enqueue, _emit);
@@ -175,7 +175,7 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
     // Create the child instance FIRST so we have its id for the payload and
     // so a failed enqueue can roll it back cleanly. The parent status update
     // is deferred until after enqueue succeeds.
-    const childId = createInstance({
+    const childId = await createInstance({
       work_item_id: workItemId,
       workflow_name: 'replan',
       current_step: 'pm',
@@ -207,14 +207,14 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
     } catch (e) {
       // Roll the child row to 'failed' so the unique partial index
       // (which excludes 'failed') lets a future retry create a fresh replan.
-      updateInstance(
+      await updateInstance(
         { work_item_id: workItemId, workflow_name: 'replan' },
         { status: 'failed', last_job_id: jobData.job_id }
       );
       throw e;
     }
 
-    updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { status: 'awaiting_approval', last_job_id: jobData.job_id });
     _emit('workflow.transitioned', {
       instance_id: instance.id, from_agent: jobData.agent, to_agent: 'pm', reason: 'replan'
@@ -237,7 +237,7 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
       work_item: jobData.work_item,
       context: jobData.context
     });
-    updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { current_step: effective.next, last_job_id: jobData.job_id });
     _emit('workflow.transitioned', {
       instance_id: instance.id,
@@ -250,10 +250,10 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
   throw new Error(`branch for ${flow.name}/${jobData.agent}/${result.status} has no action`);
 }
 
-function applyExhaustion(instance, flow, _emit) {
+async function applyExhaustion(instance, flow, _emit) {
   // 'block' and 'escalate' are handled identically in Spec 2;
   // 'escalate' ships its button UX in a later spec.
-  updateInstance(
+  await updateInstance(
     { work_item_id: instance.work_item_id, workflow_name: flow.name },
     { status: 'exhausted' }
   );
@@ -272,7 +272,7 @@ async function maybeResumeParent(instance, flow, result, flows, enqueue, _emit) 
     );
     return;
   }
-  const parent = loadInstanceById(meta.parent_instance_id);
+  const parent = await loadInstanceById(meta.parent_instance_id);
   if (!parent) {
     console.warn(
       `[engine] replan parent ${meta.parent_instance_id} not found — cannot resume`
@@ -302,7 +302,7 @@ async function maybeResumeParent(instance, flow, result, flows, enqueue, _emit) 
       // Parent is still awaiting_approval; leave it so retry is safe.
       throw e;
     }
-    updateInstance(
+    await updateInstance(
       { work_item_id: parent.work_item_id, workflow_name: parent.workflow_name },
       { status: 'running', revision: newRev, current_step: firstAgent }
     );

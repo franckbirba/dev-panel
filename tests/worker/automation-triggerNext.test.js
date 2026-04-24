@@ -25,7 +25,7 @@ describe('runAutomation — workflow.trigger_next wiring', () => {
   });
 
   it('workflow job → engine enqueues next agent', async () => {
-    createInstance({ work_item_id: 'wi-A', workflow_name: 'work-item', current_step: 'builder' });
+    await createInstance({ work_item_id: 'wi-A', workflow_name: 'work-item', current_step: 'builder' });
     const enqueue = vi.fn().mockResolvedValue({ id: 'new-job' });
     __setEnqueueForTests(enqueue);
     await runAutomation({
@@ -39,7 +39,7 @@ describe('runAutomation — workflow.trigger_next wiring', () => {
     });
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue.mock.calls[0][0].agent).toBe('reviewer');
-    const inst = loadInstance({ work_item_id: 'wi-A', workflow_name: 'work-item' });
+    const inst = await loadInstance({ work_item_id: 'wi-A', workflow_name: 'work-item' });
     expect(inst.current_step).toBe('reviewer');
   });
 });

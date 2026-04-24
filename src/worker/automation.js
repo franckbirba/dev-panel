@@ -51,10 +51,10 @@ async function runStep(job_id, agent, step, fn) {
   const start = Date.now();
   try {
     await fn();
-    logStep({ job_id, agent, step, status: 'ok', duration_ms: Date.now() - start });
+    await logStep({ job_id, agent, step, status: 'ok', duration_ms: Date.now() - start });
     publishEvent('job.step', { job_id, agent, step, status: 'ok' });
   } catch (err) {
-    logStep({ job_id, agent, step, status: 'error', error: err.message, duration_ms: Date.now() - start });
+    await logStep({ job_id, agent, step, status: 'error', error: err.message, duration_ms: Date.now() - start });
     publishEvent('job.step', { job_id, agent, step, status: 'error', error: err.message });
   }
 }
@@ -104,7 +104,7 @@ async function updateDevpanelTicket({ context, status }) {
 }
 
 async function verifyMemoryWrites({ job_id, result }) {
-  const actual = countMemoryWrites(job_id);
+  const actual = await countMemoryWrites(job_id);
   const claimed = result.memory_writes_count ?? 0;
   if (actual !== claimed) {
     throw new Error(`memory_writes_count mismatch: claimed=${claimed}, actual=${actual}`);

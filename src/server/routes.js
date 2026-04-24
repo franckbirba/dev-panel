@@ -1507,7 +1507,7 @@ export function createRouter(config = {}) {
       // Flush historical events first, then attach for live updates.
       const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
       subscribe(id, res);
-      const past = listEvents(id, { after });
+      const past = await listEvents(id, { after });
       for (const ev of past) {
         res.write(`event: job_event\ndata: ${JSON.stringify({ job_id: id, ...ev })}\n\n`);
       }
@@ -1515,7 +1515,7 @@ export function createRouter(config = {}) {
     }
     const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
     const limit = Math.min(50000, Math.max(1, parseInt(req.query.limit, 10) || 10000));
-    res.json({ job_id: id, events: listEvents(id, { after, limit }) });
+    res.json({ job_id: id, events: await listEvents(id, { after, limit }) });
   });
 
   router.get('/admin/jobs/:id/stderr', authenticateAdmin, async (req, res) => {
@@ -1849,16 +1849,16 @@ export function createRouter(config = {}) {
 
   router.get('/admin/workflows/instances', authenticateAdmin, async (req, res) => {
     const { listActive, listByCycle } = await import('./workflow-instances.js');
-    const rows = req.query.cycle_id ? listByCycle(req.query.cycle_id) : listActive();
+    const rows = req.query.cycle_id ? await listByCycle(req.query.cycle_id) : await listActive();
     res.json({ instances: rows });
   });
 
   router.get('/admin/workflows/instances/:id', authenticateAdmin, async (req, res) => {
     const { loadInstanceById } = await import('./workflow-instances.js');
     const { listSteps } = await import('./jobs-log.js');
-    const instance = loadInstanceById(parseInt(req.params.id, 10));
+    const instance = await loadInstanceById(parseInt(req.params.id, 10));
     if (!instance) return res.status(404).json({ error: 'not found' });
-    const steps = instance.last_job_id ? listSteps(instance.last_job_id) : [];
+    const steps = instance.last_job_id ? await listSteps(instance.last_job_id) : [];
     res.json({ instance, steps });
   });
 

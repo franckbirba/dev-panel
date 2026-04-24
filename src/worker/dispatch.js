@@ -48,7 +48,7 @@ export async function enqueueWorkflowStart({
 
   let instance_id;
   try {
-    instance_id = createInstance({
+    instance_id = await createInstance({
       work_item_id: plane.work_item_id,
       workflow_name: workflow,
       current_step: firstAgent,
@@ -56,7 +56,8 @@ export async function enqueueWorkflowStart({
       cycle_id: plane.cycle_id || null
     });
   } catch (e) {
-    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    // Unique-index collision varies by backend: sqlite code, pg '23505'.
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === '23505') {
       return { ok: false, error: 'already_running' };
     }
     throw e;
@@ -78,7 +79,7 @@ export async function enqueueWorkflowStart({
     // Rollback: mark this instance failed so a retry can land cleanly
     // (the unique partial index excludes 'failed' from the active set).
     try {
-      updateInstance(
+      await updateInstance(
         { work_item_id: plane.work_item_id, workflow_name: workflow },
         { status: 'failed' }
       );
