@@ -2,7 +2,7 @@
 # Agents node (10.0.0.3) — OpenClaw + Claude Code
 package_update: true
 package_upgrade: true
-packages: [curl, git, wget, ca-certificates, gnupg, ufw]
+packages: [curl, git, wget, ca-certificates, gnupg, ufw, jq]
 
 runcmd:
   # Node.js 22
