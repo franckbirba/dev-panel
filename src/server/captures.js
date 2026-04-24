@@ -21,15 +21,22 @@ import { getMasterDatabase } from './db.js';
 import { upsertSubject } from './subjects.js';
 import { getOrCreateThread, appendMessage, listMessages } from './threads.js';
 
-export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck' }) {
+export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null }) {
   const db = getMasterDatabase();
   const id = randomUUID();
 
+  const rep = normalizeReporter(reporter);
+
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO captures (id, project_id, kind, content, status, created_by)
-       VALUES (?, ?, ?, ?, 'new', ?)`
-    ).run(id, project_id, kind, content, created_by);
+      `INSERT INTO captures
+         (id, project_id, kind, content, status, created_by,
+          reporter_id, reporter_name, reporter_email, reporter_extra)
+       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
+    ).run(
+      id, project_id, kind, content, created_by,
+      rep.id, rep.name, rep.email, rep.extra
+    );
 
     upsertSubject({
       subject_type: 'capture',
@@ -51,6 +58,19 @@ export function createCapture({ project_id, content, kind = 'idea', created_by =
   return getCapture(id);
 }
 
+// Split a host-provided reporter object into column values + a JSON extras
+// blob. Returns { id, name, email, extra } with all fields string|null.
+// Non-object input → all nulls. Fields truncated to 255 chars.
+function normalizeReporter(reporter) {
+  const empty = { id: null, name: null, email: null, extra: null };
+  if (!reporter || typeof reporter !== 'object' || Array.isArray(reporter)) return empty;
+  const trunc = (v) => (v == null ? null : String(v).slice(0, 255));
+  const { id = null, name = null, email = null, ...rest } = reporter;
+  const extraKeys = Object.keys(rest);
+  const extra = extraKeys.length ? JSON.stringify(rest) : null;
+  return { id: trunc(id), name: trunc(name), email: trunc(email), extra };
+}
+
 export function getCapture(id) {
   const db = getMasterDatabase();
   const capture = db.prepare(`SELECT * FROM captures WHERE id = ?`).get(id);
@@ -67,10 +87,27 @@ export function getCapture(id) {
         created_at: m.created_at
       }))
     : [];
-  return { ...capture, messages };
+  return { ...capture, reporter: assembleReporter(capture), messages };
 }
 
-export function listCaptures({ project_id, status = null, limit = 100 }) {
+// Build a single reporter object from the four columns. null if no
+// reporter fields were populated.
+function assembleReporter(row) {
+  const { reporter_id, reporter_name, reporter_email, reporter_extra } = row;
+  if (!reporter_id && !reporter_name && !reporter_email && !reporter_extra) return null;
+  let extras = {};
+  if (reporter_extra) {
+    try { extras = JSON.parse(reporter_extra) || {}; } catch { extras = {}; }
+  }
+  return {
+    ...(reporter_id    ? { id: reporter_id }       : {}),
+    ...(reporter_name  ? { name: reporter_name }   : {}),
+    ...(reporter_email ? { email: reporter_email } : {}),
+    ...extras
+  };
+}
+
+export function listCaptures({ project_id, status = null, reporter_id = null, limit = 100 }) {
   const db = getMasterDatabase();
   let sql = `
     SELECT c.*,
@@ -89,7 +126,8 @@ export function listCaptures({ project_id, status = null, limit = 100 }) {
      WHERE c.project_id = ?
   `;
   const params = [project_id];
-  if (status) { sql += ` AND c.status = ?`; params.push(status); }
+  if (status)      { sql += ` AND c.status = ?`;      params.push(status); }
+  if (reporter_id) { sql += ` AND c.reporter_id = ?`; params.push(reporter_id); }
   sql += ` ORDER BY c.updated_at DESC, c.created_at DESC LIMIT ?`;
   params.push(limit);
   return db.prepare(sql).all(...params);
