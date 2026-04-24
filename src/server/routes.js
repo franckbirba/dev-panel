@@ -143,7 +143,12 @@ export function createRouter(config = {}) {
     max: 100,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'Too many requests, please try again later.' }
+    message: { error: 'Too many requests, please try again later.' },
+    // Mirror endpoints are called by the worker with the admin key — trusted
+    // internal traffic, can burst past 100/min when multiple jobs stream
+    // events concurrently. Skip the global limiter for them; auth gate is
+    // enough.
+    skip: (req) => req.path.startsWith('/admin/mirror/') && req.headers['x-admin-key']
   });
 
   const ticketCreateLimiter = rateLimit({

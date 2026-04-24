@@ -24,18 +24,28 @@ if (!BASE || !KEY) {
 
 const db = new Database(resolve(STORAGE, 'projects.db'), { readonly: true });
 
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// /admin/mirror/* routes bypass the global rate limiter (admin key required)
+// but we still retry on the off chance of transient 429/5xx.
 async function post(path, body) {
-  const r = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': KEY },
-    body: JSON.stringify(body)
-  });
-  if (!r.ok) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': KEY },
+      body: JSON.stringify(body)
+    });
+    if (r.ok) return true;
+    if (r.status === 429 || r.status >= 500) {
+      await sleep(1000 * (attempt + 1));
+      continue;
+    }
     const t = await r.text().catch(() => '');
     console.error(`${path} ${r.status}: ${t.slice(0, 200)}`);
     return false;
   }
-  return true;
+  console.error(`${path} exhausted retries`);
+  return false;
 }
 
 async function backfillWorkflowInstances() {
