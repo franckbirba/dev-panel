@@ -47,6 +47,7 @@ import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetc
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
+import { notifyTicket } from './alerts.js';
 
 // ============================================================================
 // MIDDLEWARE - API Key Auth
@@ -1114,6 +1115,7 @@ export function createRouter(config = {}) {
         detail: `${type}: ${title}`,
       });
       broadcast('ticket:created', { id: ticketId, type, title });
+      notifyTicket({ id: ticketId, type, title, project: req.project.name, created_by });
 
       res.status(201).json({
         id: ticketId,

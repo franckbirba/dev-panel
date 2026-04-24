@@ -217,6 +217,16 @@ function _flushDebounce() {
   return _sendText(text);
 }
 
+export async function notifyTicket({ id, type, title, project, created_by }) {
+  if (!_hasDestination()) return;
+  const kind = type === 'feature' ? 'feature' : 'bug';
+  const who = created_by ? ` par ${String(created_by).slice(0, 40)}` : '';
+  const cleanTitle = String(title || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+  const projectPart = project ? ` sur ${project}` : '';
+  const text = `Nouveau ${kind}${projectPart}${who} — "${cleanTitle}" (ticket #${id})`;
+  return _sendText(text);
+}
+
 export async function notifyJob({
   job_id = null, agent, work_item_id, title, status,
   duration_ms = null, extra = null, next_agent = null
