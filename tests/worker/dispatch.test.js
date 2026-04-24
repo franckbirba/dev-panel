@@ -1,18 +1,26 @@
 // tests/worker/dispatch.test.js
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { initMasterDatabase } from '../../src/server/db.js';
-import { loadInstance } from '../../src/server/workflow-instances.js';
-import { enqueueWorkflowStart, __setEnqueueForTests } from '../../src/worker/dispatch.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { spawnSync } from 'child_process';
+import { startPg, stopPg, truncateOrchestration } from '../_helpers/pg.js';
 
-beforeAll(() => {
-  const dir = mkdtempSync(join(tmpdir(), 'dp-disp-'));
-  initMasterDatabase(dir);
-});
+const hasDocker = spawnSync('docker', ['version'], { stdio: 'ignore' }).status === 0;
+const d = hasDocker ? describe : describe.skip;
 
-describe('enqueueWorkflowStart', () => {
+d('enqueueWorkflowStart', () => {
+  let loadInstance, enqueueWorkflowStart, __setEnqueueForTests;
+
+  beforeAll(async () => {
+    await startPg();
+    ({ loadInstance } = await import('../../src/server/workflow-instances.js'));
+    ({ enqueueWorkflowStart, __setEnqueueForTests } = await import('../../src/worker/dispatch.js'));
+  }, 60000);
+
+  afterAll(async () => {
+    await stopPg();
+  });
+
+  beforeEach(() => truncateOrchestration());
+
   it('creates instance + enqueues first step of workflow', async () => {
     const enqueue = vi.fn().mockResolvedValue({ id: 'j-1' });
     __setEnqueueForTests(enqueue);
@@ -22,7 +30,7 @@ describe('enqueueWorkflowStart', () => {
       work_item: { title: 'x' }
     });
     expect(out.ok).toBe(true);
-    expect(out.instance_id).toBeGreaterThan(0);
+    expect(Number(out.instance_id)).toBeGreaterThan(0);
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue.mock.calls[0][0].agent).toBe('builder');
     expect(enqueue.mock.calls[0][0].workflow_revision).toBe(1);
@@ -69,6 +77,6 @@ describe('enqueueWorkflowStart', () => {
       plane: { work_item_id: 'wi-rollback' }
     });
     expect(retry.ok).toBe(true);
-    expect(retry.instance_id).toBeGreaterThan(0);
+    expect(Number(retry.instance_id)).toBeGreaterThan(0);
   });
 });

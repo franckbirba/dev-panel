@@ -1,30 +1,39 @@
 // tests/server/jobs-log.test.js
-// Sqlite-path coverage only. Pg-path coverage lives in jobs-log.pg.test.js
-// behind the DEVPANEL_PG_ORCHESTRATION flag and requires a pg container.
-import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { initMasterDatabase } from '../../src/server/db.js';
-import { logStep, listSteps, recordMemoryWrite, countMemoryWrites } from '../../src/server/jobs-log.js';
+// Integration coverage for jobs-log against a throwaway Postgres container
+// (applies migration 003). Skipped when docker is unavailable.
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { spawnSync } from 'child_process';
+import { startPg, stopPg, truncateOrchestration } from '../_helpers/pg.js';
 
-beforeAll(() => {
-  // Force sqlite path for this suite.
-  delete process.env.DEVPANEL_PG_ORCHESTRATION;
-  const dir = mkdtempSync(join(tmpdir(), 'dp-'));
-  initMasterDatabase(dir);
-});
+const hasDocker = spawnSync('docker', ['version'], { stdio: 'ignore' }).status === 0;
+const d = hasDocker ? describe : describe.skip;
 
-describe('jobs-log (sqlite path)', () => {
+d('jobs-log', () => {
+  let jobsLog;
+
+  beforeAll(async () => {
+    await startPg();
+    jobsLog = await import('../../src/server/jobs-log.js');
+  }, 60000);
+
+  afterAll(async () => {
+    await stopPg();
+  });
+
+  beforeEach(() => truncateOrchestration());
+
   it('records a step and lists it', async () => {
-    await logStep({ job_id: 'j1', agent: 'builder', step: 'parseResult', status: 'ok', duration_ms: 5 });
-    const rows = await listSteps('j1');
+    await jobsLog.logStep({ job_id: 'j1', agent: 'builder', step: 'parseResult', status: 'ok', duration_ms: 5 });
+    const rows = await jobsLog.listSteps('j1');
     expect(rows).toHaveLength(1);
     expect(rows[0].step).toBe('parseResult');
+    expect(rows[0].duration_ms).toBe(5);
   });
-  it('tracks memory writes per job', async () => {
-    await recordMemoryWrite('j2', 'm-1');
-    await recordMemoryWrite('j2', 'm-2');
-    expect(await countMemoryWrites('j2')).toBe(2);
+
+  it('tracks memory writes per job (dedup via ON CONFLICT)', async () => {
+    await jobsLog.recordMemoryWrite('j2', 'm-1');
+    await jobsLog.recordMemoryWrite('j2', 'm-2');
+    await jobsLog.recordMemoryWrite('j2', 'm-1'); // dup — should no-op
+    expect(await jobsLog.countMemoryWrites('j2')).toBe(2);
   });
 });

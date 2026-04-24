@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // scripts/backfill-sqlite-to-pg.mjs
 //
-// One-shot migration: copy orchestration rows from the services master.db
-// (SQLite) into the shared Postgres (`agent_memory` db). Idempotent via
+// One-shot migration: copy orchestration rows from the services projects.db
+// (SQLite — the "master" db; misnamed) into the shared Postgres (`agent_memory`
+// db). Idempotent via
 // ON CONFLICT DO NOTHING so you can re-run freely — the pg target is the
 // authoritative store once DEVPANEL_PG_ORCHESTRATION=1 flips.
 //
@@ -31,9 +32,11 @@ if (!STORAGE) {
   process.exit(1);
 }
 
-const dbPath = join(STORAGE, 'master.db');
+// The "master" db in the project's db.js is actually called projects.db —
+// it holds the projects registry AND the orchestration tables (migration 001).
+const dbPath = join(STORAGE, 'projects.db');
 if (!existsSync(dbPath)) {
-  console.error(`no sqlite master.db at ${dbPath}`);
+  console.error(`no sqlite projects.db at ${dbPath}`);
   process.exit(1);
 }
 

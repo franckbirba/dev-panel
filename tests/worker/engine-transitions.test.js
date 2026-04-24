@@ -1,13 +1,12 @@
 // tests/worker/engine-transitions.test.js
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { initMasterDatabase } from '../../src/server/db.js';
-import {
-  createInstance, loadInstance, updateInstance
-} from '../../src/server/workflow-instances.js';
-import { triggerNext } from '../../src/worker/engine.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { spawnSync } from 'child_process';
+import { startPg, stopPg, truncateOrchestration } from '../_helpers/pg.js';
+
+const hasDocker = spawnSync('docker', ['version'], { stdio: 'ignore' }).status === 0;
+const d = hasDocker ? describe : describe.skip;
+
+let createInstance, loadInstance, updateInstance, triggerNext;
 
 const FLOWS = {
   'work-item': {
@@ -34,10 +33,15 @@ const FLOWS = {
   }
 };
 
-beforeAll(() => {
-  const dir = mkdtempSync(join(tmpdir(), 'dp-eng-'));
-  initMasterDatabase(dir);
-});
+beforeAll(async () => {
+  await startPg();
+  ({ createInstance, loadInstance, updateInstance } = await import('../../src/server/workflow-instances.js'));
+  ({ triggerNext } = await import('../../src/worker/engine.js'));
+}, 60000);
+
+afterAll(async () => { await stopPg(); });
+
+beforeEach(() => truncateOrchestration());
 
 function fakeJob(agent, work_item_id, overrides = {}) {
   return {
@@ -148,7 +152,7 @@ describe('triggerNext — replan and revision guard', () => {
     expect(enqueue.mock.calls).toHaveLength(0);
     const parent = await loadInstance({ work_item_id: 'wi-rp2', workflow_name: 'work-item' });
     expect(parent.status).toBe('exhausted');
-    expect(parent.exhausted_at).toBeGreaterThan(0);
+    expect(Number(parent.exhausted_at)).toBeGreaterThan(0);
   });
 });
 

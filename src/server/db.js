@@ -36,57 +36,11 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS idx_api_key ON projects(api_key);
     CREATE INDEX IF NOT EXISTS idx_name ON projects(name);
 
-    CREATE TABLE IF NOT EXISTS agent_job_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_id TEXT NOT NULL,
-      agent TEXT NOT NULL,
-      step TEXT NOT NULL,
-      status TEXT NOT NULL,
-      error TEXT,
-      duration_ms INTEGER,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_ajl_job ON agent_job_log(job_id);
-    CREATE INDEX IF NOT EXISTS idx_ajl_time ON agent_job_log(timestamp DESC);
-
-    CREATE TABLE IF NOT EXISTS agent_memory_writes (
-      job_id TEXT NOT NULL,
-      memory_id TEXT NOT NULL,
-      PRIMARY KEY (job_id, memory_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_job_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_id TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      event_type TEXT NOT NULL,
-      event_subtype TEXT,
-      payload TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(job_id, seq)
-    );
-    CREATE INDEX IF NOT EXISTS idx_aje_job_seq ON agent_job_events(job_id, seq);
-
-    CREATE TABLE IF NOT EXISTS workflow_instances (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      work_item_id    TEXT NOT NULL,
-      workflow_name   TEXT NOT NULL,
-      revision        INTEGER NOT NULL DEFAULT 1,
-      current_step    TEXT NOT NULL,
-      status          TEXT NOT NULL DEFAULT 'running',
-      module_id       TEXT,
-      cycle_id        TEXT,
-      started_at      INTEGER NOT NULL,
-      last_event_at   INTEGER NOT NULL,
-      exhausted_at    INTEGER,
-      last_job_id     TEXT,
-      metadata        TEXT
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_wi_workflow_active
-      ON workflow_instances(work_item_id, workflow_name)
-      WHERE status IN ('running', 'awaiting_approval');
-    CREATE INDEX IF NOT EXISTS idx_wi_status ON workflow_instances(status);
-    CREATE INDEX IF NOT EXISTS idx_wi_cycle  ON workflow_instances(cycle_id);
+    -- Orchestration tables (workflow_instances, agent_job_log, agent_job_events,
+    -- agent_memory_writes) used to live here too. They moved to shared Postgres
+    -- via migration 003 so worker (agents host) and API (services host) see the
+    -- same rows. Leaving the legacy tables alone — they're harmless if a stale
+    -- projects.db has them, but we never write there anymore.
   `);
 
   // Migration: add multi-project metadata columns introduced for the
