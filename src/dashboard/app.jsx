@@ -7,8 +7,6 @@ import { CommandPalette } from "@/components/command-palette";
 import { CommandDock } from "@/components/command-dock";
 import { ProjectRibbon } from "@/components/project-ribbon";
 import { PasteUrlModal } from "@/components/paste-url-modal";
-import { InboxView } from "@/views/inbox-view";
-import { DashboardView } from "@/views/dashboard-view";
 import { SettingsView } from "@/views/settings-view";
 import { QueuesView } from "@/views/queues-view";
 import { ShellyView } from "@/views/shelly-view";
@@ -33,10 +31,10 @@ function getInitialTab() {
   if (path.includes("/ops")) return "ops";
   if (path.includes("/projects")) return "projects";
   if (path.includes("/settings")) return "settings";
-  if (path.includes("/inbox") || path.includes("/captures")) return "captures";
+  if (path.includes("/today")) return "today";
   if (path.includes("/signals")) return "signals";
-  if (path.includes("/dashboard/")) return "signals";
-  return "signals";
+  // Default landing: captures. The old /inbox alias also lands here.
+  return "captures";
 }
 
 function App() {
@@ -49,7 +47,6 @@ function App() {
   const { status: authStatus } = useAuth("");
 
   const [activeTab, setActiveTab] = useState(getInitialTab);
-  const [filter, setFilter] = useState(null);
   // currentProject snapshot — re-read on switch via projectVersion bump.
   const [projectVersion, setProjectVersion] = useState(0);
   const currentProject = getCurrentProject();
@@ -104,8 +101,8 @@ function App() {
       : tab === "projects" ? "/dashboard/projects"
       : tab === "settings" ? "/dashboard/settings"
       : tab === "signals" ? "/dashboard/signals"
+      : tab === "today" ? "/dashboard/today"
       : tab === "captures" ? "/dashboard/captures"
-      : tab === "inbox" ? "/dashboard/inbox"
       : "/dashboard/";
     window.history.replaceState(null, "", path);
   }
@@ -244,8 +241,6 @@ function App() {
             {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
             {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
             {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
-            {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} filter={filter} refreshKey={refreshKey} />}
-            {activeTab === "dashboard" && <DashboardView apiUrl={apiUrl} apiKey={apiKey} activities={activities} refreshKey={refreshKey} queueHealth={queueHealth} />}
             {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}
             {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
             {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}

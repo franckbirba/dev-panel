@@ -2,23 +2,32 @@
 // Inbox: hero composer on top, list left, thread right. Zero-friction dump.
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { IconSend } from '@/components/icons';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const POLL_MS = 8_000;
 
-const STATUS_CHIP = {
-  new:      'warning',
-  triaging: 'info',
-  promoted: 'success',
-  dropped:  'default',
+// shadcn Badge variants. "outline" for new, "secondary" for triaging/promoted
+// so the eye picks up the active items without shouting. Dropped = muted.
+const STATUS_VARIANT = {
+  new:      'outline',
+  triaging: 'default',
+  promoted: 'secondary',
+  dropped:  'outline',
+};
+const STATUS_TONE = {
+  new:      'text-amber-400 border-amber-400/40',
+  triaging: '',
+  promoted: 'text-emerald-400 border-emerald-400/40',
+  dropped:  'text-muted-foreground/60 border-border',
 };
 
 function StatusChip({ status }) {
-  const kind = STATUS_CHIP[status] || 'default';
   return (
-    <span className={`status-chip ${kind === 'default' ? '' : kind}`}>
-      <span className="dot" />
+    <Badge variant={STATUS_VARIANT[status] || 'outline'} className={STATUS_TONE[status] || ''}>
       {status}
-    </span>
+    </Badge>
   );
 }
 
@@ -152,17 +161,16 @@ export function CapturesView({ apiUrl, apiKey }) {
           </span>
         </div>
         <form onSubmit={handleCapture} className="flex items-stretch gap-2">
-          <input
+          <Input
             ref={captureInputRef}
             placeholder="Quoi qu'il te passe par la tête…"
-            className="input flex-1 h-10 text-[14px]"
-            style={{ fontSize: 14 }}
+            className="flex-1 h-10 text-sm"
             autoFocus
           />
-          <button type="submit" disabled={busy} className="btn btn-primary btn-lg">
+          <Button type="submit" disabled={busy} size="lg">
             <IconSend width={14} height={14} />
             <span>Drop it</span>
-          </button>
+          </Button>
         </form>
       </div>
 
@@ -236,9 +244,9 @@ export function CapturesView({ apiUrl, apiKey }) {
                 )}
                 <div className="flex-1" />
                 {thread.status !== 'promoted' && thread.status !== 'dropped' && (
-                  <button onClick={() => handleStatus(thread.id, 'dropped')} disabled={busy} className="btn btn-ghost btn-sm">Drop</button>
+                  <Button variant="ghost" size="sm" onClick={() => handleStatus(thread.id, 'dropped')} disabled={busy}>Drop</Button>
                 )}
-                <button onClick={() => handleDelete(thread.id)} disabled={busy} className="btn btn-ghost btn-sm text-[var(--color-error)] hover:text-[var(--color-error)]">Delete</button>
+                <Button variant="ghost" size="sm" onClick={() => handleDelete(thread.id)} disabled={busy} className="text-destructive hover:text-destructive">Delete</Button>
               </div>
 
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
@@ -301,14 +309,14 @@ export function CapturesView({ apiUrl, apiKey }) {
               </div>
 
               <form onSubmit={handleReply} className="border-t border-[var(--color-border-subtle)] px-5 py-3 flex items-center gap-2 shrink-0">
-                <input
+                <Input
                   ref={replyInputRef}
                   placeholder="Reply to Shelly or add context…"
-                  className="input flex-1 h-9"
+                  className="flex-1 h-9"
                 />
-                <button type="submit" disabled={busy} className="btn btn-primary h-9 w-9 px-0">
+                <Button type="submit" size="icon" disabled={busy}>
                   <IconSend width={14} height={14} />
-                </button>
+                </Button>
               </form>
             </>
           )}

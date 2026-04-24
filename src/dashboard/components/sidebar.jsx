@@ -1,18 +1,19 @@
 // src/dashboard/components/sidebar.jsx
 import { useState, useEffect, useCallback } from 'react';
 import {
-  IconSignals, IconToday, IconInbox, IconDashboard, IconProjects,
+  IconSignals, IconToday, IconInbox, IconProjects,
   IconQueues, IconShelly, IconSettings, IconSidebar, IconOps
 } from './icons';
 
 // Flat nav. Order = priority. Divider separates daily-use from setup.
+// Inbox (captures) is the default landing tab — that's where work enters the
+// system. Signals + Today aggregate on top of captures + workflow state.
 const PRIMARY = [
-  { id: 'signals',  label: 'Signals', icon: IconSignals },
-  { id: 'today',    label: 'Today',   icon: IconToday   },
   { id: 'captures', label: 'Inbox',   icon: IconInbox, badgeKey: 'pending' },
+  { id: 'today',    label: 'Today',   icon: IconToday   },
+  { id: 'signals',  label: 'Signals', icon: IconSignals },
 ];
 const SECONDARY = [
-  { id: 'dashboard', label: 'Dashboard', icon: IconDashboard },
   { id: 'queues',    label: 'Queues',    icon: IconQueues   },
   { id: 'shelly',    label: 'Shelly',    icon: IconShelly   },
   { id: 'ops',       label: 'Ops',       icon: IconOps      },

@@ -3,17 +3,17 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { listLocalProjects, setCurrentProject } from '@/lib/projects-store';
 import {
-  IconSignals, IconToday, IconInbox, IconDashboard, IconQueues,
+  IconSignals, IconToday, IconInbox, IconQueues, IconOps,
   IconShelly, IconProjects, IconSettings, IconPlus, IconSearch
 } from './icons';
 
 const NAV = [
-  { id: 'signals',   label: 'Signals',   icon: IconSignals,   hint: 'Operations' },
-  { id: 'today',     label: 'Today',     icon: IconToday,     hint: 'Operations' },
   { id: 'captures',  label: 'Inbox',     icon: IconInbox,     hint: 'Operations' },
-  { id: 'dashboard', label: 'Dashboard', icon: IconDashboard, hint: 'Infrastructure' },
+  { id: 'today',     label: 'Today',     icon: IconToday,     hint: 'Operations' },
+  { id: 'signals',   label: 'Signals',   icon: IconSignals,   hint: 'Operations' },
   { id: 'queues',    label: 'Queues',    icon: IconQueues,    hint: 'Infrastructure' },
   { id: 'shelly',    label: 'Shelly',    icon: IconShelly,    hint: 'Infrastructure' },
+  { id: 'ops',       label: 'Ops',       icon: IconOps,       hint: 'Infrastructure' },
   { id: 'projects',  label: 'Projects',  icon: IconProjects,  hint: 'Manage' },
   { id: 'settings',  label: 'Settings',  icon: IconSettings,  hint: 'Manage' },
 ];
