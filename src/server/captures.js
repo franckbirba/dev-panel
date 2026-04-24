@@ -21,21 +21,24 @@ import { getMasterDatabase } from './db.js';
 import { upsertSubject } from './subjects.js';
 import { getOrCreateThread, appendMessage, listMessages } from './threads.js';
 
-export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null }) {
+export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null }) {
   const db = getMasterDatabase();
   const id = randomUUID();
 
   const rep = normalizeReporter(reporter);
+  const env = (typeof environment === 'string' && environment.length > 0) ? environment : null;
 
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO captures
          (id, project_id, kind, content, status, created_by,
-          reporter_id, reporter_name, reporter_email, reporter_extra)
-       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
+          reporter_id, reporter_name, reporter_email, reporter_extra,
+          environment)
+       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)`
     ).run(
       id, project_id, kind, content, created_by,
-      rep.id, rep.name, rep.email, rep.extra
+      rep.id, rep.name, rep.email, rep.extra,
+      env
     );
 
     upsertSubject({
@@ -107,7 +110,7 @@ function assembleReporter(row) {
   };
 }
 
-export function listCaptures({ project_id, status = null, reporter_id = null, limit = 100 }) {
+export function listCaptures({ project_id, status = null, reporter_id = null, environment = null, limit = 100 }) {
   const db = getMasterDatabase();
   let sql = `
     SELECT c.*,
@@ -128,6 +131,7 @@ export function listCaptures({ project_id, status = null, reporter_id = null, li
   const params = [project_id];
   if (status)      { sql += ` AND c.status = ?`;      params.push(status); }
   if (reporter_id) { sql += ` AND c.reporter_id = ?`; params.push(reporter_id); }
+  if (environment) { sql += ` AND c.environment = ?`; params.push(environment); }
   sql += ` ORDER BY c.updated_at DESC, c.created_at DESC LIMIT ?`;
   params.push(limit);
   const rows = db.prepare(sql).all(...params);
