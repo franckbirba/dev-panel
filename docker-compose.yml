@@ -82,6 +82,11 @@ services:
       - "traefik.http.routers.oauth2proxy.entrypoints=websecure"
       - "traefik.http.routers.oauth2proxy.tls=true"
       - "traefik.http.routers.oauth2proxy.tls.certresolver=letsencrypt"
+      # CRITICAL: auth host itself must use the forwardauth middleware so that
+      # Traefik passes X-Forwarded-Uri to forward-auth. Otherwise forward-auth
+      # reads an empty URI and routes /_oauth?code=... to AuthHandler instead
+      # of AuthCallback, causing an infinite redirect loop to Google.
+      - "traefik.http.routers.oauth2proxy.middlewares=oauth-google@docker"
       - "traefik.http.services.oauth2proxy.loadbalancer.server.port=4181"
       # ForwardAuth middleware: returns 307 to Google when unauthenticated
       - "traefik.http.middlewares.oauth-google.forwardauth.address=http://oauth2-proxy:4181"
