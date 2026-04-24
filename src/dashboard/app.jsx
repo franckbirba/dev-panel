@@ -16,6 +16,7 @@ import { CapturesView } from "@/views/captures-view";
 import { SignalsView } from "@/views/signals-view";
 import { OpsView } from "@/views/ops-view";
 import { AgentsView } from "@/views/agents-view";
+import { WorkItemsView } from "@/views/work-items-view";
 import { IconLogo } from "@/components/icons";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject,
@@ -30,6 +31,7 @@ function getInitialTab() {
   if (path.includes("/queues")) return "queues";
   if (path.includes("/shelly")) return "shelly";
   if (path.includes("/agents")) return "agents";
+  if (path.includes("/work-items")) return "work-items";
   if (path.includes("/ops")) return "ops";
   if (path.includes("/projects")) return "projects";
   if (path.includes("/settings")) return "settings";
@@ -100,6 +102,7 @@ function App() {
     const path = tab === "queues" ? "/dashboard/queues"
       : tab === "shelly" ? "/dashboard/shelly"
       : tab === "agents" ? "/dashboard/agents"
+      : tab === "work-items" ? "/dashboard/work-items"
       : tab === "ops" ? "/dashboard/ops"
       : tab === "projects" ? "/dashboard/projects"
       : tab === "settings" ? "/dashboard/settings"
@@ -248,6 +251,7 @@ function App() {
             {activeTab === "queues" && <QueuesView apiUrl={apiUrl} apiKey={apiKey} queueHealth={queueHealth} sseConnected={sseConnected} />}
             {activeTab === "shelly" && <ShellyView apiUrl={apiUrl} apiKey={apiKey} />}
             {activeTab === "agents" && <AgentsView apiUrl={apiUrl} />}
+            {activeTab === "work-items" && <WorkItemsView apiUrl={apiUrl} />}
             {activeTab === "ops" && <OpsView apiUrl={apiUrl} />}
             {activeTab === "settings" && <SettingsView apiUrl={apiUrl} apiKey={apiKey} />}
           </div>

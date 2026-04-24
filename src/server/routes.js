@@ -1701,6 +1701,108 @@ export function createRouter(config = {}) {
     res.json({ messages: rows });
   });
 
+  // Work-item chain: every workflow_instance ever run against a work_item +
+  // every job that executed under those instances + any PR/branch/commit
+  // artifacts extracted from the job's final result event. Powers the
+  // /dashboard/work-items view.
+  router.get('/admin/work-items', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const rows = db.prepare(`
+        SELECT
+          work_item_id,
+          COUNT(*) AS instances,
+          SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
+          SUM(CASE WHEN status IN ('failed','blocked','exhausted') THEN 1 ELSE 0 END) AS failed,
+          SUM(CASE WHEN status IN ('running','awaiting_approval') THEN 1 ELSE 0 END) AS active,
+          MAX(last_event_at) AS last_event_at,
+          GROUP_CONCAT(DISTINCT workflow_name) AS workflows
+        FROM workflow_instances
+        GROUP BY work_item_id
+        ORDER BY MAX(last_event_at) DESC
+      `).all();
+      res.json({ work_items: rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get('/admin/work-items/:id', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const workItemId = req.params.id;
+      const instances = db.prepare(
+        `SELECT id, workflow_name, revision, current_step, status, started_at,
+                last_event_at, exhausted_at, last_job_id, metadata
+         FROM workflow_instances
+         WHERE work_item_id = ?
+         ORDER BY started_at ASC`
+      ).all(workItemId);
+
+      // Every job touching this work item — join by last_job_id is too narrow;
+      // instead pull from agent_job_log rows whose job_id appears in any of
+      // these instances' last_job_id OR any event whose job matches.
+      // Simpler: list every distinct job_id found in events that reference
+      // this work item via the job's workflow_instance_id (stored in data).
+      // BullMQ data isn't here, so fall back to last_job_id per instance +
+      // any agent_job_log rows with those job_ids.
+      const jobIds = instances
+        .map(i => i.last_job_id)
+        .filter(Boolean);
+
+      // Union: also find jobs whose events mention this work_item_id in
+      // their payload (best-effort string match).
+      const extraJobs = db.prepare(
+        `SELECT DISTINCT job_id FROM agent_job_events
+         WHERE payload LIKE ?`
+      ).all(`%${workItemId}%`).map(r => r.job_id);
+
+      const allJobIds = [...new Set([...jobIds, ...extraJobs])];
+
+      const jobs = [];
+      for (const job_id of allJobIds) {
+        const steps = db.prepare(
+          `SELECT step, status, error, duration_ms, timestamp, agent
+           FROM agent_job_log WHERE job_id = ? ORDER BY id ASC`
+        ).all(job_id);
+
+        // Find the terminal 'result' event to extract PR/branch/commits.
+        const resultRow = db.prepare(
+          `SELECT payload FROM agent_job_events
+           WHERE job_id = ? AND event_type = 'result'
+           ORDER BY seq DESC LIMIT 1`
+        ).get(job_id);
+
+        let artifacts = null;
+        let status = null;
+        if (resultRow) {
+          try {
+            const p = JSON.parse(resultRow.payload);
+            const inner = typeof p.result === 'string' ? JSON.parse(p.result) : p.result;
+            artifacts = inner?.artifacts || null;
+            status = inner?.status || p.subtype || null;
+          } catch { /* payload not JSON, skip */ }
+        }
+
+        jobs.push({
+          job_id,
+          agent: steps[0]?.agent || null,
+          status,
+          artifacts,
+          step_count: steps.length,
+          first_at: steps[0]?.timestamp || null,
+          last_at: steps[steps.length - 1]?.timestamp || null,
+          error_count: steps.filter(s => s.status === 'error').length
+        });
+      }
+      jobs.sort((a, b) => (a.first_at || '').localeCompare(b.first_at || ''));
+
+      res.json({ work_item_id: workItemId, instances, jobs });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Per-agent roll-up: which agents have run, how often, success rate, last-seen.
   // Feeds /dashboard/agents. Aggregates off agent_job_log which the worker
   // mirrors here from hetzner in real time.
