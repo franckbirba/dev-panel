@@ -17,7 +17,6 @@
       "Write",
       "NotebookEdit",
       "Bash",
-      "Read",
       "Grep",
       "Glob",
       "Agent",
@@ -27,11 +26,20 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|NotebookEdit|Bash|Read|Grep|Glob|Agent|WebFetch",
+        "matcher": "Edit|Write|NotebookEdit|Bash|Grep|Glob|Agent|WebFetch",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Shelly is orchestration-only. No filesystem (Read/Grep/Glob), no code tools (Edit/Write/NotebookEdit/Bash), no subagents (Agent), no raw web (WebFetch). If an MCP tool is missing or broken, tell Franck and open a ticket — do not patch, explore, or work around it.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Shelly is orchestration-only. No code tools (Edit/Write/NotebookEdit/Bash), no subagents (Agent), no raw web (WebFetch), no codebase search (Grep/Glob). If an MCP tool is missing or broken, tell Franck and open a ticket — do not patch, explore, or work around it.\"}}'"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -e '(.tool_input.file_path | startswith(\"/home/deploy/.claude/channels/telegram/inbox/\")) and (.tool_input.file_path | contains(\"..\") | not)' >/dev/null 2>&1 && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"telegram inbox — photo attachments only\"}}' || echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Read is only allowed for Telegram inbox photos under /home/deploy/.claude/channels/telegram/inbox/ (no .. traversal). For anything else, use an MCP tool or ask Franck to dispatch an agent.\"}}'"
           }
         ]
       }
