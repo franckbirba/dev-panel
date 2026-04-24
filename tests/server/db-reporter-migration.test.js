@@ -20,28 +20,34 @@ describe('captures reporter migration (v3)', () => {
   it('adds reporter_id, reporter_name, reporter_email, reporter_extra columns to captures', () => {
     initMasterDatabase(tmp);
     const raw = new Database(join(tmp, 'projects.db'));
-    const cols = new Set(raw.prepare('PRAGMA table_info(captures)').all().map(c => c.name));
-    expect(cols.has('reporter_id')).toBe(true);
-    expect(cols.has('reporter_name')).toBe(true);
-    expect(cols.has('reporter_email')).toBe(true);
-    expect(cols.has('reporter_extra')).toBe(true);
+    try {
+      const cols = new Set(raw.prepare('PRAGMA table_info(captures)').all().map(c => c.name));
+      expect(cols.has('reporter_id')).toBe(true);
+      expect(cols.has('reporter_name')).toBe(true);
+      expect(cols.has('reporter_email')).toBe(true);
+      expect(cols.has('reporter_extra')).toBe(true);
+    } finally { raw.close(); }
   });
 
   it('creates idx_captures_reporter_id and idx_captures_reporter_email indexes', () => {
     initMasterDatabase(tmp);
     const raw = new Database(join(tmp, 'projects.db'));
-    const idx = new Set(raw.prepare(
-      `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='captures'`
-    ).all().map(r => r.name));
-    expect(idx.has('idx_captures_reporter_id')).toBe(true);
-    expect(idx.has('idx_captures_reporter_email')).toBe(true);
+    try {
+      const idx = new Set(raw.prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='captures'`
+      ).all().map(r => r.name));
+      expect(idx.has('idx_captures_reporter_id')).toBe(true);
+      expect(idx.has('idx_captures_reporter_email')).toBe(true);
+    } finally { raw.close(); }
   });
 
   it('bumps user_version to at least 3', () => {
     initMasterDatabase(tmp);
     const raw = new Database(join(tmp, 'projects.db'));
-    const v = raw.pragma('user_version', { simple: true });
-    expect(v).toBeGreaterThanOrEqual(3);
+    try {
+      const v = raw.pragma('user_version', { simple: true });
+      expect(v).toBeGreaterThanOrEqual(3);
+    } finally { raw.close(); }
   });
 
   it('is idempotent: running init twice does not throw', () => {
