@@ -256,6 +256,21 @@ export function initMasterDatabase(storagePath = './storage') {
     masterDb.pragma(`user_version = ${REPORTER_IDENTITY_VERSION}`);
   }
 
+  // Migration v4: environment tag on captures.
+  // Single nullable TEXT column + one index. Host app stamps each capture with
+  // a free-form slug (dev, staging, production, preview-pr-42…). Server
+  // validates slug charset in the route layer; DB just stores the string.
+  // Guarded by user_version. See spec:
+  // docs/superpowers/specs/2026-04-24-widget-environment-tag-design.md
+  const ENVIRONMENT_TAG_VERSION = 4;
+  const currentVersion4 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion4 < ENVIRONMENT_TAG_VERSION) {
+    const capCols4 = new Set(masterDb.prepare("PRAGMA table_info(captures)").all().map(c => c.name));
+    if (!capCols4.has('environment')) masterDb.exec(`ALTER TABLE captures ADD COLUMN environment TEXT`);
+    masterDb.exec(`CREATE INDEX IF NOT EXISTS idx_captures_environment ON captures(environment)`);
+    masterDb.pragma(`user_version = ${ENVIRONMENT_TAG_VERSION}`);
+  }
+
   return masterDb;
 }
 
