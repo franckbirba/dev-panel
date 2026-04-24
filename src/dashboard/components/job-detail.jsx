@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { StatusChip } from "@/components/status-chip";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { JobLog } from "@/components/job-log";
 
 const statusStyles = {
   waiting: "pending",
@@ -24,6 +25,7 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose,
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [showLog, setShowLog] = useState(false);
 
   useEffect(() => {
     if (!queueName || !jobId) return;
@@ -77,6 +79,9 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose,
         <div className="flex-1" />
         {adminKey && (
           <div className="flex gap-2">
+            <button onClick={() => setShowLog(v => !v)} className={`text-[11px] font-mono hover:underline cursor-pointer ${showLog ? 'text-success' : 'text-info'}`}>
+              {showLog ? 'Hide log' : 'Live log'}
+            </button>
             <button onClick={() => onTimeline && onTimeline(jobId)} className="text-[11px] font-mono text-info hover:underline cursor-pointer">
               Timeline
             </button>
@@ -126,6 +131,15 @@ export function JobDetail({ queueName, jobId, apiUrl, apiKey, adminKey, onClose,
                 <span className="text-[10px]">{job.progress}%</span>
               </div>
             </DetailRow>
+          )}
+
+          {showLog && adminKey && (
+            <div className="mt-4">
+              <span className="text-muted-foreground text-[11px] font-mono font-semibold uppercase tracking-wide">Live log</span>
+              <div className="mt-2 h-[360px]">
+                <JobLog jobId={jobId} apiUrl={apiUrl} adminKey={adminKey} />
+              </div>
+            </div>
           )}
 
           {/* Data */}

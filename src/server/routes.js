@@ -172,7 +172,9 @@ export function createRouter(config = {}) {
 
   // Admin authentication middleware
   function authenticateAdmin(req, res, next) {
-    const adminKey = req.headers['x-admin-key'];
+    // EventSource can't set headers, so SSE consumers pass ?admin_key=... in
+    // the URL. Header still preferred for normal requests.
+    const adminKey = req.headers['x-admin-key'] || req.query.admin_key;
     const configuredKey = process.env.ADMIN_API_KEY;
 
     if (!configuredKey) {
@@ -185,7 +187,7 @@ export function createRouter(config = {}) {
     }
 
     if (!adminKey) {
-      return res.status(401).json({ error: 'Invalid or missing admin key. Provide via X-Admin-Key header.' });
+      return res.status(401).json({ error: 'Invalid or missing admin key. Provide via X-Admin-Key header or admin_key query param.' });
     }
 
     const adminBuf = Buffer.from(adminKey);
