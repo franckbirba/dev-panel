@@ -21,6 +21,11 @@ import { recordMemoryWrite } from '../server/jobs-log.js';
 import { parseTag } from '../server/telegram-tag.js';
 import { getSubject } from '../server/subjects.js';
 import { getOrCreateThread, appendFromTelegram } from '../server/threads.js';
+import {
+  listAttachments as planeListAttachments,
+  downloadAttachment as planeDownloadAttachment,
+  uploadAttachment as planeUploadAttachment
+} from './plane-attachments.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -477,6 +482,67 @@ server.tool(
       content: [{ type: 'text', text: JSON.stringify({ ...out, scheduled_for: when }, null, 2) }],
       isError: !out.ok
     };
+  }
+);
+
+server.tool(
+  'plane_list_attachments',
+  'List file attachments on a Plane work item. Accepts a UUID or a sequence like DEVPA-93. Returns id + name + type + size so you can pick one to download.',
+  {
+    work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93')
+  },
+  async ({ work_item_id }) => {
+    try {
+      const rows = await planeListAttachments(work_item_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, attachments: rows }, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }, null, 2) }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  'plane_download_attachment',
+  'Download a Plane attachment to the local Telegram inbox so Shelly can Read it. Returns the local path + filename + MIME type + size. For PDF/Excel/images/etc. Call plane_list_attachments first to get the attachment_id.',
+  {
+    work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93'),
+    attachment_id: z.string().describe('UUID of the attachment (from plane_list_attachments)')
+  },
+  async ({ work_item_id, attachment_id }) => {
+    try {
+      const out = await planeDownloadAttachment(work_item_id, attachment_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...out }, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }, null, 2) }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  'plane_upload_attachment',
+  'Upload a local file (e.g. a PDF Franck just dropped in Telegram, path in meta.image_path / attachment) as an attachment on a Plane work item. MIME is guessed from the filename extension; JSON gets stored as text/plain because Plane rejects application/json.',
+  {
+    work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93'),
+    file_path: z.string().describe('Absolute path to the local file'),
+    name: z.string().optional().describe('Override the filename stored in Plane (defaults to basename of file_path)'),
+    type: z.string().optional().describe('Override the MIME type (defaults to a best-guess from the extension)')
+  },
+  async ({ work_item_id, file_path, name, type }) => {
+    try {
+      const out = await planeUploadAttachment(work_item_id, file_path, { name, type });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...out }, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }, null, 2) }],
+        isError: true
+      };
+    }
   }
 );
 
