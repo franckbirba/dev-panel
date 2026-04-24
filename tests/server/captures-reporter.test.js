@@ -90,4 +90,21 @@ describe('captures reporter identity', () => {
     expect(filtered.length).toBe(1);
     expect(filtered[0].content).toBe('a');
   });
+
+  it('listCaptures returns reporter assembled like getCapture', () => {
+    createCapture({ project_id: project.id, content: 'a', reporter: { id: 'u_1', name: 'Alice', email: 'a@x', role: 'pm' } });
+    const list = listCaptures({ project_id: project.id });
+    expect(list[0].reporter).toEqual({ id: 'u_1', name: 'Alice', email: 'a@x', role: 'pm' });
+  });
+
+  it('assembleReporter preserves falsy-but-set fields (empty string name)', () => {
+    // Write directly via the DB to exercise a reporter stored with name='' without
+    // relying on normalizeReporter's 255-char treatment of empty strings.
+    const created = createCapture({
+      project_id: project.id, content: 'x',
+      reporter: { id: 'u_1', name: '', email: 'e@x' }
+    });
+    const full = getCapture(created.id);
+    expect(full.reporter).toEqual({ id: 'u_1', name: '', email: 'e@x' });
+  });
 });

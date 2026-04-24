@@ -94,15 +94,15 @@ export function getCapture(id) {
 // reporter fields were populated.
 function assembleReporter(row) {
   const { reporter_id, reporter_name, reporter_email, reporter_extra } = row;
-  if (!reporter_id && !reporter_name && !reporter_email && !reporter_extra) return null;
+  if (reporter_id == null && reporter_name == null && reporter_email == null && reporter_extra == null) return null;
   let extras = {};
   if (reporter_extra) {
     try { extras = JSON.parse(reporter_extra) || {}; } catch { extras = {}; }
   }
   return {
-    ...(reporter_id    ? { id: reporter_id }       : {}),
-    ...(reporter_name  ? { name: reporter_name }   : {}),
-    ...(reporter_email ? { email: reporter_email } : {}),
+    ...(reporter_id    != null ? { id: reporter_id }       : {}),
+    ...(reporter_name  != null ? { name: reporter_name }   : {}),
+    ...(reporter_email != null ? { email: reporter_email } : {}),
     ...extras
   };
 }
@@ -130,7 +130,8 @@ export function listCaptures({ project_id, status = null, reporter_id = null, li
   if (reporter_id) { sql += ` AND c.reporter_id = ?`; params.push(reporter_id); }
   sql += ` ORDER BY c.updated_at DESC, c.created_at DESC LIMIT ?`;
   params.push(limit);
-  return db.prepare(sql).all(...params);
+  const rows = db.prepare(sql).all(...params);
+  return rows.map(r => ({ ...r, reporter: assembleReporter(r) }));
 }
 
 export function listPendingForAllProjects({ limit = 50 } = {}) {
