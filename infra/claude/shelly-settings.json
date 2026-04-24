@@ -43,6 +43,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__devpanel-mcp__(plane_dispatch_work_item|devpanel_workflow_dispatch|enqueue_job|cancel_job)|mcp__plane-mcp__create_work_item",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/deploy/bin/shelly-memory-reminder.sh"
+          }
+        ]
+      }
     ]
   }
 }

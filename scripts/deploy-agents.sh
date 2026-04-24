@@ -97,6 +97,11 @@ install -o deploy -g deploy -m 0755 \
   /home/deploy/projects/dev-panel/infra/shelly-watchdog.sh \
   /home/deploy/bin/shelly-watchdog.sh
 
+# PostToolUse memory-reminder hook — referenced by shelly-settings.json.
+install -o deploy -g deploy -m 0755 \
+  /home/deploy/projects/dev-panel/infra/claude/hooks/shelly-memory-reminder.sh \
+  /home/deploy/bin/shelly-memory-reminder.sh
+
 systemctl daemon-reload
 systemctl enable devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service shelly-daily-restart.timer
 systemctl restart devpanel-worker
