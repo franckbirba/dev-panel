@@ -1,0 +1,12 @@
+[Unit]
+Description=Restart shelly.service every day at 04:00 Europe/Paris
+Documentation=file:///home/deploy/projects/dev-panel/.agents/shelly/SOUL.md
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Europe/Paris
+Persistent=true
+AccuracySec=1min
+Unit=shelly-daily-restart.service
+
+[Install]
+WantedBy=timers.target

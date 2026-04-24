@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily restart of shelly.service — clear tmux session context
+Documentation=file:///home/deploy/projects/dev-panel/.agents/shelly/SOUL.md
+After=shelly.service
+Requires=shelly.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) daily-restart" >> /home/deploy/logs/shelly-restarts.log && /usr/bin/systemctl restart shelly.service'

@@ -82,12 +82,14 @@ install -o deploy -g deploy -m 0644 \
   /home/deploy/projects/dev-panel/infra/claude/shelly-settings.json \
   /home/deploy/.claude/settings.json
 
-# Systemd units (worker + shelly + watchdog + relay)
+# Systemd units (worker + shelly + watchdog + relay + daily-restart)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-relay.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer /etc/systemd/system/
 
 # Watchdog script must be executable and on the deploy user's PATH.
 install -d -o deploy -g deploy /home/deploy/bin /home/deploy/logs
@@ -96,7 +98,7 @@ install -o deploy -g deploy -m 0755 \
   /home/deploy/bin/shelly-watchdog.sh
 
 systemctl daemon-reload
-systemctl enable devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service
+systemctl enable devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service shelly-daily-restart.timer
 systemctl restart devpanel-worker
 systemctl restart shelly-relay.service
 # Reload shelly only if it's running; do not start a kill cascade if a human
@@ -105,6 +107,7 @@ if systemctl is-active --quiet shelly.service; then
   systemctl reload-or-restart shelly.service || true
 fi
 systemctl restart shelly-watchdog.timer
+systemctl restart shelly-daily-restart.timer
 
 sleep 3
 if systemctl is-active devpanel-worker > /dev/null; then
