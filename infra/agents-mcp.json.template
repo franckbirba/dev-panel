@@ -31,6 +31,10 @@
         "API_BASE": "https://devpanl.dev",
         "WORKER_API": "http://localhost:3099"
       }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]
     }
   }
 }
