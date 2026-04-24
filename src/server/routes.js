@@ -783,18 +783,30 @@ export function createRouter(config = {}) {
 
   router.post('/captures', authenticateProject, (req, res) => {
     try {
-      const { content = '', kind = 'idea', reporter } = req.body || {};
+      const { content = '', kind = 'idea', reporter, environment } = req.body || {};
       if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
       if (reporter !== undefined && reporter !== null) {
         if (typeof reporter !== 'object' || Array.isArray(reporter)) {
           return res.status(400).json({ error: 'reporter must be an object' });
         }
       }
+      let env = null;
+      if (environment !== undefined && environment !== null) {
+        if (typeof environment !== 'string') {
+          return res.status(400).json({ error: 'environment must be a string' });
+        }
+        const trimmed = environment.trim();
+        if (trimmed.length === 0 || trimmed.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
+          return res.status(400).json({ error: 'environment must be a slug (1-64 chars, [a-zA-Z0-9._-])' });
+        }
+        env = trimmed;
+      }
       const capture = createCapture({
         project_id: req.project.id,
         content: String(content).slice(0, 4000),
         kind: String(kind).slice(0, 32),
-        reporter: reporter ?? null
+        reporter: reporter ?? null,
+        environment: env
       });
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -804,8 +816,9 @@ export function createRouter(config = {}) {
     try {
       const status = req.query.status ? String(req.query.status) : null;
       const reporter_id = req.query.reporter_id ? String(req.query.reporter_id) : null;
+      const environment = req.query.environment ? String(req.query.environment).slice(0, 64) : null;
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
-      res.json({ captures: listCaptures({ project_id: req.project.id, status, reporter_id, limit }) });
+      res.json({ captures: listCaptures({ project_id: req.project.id, status, reporter_id, environment, limit }) });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 

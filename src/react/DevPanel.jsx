@@ -24,7 +24,8 @@ export function DevPanel({
   apiKey,
   position = 'bottom-right',
   getState = null,
-  user = null
+  user = null,
+  environment = null
 }) {
   if (!apiKey) {
     console.warn('DevPanel: apiKey is required. Component will not render.');
@@ -113,7 +114,7 @@ export function DevPanel({
     const createRes = await fetch(`${apiUrl}/api/captures`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-      body: JSON.stringify(buildCaptureRequestPayload(user, kind, content))
+      body: JSON.stringify(buildCaptureRequestPayload(user, kind, content, environment))
     });
     if (!createRes.ok) {
       const errData = await createRes.json().catch(() => ({}));
@@ -139,7 +140,7 @@ export function DevPanel({
       }).catch(() => { /* context is best-effort */ });
     }
     return capture;
-  }, [apiUrl, apiKey, user]);
+  }, [apiUrl, apiKey, user, environment]);
 
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);

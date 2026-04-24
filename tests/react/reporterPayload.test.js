@@ -35,4 +35,44 @@ describe('buildCaptureRequestPayload', () => {
     const body = buildCaptureRequestPayload(['a'], 'bug', 'x');
     expect('reporter' in body).toBe(false);
   });
+
+  it('includes environment when it is a non-empty string', () => {
+    const body = buildCaptureRequestPayload(null, 'bug', 'x', 'production');
+    expect(body.environment).toBe('production');
+  });
+
+  it('omits environment when it is undefined', () => {
+    const body = buildCaptureRequestPayload(null, 'bug', 'x');
+    expect('environment' in body).toBe(false);
+  });
+
+  it('omits environment when it is null', () => {
+    const body = buildCaptureRequestPayload(null, 'bug', 'x', null);
+    expect('environment' in body).toBe(false);
+  });
+
+  it('omits environment when it is an empty string', () => {
+    const body = buildCaptureRequestPayload(null, 'bug', 'x', '');
+    expect('environment' in body).toBe(false);
+  });
+
+  it('omits environment when it is not a string (number)', () => {
+    const body = buildCaptureRequestPayload(null, 'bug', 'x', 42);
+    expect('environment' in body).toBe(false);
+  });
+
+  it('carries both reporter and environment together', () => {
+    const body = buildCaptureRequestPayload(
+      { id: 'u_1', name: 'Alice' },
+      'bug',
+      'broken',
+      'staging'
+    );
+    expect(body).toEqual({
+      kind: 'bug',
+      content: 'broken',
+      reporter: { id: 'u_1', name: 'Alice' },
+      environment: 'staging'
+    });
+  });
 });

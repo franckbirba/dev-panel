@@ -1,11 +1,15 @@
-// Build the JSON body for POST /api/captures, attaching a `reporter`
-// field only when the host app passed a plain object as `user`.
-// Keeping this as a pure function (no React, no fetch) so it can be
-// unit-tested without jsdom or Testing Library.
-export function buildCaptureRequestPayload(user, kind, content) {
+// Build the JSON body for POST /api/captures.
+// - `user` (object) → `reporter` field on the body.
+// - `environment` (non-empty string) → `environment` field on the body.
+// Both are optional. Pure function — no React, no fetch — so tests can run
+// without jsdom.
+export function buildCaptureRequestPayload(user, kind, content, environment) {
   const body = { kind, content };
   if (user && typeof user === 'object' && !Array.isArray(user)) {
     body.reporter = user;
+  }
+  if (typeof environment === 'string' && environment.length > 0) {
+    body.environment = environment;
   }
   return body;
 }
