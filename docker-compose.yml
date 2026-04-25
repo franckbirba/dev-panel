@@ -136,6 +136,11 @@ services:
       ENABLE_BULLMQ: "true"
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Trust X-Forwarded-User from Traefik (set by traefik-forward-auth
+      # after Google SSO). Used by /api/projects authenticateSpaBootstrap.
+      # Safe because the container only listens on the docker network and
+      # Traefik strips inbound X-Forwarded-User from clients before injecting.
+      TRUST_FORWARDED_USER: "true"
       # PG_*, VOYAGE_*, AGENT_MEMORY_NAMESPACE all come from env_file (.env.production)
       # — init.sh generates them in sync with AFFINE_DB_PASSWORD.
       # Orchestration state (workflow_instances, agent_job_*) lives in the shared
@@ -156,11 +161,28 @@ services:
           memory: 512M
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.devpanel.rule=Host(`devpanl.dev`)"
-      - "traefik.http.routers.devpanel.entrypoints=websecure"
-      - "traefik.http.routers.devpanel.tls=true"
-      - "traefik.http.routers.devpanel.tls.certresolver=letsencrypt"
+      # Single backend service shared by both routers below.
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
+      # ── M2M router: /api/*, /widget.js, /health — NO oauth.
+      # Used by the standalone widget (cross-origin <script>), the
+      # agents-node worker (X-API-Key / X-Admin-Key), and uptime-kuma probes.
+      # Higher priority so it wins over the catch-all SPA router.
+      - "traefik.http.routers.devpanel-api.rule=Host(`devpanl.dev`) && (PathPrefix(`/api`) || Path(`/widget.js`) || PathPrefix(`/health`))"
+      - "traefik.http.routers.devpanel-api.entrypoints=websecure"
+      - "traefik.http.routers.devpanel-api.tls=true"
+      - "traefik.http.routers.devpanel-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.devpanel-api.service=devpanel"
+      - "traefik.http.routers.devpanel-api.priority=200"
+      # ── SPA router: everything else (/, /dashboard/*, static assets).
+      # Gated by oauth-google@docker — Traefik bounces unauthenticated
+      # browsers through auth.devpanl.dev → Google → back with cookie.
+      - "traefik.http.routers.devpanel-spa.rule=Host(`devpanl.dev`)"
+      - "traefik.http.routers.devpanel-spa.entrypoints=websecure"
+      - "traefik.http.routers.devpanel-spa.tls=true"
+      - "traefik.http.routers.devpanel-spa.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.devpanel-spa.service=devpanel"
+      - "traefik.http.routers.devpanel-spa.middlewares=oauth-google@docker"
+      - "traefik.http.routers.devpanel-spa.priority=100"
 
   postgres:
     image: pgvector/pgvector:pg16
