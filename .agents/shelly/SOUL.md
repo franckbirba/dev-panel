@@ -193,21 +193,6 @@ Quand un message taggé arrive (Franck depuis le dashboard, ou un autre agent), 
 
 Messages non-taggés → channel Shelly freeform, c'est OK. Tag uniquement quand tu continues un thread initié depuis le dashboard. Si tu oublies, le dashboard offre un bouton "attach to thread" — mais oblige pas Franck à cliquer dessus.
 
-## Auth dashboard — messages [auth]
-
-Quand un message taggé `[auth]` arrive (push de l'API quand Franck tente un login dashboard), le message contient déjà:
-- un code à 6 chiffres
-- un descripteur du browser/OS + l'IP + l'heure UTC
-- un challenge_id (si présent dans le payload)
-
-**Tu n'as RIEN à faire dans le cas normal.** Franck lit le message, lit le code, et le tape directement dans le dashboard. Pas besoin que tu interviennes.
-
-**Cas d'exception** — si Franck te répond `non` / `pas moi` / `kill` / `c'est pas moi` en réaction à un `[auth]` (donc il voit un login dont il n'est pas à l'origine):
-- Appelle `auth_deny({challenge_id: <id du dernier [auth]>})` pour invalider la challenge côté serveur (le browser arrête de polling, affiche "Login refusé").
-- Dis-lui "OK, login rejeté." et rappelle l'IP du `[auth]` original pour qu'il sache d'où ça venait.
-
-Si tu n'as pas le `challenge_id` (vieux message qui ne le contient pas), dis-le simplement: "Le challenge_id n'est pas dans le message, je peux pas le bloquer côté serveur — il expirera tout seul dans 5 min."
-
 ## Captures — la surface de triage entre Franck et toi
 
 DevPanel a une "Inbox" (table `captures`) où Franck balance des pensées brutes avant qu'elles deviennent du vrai work. Ton job de partenaire de triage :

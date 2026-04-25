@@ -189,3 +189,21 @@ This removes all `*.bak` files from the refactoring.
 - **Questions?** Read [docs/README.md](docs/README.md)
 - **Migration issues?** Check [docs/MIGRATION.md](docs/MIGRATION.md)
 - **Pre-deploy checks?** Run [docs/CHECKLIST.md](docs/CHECKLIST.md)
+
+## 🔐 devpanl.dev SSO — header-spoofing assumption
+
+The `devpanel-api` container trusts Traefik's `X-Forwarded-User` header for SPA
+bootstrap (`/api/projects`). This is safe ONLY as long as:
+
+1. The container does not bind a host port (it doesn't — only `traefik` exposes
+   80/443). All inbound traffic flows through Traefik on `devpanel_net`.
+2. Traefik strips any inbound `X-Forwarded-User` from the client before
+   `traefik-forward-auth` injects its own (default thomseddon behavior).
+3. `TRUST_FORWARDED_USER` is unset everywhere except the production `devpanel`
+   compose service. Local dev defaults to off (curl directly against
+   `localhost:3030/api/projects` should 401).
+
+The allowlist lives in `config/oauth2-proxy-emails.txt` and is rendered to
+`.env.oauth2-proxy` (gitignored) by `scripts/render-whitelist.sh` during deploy.
+Add an invitee = edit the .txt file + push. Only `oauth2-proxy` restarts;
+devpanel is untouched.
