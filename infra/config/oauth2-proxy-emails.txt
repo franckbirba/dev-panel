@@ -1,1 +1,6 @@
+# Allowlist for traefik-forward-auth (oauth-google@docker middleware).
+# One email per line. `#` starts a comment. Edit via the dashboard at
+# https://devpanl.dev/dashboard/settings — the change goes live after CI
+# refreshes oauth2-proxy (~30s).
 franckbirba@gmail.com
+franckedwin1@gmail.com
