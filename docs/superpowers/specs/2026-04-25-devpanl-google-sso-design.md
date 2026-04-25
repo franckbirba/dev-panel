@@ -50,6 +50,8 @@ Two routers, same backend service. Traefik picks the M2M router first because of
 
 `/health` stays unauthenticated (uptime-kuma probes it).
 
+The SSE stream `/api/events` is M2M (`?api_key=...`), so it lands on the M2M router and the SPA's `EventSource` keeps working without a cookie. No code change needed.
+
 ### Allowlist file as source of truth
 
 Today the WHITELIST is a literal in compose env. After:
