@@ -267,6 +267,44 @@ export function createRouter(config = {}) {
     }
   });
 
+  // SSO allowlist — read/write infra/config/oauth2-proxy-emails.txt via the
+  // GitHub Contents API. Each commit triggers CI which renders the allowlist
+  // and refreshes oauth2-proxy. Live within ~30s.
+  router.get('/admin/allowlist', authenticateAdmin, async (req, res) => {
+    try {
+      const { listAllowlist } = await import('./allowlist.js');
+      res.json({ emails: await listAllowlist() });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/admin/allowlist', authenticateAdmin, async (req, res) => {
+    const { email } = req.body || {};
+    try {
+      const { addEmail } = await import('./allowlist.js');
+      const result = await addEmail(email);
+      res.json(result);
+    } catch (error) {
+      if (error.code === 'INVALID_EMAIL') return res.status(400).json({ error: 'invalid email' });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.delete('/admin/allowlist/:email', authenticateAdmin, async (req, res) => {
+    try {
+      const { removeEmail } = await import('./allowlist.js');
+      const result = await removeEmail(req.params.email);
+      res.json(result);
+    } catch (error) {
+      if (error.code === 'WOULD_EMPTY_ALLOWLIST') {
+        return res.status(400).json({ error: 'cannot remove the last email' });
+      }
+      if (error.code === 'INVALID_EMAIL') return res.status(400).json({ error: 'invalid email' });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ============================================================================
   // QUEUE MONITORING ENDPOINTS
   // ============================================================================
