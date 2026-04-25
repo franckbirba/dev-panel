@@ -82,6 +82,17 @@ install -o deploy -g deploy -m 0644 \
   /home/deploy/projects/dev-panel/infra/claude/shelly-settings.json \
   /home/deploy/.claude/settings.json
 
+# Plugin: telegram-multi (multi-tenant Telegram channel for Shelly).
+# Source of truth is in the repo (plugins/telegram-multi/); we sync it into
+# the deploy user's plugin install location and install bun deps.
+install -d -o deploy -g deploy /home/deploy/.claude/plugins
+rsync -av --delete \
+  --exclude node_modules --exclude bun.lock \
+  /home/deploy/projects/dev-panel/plugins/telegram-multi/ \
+  /home/deploy/.claude/plugins/telegram-multi/
+chown -R deploy:deploy /home/deploy/.claude/plugins/telegram-multi
+su - deploy -c 'cd /home/deploy/.claude/plugins/telegram-multi && /home/deploy/.bun/bin/bun install --no-summary'
+
 # Systemd units (worker + shelly + watchdog + relay + daily-restart)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
