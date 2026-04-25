@@ -27,6 +27,20 @@ function mount() {
   const apiUrl      = script?.dataset?.apiUrl;
   const environment = script?.dataset?.environment;
 
+  let user = null;
+  if (script?.dataset?.user) {
+    try {
+      const parsed = JSON.parse(script.dataset.user);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        user = parsed;
+      } else {
+        console.warn('[DevPanel widget] data-user must be a JSON object; ignoring.');
+      }
+    } catch (err) {
+      console.warn('[DevPanel widget] data-user is not valid JSON; ignoring.', err.message);
+    }
+  }
+
   if (!apiKey) {
     console.warn('[DevPanel widget] data-api-key missing on <script>, not mounting.');
     return;
@@ -37,7 +51,7 @@ function mount() {
   root.dataset.apiKey = apiKey;
   document.body.appendChild(root);
   createRoot(root).render(
-    <DevPanel apiKey={apiKey} apiUrl={apiUrl} environment={environment} />
+    <DevPanel apiKey={apiKey} apiUrl={apiUrl} environment={environment} user={user} />
   );
 }
 
