@@ -8,6 +8,7 @@ import { initMasterDatabase, getMasterDatabase } from './db.js';
 import { createRouter } from './routes.js';
 import { initAuth } from './auth.js';
 import { createAuthRouter } from './auth-routes.js';
+import { mountDevBotsRoutes } from './routes-dev-bots.js';
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
@@ -58,6 +59,7 @@ export function createServer(storagePath = './storage') {
 
   // Routes
   app.use('/api', createRouter(config));
+  mountDevBotsRoutes(app);
 
   // Dashboard SPA
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
