@@ -81,13 +81,28 @@ export function getCapture(id) {
   const thread = db.prepare(
     `SELECT thread_id FROM threads WHERE subject_type='capture' AND subject_id=?`
   ).get(id);
+  // Map message_id → latest outbound row so the UI can show delivery state
+  // for each user reply ("delivered to Telegram", "still pending", "failed").
+  // Without this, Franck has no way to know whether his message reached
+  // Shelly when she's slow to answer.
+  const deliveries = thread
+    ? Object.fromEntries(
+        db.prepare(
+          `SELECT thread_message_id, status, transport, error, delivered_at
+             FROM telegram_outbound
+            WHERE subject_type='capture' AND subject_id=?
+            ORDER BY id DESC`
+        ).all(id).map(d => [d.thread_message_id, d])
+      )
+    : {};
   const messages = thread
     ? listMessages(thread.thread_id).map(m => ({
         id: m.id,
         role: m.role,
         content: m.content,
         metadata: m.metadata ?? null,
-        created_at: m.created_at
+        created_at: m.created_at,
+        delivery: deliveries[m.id] || null
       }))
     : [];
   return { ...capture, reporter: assembleReporter(capture), messages };

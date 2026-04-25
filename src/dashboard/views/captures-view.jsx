@@ -5,6 +5,8 @@ import { IconSend } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { subscribeAdminEvents } from '@/lib/events';
+import { getAdminKey } from '@/lib/projects-store';
 
 const POLL_MS = 8_000;
 
@@ -249,6 +251,29 @@ export function CapturesView({ apiUrl, apiKey }) {
   }, [loadList, loadThread, selected]);
   useEffect(() => { if (selected) loadThread(selected); }, [selected, loadThread]);
   useEffect(() => { threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread]);
+
+  // Live thread updates via SSE — Shelly's Telegram replies and other tabs
+  // both broadcast 'thread:message'. We dedup by message id and only update
+  // the thread that's currently open, but always refresh the list so the
+  // sidebar's last_message preview stays in sync.
+  useEffect(() => {
+    const adminKey = getAdminKey();
+    if (!adminKey) return;
+    const unsub = subscribeAdminEvents(adminKey, (type, data) => {
+      if (type !== 'thread:message') return;
+      if (data.subject_type === 'capture') {
+        loadList();
+        if (selected && data.subject_id === selected) {
+          setThread(prev => {
+            if (!prev) return prev;
+            if (prev.messages?.some(m => m.id === data.message.id)) return prev;
+            return { ...prev, messages: [...(prev.messages || []), data.message] };
+          });
+        }
+      }
+    });
+    return unsub;
+  }, [selected, loadList]);
 
   async function handleCapture(e) {
     e.preventDefault();
@@ -510,7 +535,21 @@ export function CapturesView({ apiUrl, apiKey }) {
                           </a>
                         )}
                         {meta && <CaptureMetaPanel meta={meta} />}
-                        <div className="text-[10px] opacity-50 mt-1.5 font-mono">{timeAgo(m.created_at)}</div>
+                        <div className="text-[10px] opacity-50 mt-1.5 font-mono flex items-center gap-2">
+                          <span>{timeAgo(m.created_at)}</span>
+                          {mine && m.delivery && (
+                            <span
+                              title={m.delivery.error || m.delivery.transport || ''}
+                              className={
+                                m.delivery.status === 'delivered' ? 'text-[var(--color-success)]'
+                                : m.delivery.status === 'failed' ? 'text-[var(--color-error)]'
+                                : 'text-[var(--color-warning)]'
+                              }
+                            >
+                              · {m.delivery.status === 'delivered' ? '✓ telegram' : m.delivery.status}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

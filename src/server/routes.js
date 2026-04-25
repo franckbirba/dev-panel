@@ -1831,6 +1831,8 @@ export function createRouter(config = {}) {
       const { broadcast } = await import('./sse.js');
       broadcast('thread:message', {
         thread_id: thread.thread_id,
+        subject_type,
+        subject_id,
         message: { id, role, source, content, metadata: metadata ?? null, created_at: new Date().toISOString() }
       });
       // Forward to Telegram with tag prefix — ONLY for web-source messages.
