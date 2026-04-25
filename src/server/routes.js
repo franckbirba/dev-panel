@@ -1,7 +1,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { timingSafeEqual } from 'crypto';
-import { requireAuth } from './middleware/require-auth.js';
+import { requireForwardedUser } from './middleware/require-forwarded-user.js';
 import {
   getProjectByApiKey,
   createProject,
@@ -131,6 +131,26 @@ function authenticateProject(req, res, next) {
   // Attach project to request
   req.project = project;
   next();
+}
+
+// SPA bootstrap auth: accept (a) admin key (CLI) OR (b) trusted forwarded
+// user (browser through Traefik SSO). Plain project API keys are NOT
+// accepted here — these routes return ALL projects, which a single project
+// key must not unlock.
+function authenticateSpaBootstrap(req, res, next) {
+  // Admin key path — short-circuit if header matches.
+  const adminKey = req.headers['x-admin-key'];
+  const configured = process.env.ADMIN_API_KEY;
+  if (adminKey && configured) {
+    const a = Buffer.from(adminKey);
+    const b = Buffer.from(configured);
+    if (a.length === b.length && timingSafeEqual(a, b)) {
+      req.user = { type: 'admin_key' };
+      return next();
+    }
+  }
+  // Otherwise require the forwarded-user header.
+  return requireForwardedUser(req, res, next);
 }
 
 export function createRouter(config = {}) {
@@ -515,12 +535,10 @@ export function createRouter(config = {}) {
   // PROJECT MANAGEMENT (No project auth - admin endpoints)
   // ============================================================================
 
-  // List all projects — requireAuth so a logged-in human (cookie session)
-  // gets the full list with api_keys, allowing the dashboard to hydrate the
-  // localStorage project switcher on a fresh browser. Admin key still works
-  // for scripts; project keys are NOT enough (a project key shouldn't expose
-  // sibling projects' keys).
-  router.get('/projects', authLimiter, requireAuth, (req, res) => {
+  // List all projects — SPA bootstrap gate. A forwarded-user (browser through
+  // Traefik SSO) or admin key (CLI / scripts) may list all projects. Project
+  // API keys are NOT accepted — a project key must not expose sibling projects.
+  router.get('/projects', authLimiter, authenticateSpaBootstrap, (req, res) => {
     if (req.user?.type === 'project_key') {
       return res.status(403).json({ error: 'project key cannot list all projects' });
     }
