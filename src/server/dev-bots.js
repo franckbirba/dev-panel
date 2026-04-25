@@ -69,3 +69,27 @@ export async function validateTelegramToken(token) {
     return { ok: false, error: err.message };
   }
 }
+
+// Backward-compat: pre-multi-tenant deploys had a single TELEGRAM_BOT_TOKEN
+// in env. On first boot of telegram-multi, if no rows exist and env is set,
+// seed Franck's row so existing installs migrate transparently.
+export async function seedFromEnvIfEmpty(env = process.env) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const chatId = env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return { seeded: false, reason: 'env missing' };
+  const existing = await listAllDevBots();
+  if (existing.length > 0) return { seeded: false, reason: 'rows exist' };
+  const validation = await validateTelegramToken(token);
+  if (!validation.ok) return { seeded: false, reason: validation.error };
+  const id = await insertDevBot({
+    bot_token: token,
+    bot_username: validation.username,
+    bot_label: 'franck',
+    paired_by_tg_user_id: BigInt(chatId)
+  });
+  await updateDevBotOwner(id, {
+    owner_tg_user_id: BigInt(chatId),
+    owner_first_name: 'Franck'
+  });
+  return { seeded: true, id };
+}

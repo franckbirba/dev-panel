@@ -102,6 +102,11 @@ export function startServer(storagePath = './storage', port = 3030, host = 'loca
   let queueUpdateInterval = null;
   const { app } = createServer(storagePath);
 
+  // Backward-compat: seed Franck's row from legacy TELEGRAM_BOT_TOKEN env if empty.
+  import('./dev-bots.js').then(({ seedFromEnvIfEmpty }) => seedFromEnvIfEmpty())
+    .then(r => { if (r?.seeded) console.log(`[dev-bots] seeded franck row id=${r.id}`); })
+    .catch(err => console.error('[dev-bots] seed failed (non-fatal):', err.message));
+
   const server = app.listen(port, host, async () => {
     console.log(`✓ DevPanel server running on http://${host}:${port}`);
     console.log(`✓ Storage: ${storagePath}`);
