@@ -175,7 +175,7 @@ export function DevPanel({
       console: consoleBuffer.current?.getEntries?.() ?? [],
       network: networkInterceptor.current?.getErrors?.() ?? [],
       performance: perfMetrics.current?.getMetrics?.() ?? {},
-      sessionReplay: sessionRecorder.current?.getEvents?.() ?? [],
+      sessionReplay: sessionRecorder.current?.getSessionReplay?.() ?? [],
       screenshot: screenshot || null,
       dom: takeDOMSnapshot(),
       appState
