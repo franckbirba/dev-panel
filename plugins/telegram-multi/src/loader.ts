@@ -51,3 +51,22 @@ export async function updateOwner(id: number, tgUserId: bigint, firstName: strin
 export async function touchInbound(id: number): Promise<void> {
   await getPool().query(`UPDATE dev_bots SET last_inbound_at=now() WHERE id=$1`, [id]);
 }
+
+export async function loadAllowlist(): Promise<Set<string>> {
+  const { rows } = await getPool().query(
+    `SELECT tg_user_id FROM dev_bot_allowlist`
+  );
+  // Postgres returns BIGINT as string — that's what we want, since the
+  // plugin compares against ctx.from.id stringified.
+  return new Set(rows.map(r => String(r.tg_user_id)));
+}
+
+export async function addToAllowlist(tgUserId: bigint, firstName: string | null, addedVia: string): Promise<void> {
+  await getPool().query(
+    `INSERT INTO dev_bot_allowlist (tg_user_id, first_name, added_via)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (tg_user_id) DO UPDATE
+       SET first_name = COALESCE(EXCLUDED.first_name, dev_bot_allowlist.first_name)`,
+    [tgUserId, firstName, addedVia]
+  );
+}

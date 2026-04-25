@@ -91,5 +91,34 @@ export async function seedFromEnvIfEmpty(env = process.env) {
     owner_tg_user_id: BigInt(chatId),
     owner_first_name: 'Franck'
   });
+  await addToAllowlist({ tg_user_id: BigInt(chatId), first_name: 'Franck', added_via: 'pair' });
   return { seeded: true, id };
+}
+
+// ---------------------------------------------------------------------------
+// dev_bot_allowlist — DM allowlist that the telegram-multi plugin enforces.
+// Replaces the file-based access.json allowFrom on the agents host so the
+// API can grant access at /pair time.
+// ---------------------------------------------------------------------------
+
+export async function addToAllowlist({ tg_user_id, first_name = null, added_via = 'manual' }) {
+  await pool.query(
+    `INSERT INTO dev_bot_allowlist (tg_user_id, first_name, added_via)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (tg_user_id) DO UPDATE
+       SET first_name = COALESCE(EXCLUDED.first_name, dev_bot_allowlist.first_name)`,
+    [tg_user_id, first_name, added_via]
+  );
+}
+
+export async function removeFromAllowlist(tg_user_id) {
+  await pool.query(`DELETE FROM dev_bot_allowlist WHERE tg_user_id=$1`, [tg_user_id]);
+}
+
+export async function listAllowlist() {
+  const { rows } = await pool.query(
+    `SELECT tg_user_id, first_name, added_at, added_via
+     FROM dev_bot_allowlist ORDER BY added_at`
+  );
+  return rows;
 }

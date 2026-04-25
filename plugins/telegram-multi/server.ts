@@ -27,8 +27,13 @@ import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, appendFileSync, openSync } from 'fs'
 import { homedir } from 'os'
 import { join, extname, sep } from 'path'
-import { loadActiveBots, markRevoked, touchInbound, updateOwner, type DevBotRow } from './src/loader.ts'
+import { loadActiveBots, loadAllowlist, addToAllowlist, markRevoked, touchInbound, updateOwner, type DevBotRow } from './src/loader.ts'
 import { BotRegistry } from './src/registry.ts'
+
+// In-memory mirror of the dev_bot_allowlist Postgres table. Refreshed on
+// every reconcile tick (30s). The gate() reads this set as well as the
+// file-based access.json allowFrom — either path admits a sender.
+let dbAllowlist: Set<string> = new Set()
 
 // Stderr is connected to Claude's MCP transport — writes vanish into the
 // JSON-RPC framing buffer and never surface in any log. Mirror everything
@@ -186,8 +191,9 @@ function loadAccess(): Access {
 function assertAllowedChat(chat_id: string): void {
   const access = loadAccess()
   if (access.allowFrom.includes(chat_id)) return
+  if (dbAllowlist.has(chat_id)) return
   if (chat_id in access.groups) return
-  throw new Error(`chat ${chat_id} is not allowlisted — add via /telegram:access`)
+  throw new Error(`chat ${chat_id} is not allowlisted — add via /telegram:access or POST /api/dev-bot-allowlist`)
 }
 
 function saveAccess(a: Access): void {
@@ -229,6 +235,7 @@ function gate(ctx: Context, botUsername: string): GateResult {
 
   if (chatType === 'private') {
     if (access.allowFrom.includes(senderId)) return { action: 'deliver', access }
+    if (dbAllowlist.has(senderId)) return { action: 'deliver', access }
     if (access.dmPolicy === 'allowlist') return { action: 'drop' }
 
     // pairing mode — check for existing non-expired code for this sender
@@ -926,14 +933,19 @@ async function handleInbound(
   touchInbound(row.id).catch(() => {})
 
   // First-DM owner capture. Only set once; subsequent messages are no-ops.
+  // Also auto-allowlist the sender so they can chat without manual access
+  // mutation — this is the moment we learn who the dev actually is.
   if (row.owner_tg_user_id == null && ctx.from?.id) {
     const tgUserId = BigInt(ctx.from.id)
     const firstName = ctx.from.first_name ?? ''
     try {
       await updateOwner(row.id, tgUserId, firstName)
+      await addToAllowlist(tgUserId, firstName, 'first_inbound')
       // Mutate in place so subsequent inbounds in the same process don't retry.
       row.owner_tg_user_id = tgUserId
       row.owner_first_name = firstName
+      // Refresh in-memory allowlist immediately so gate() below admits this DM.
+      dbAllowlist.add(String(ctx.from.id))
     } catch (err) {
       log(`telegram-multi: updateOwner ${row.bot_label} failed: ${err}`)
     }
@@ -1076,8 +1088,9 @@ const registry = new BotRegistry({
 
 async function reconcileLoop(): Promise<void> {
   try {
-    const next = await loadActiveBots()
+    const [next, allow] = await Promise.all([loadActiveBots(), loadAllowlist()])
     await registry.reconcile(next)
+    dbAllowlist = allow
   } catch (err) {
     log(`telegram-multi: reconcile failed: ${err}`)
   }
