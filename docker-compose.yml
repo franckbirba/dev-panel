@@ -71,9 +71,14 @@ services:
       SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
       AUTH_HOST: auth.devpanl.dev
       COOKIE_DOMAIN: devpanl.dev
-      WHITELIST: franckbirba@gmail.com
       LIFETIME: "604800"  # 7 days
       LOG_LEVEL: info
+    # WHITELIST is rendered from infra/config/oauth2-proxy-emails.txt by
+    # infra/scripts/render-whitelist.sh during deploy. The file is gitignored
+    # and regenerated per deploy so the .txt file stays the source of truth.
+    env_file:
+      - path: .env.oauth2-proxy
+        required: true
     networks:
       - devpanel_net
     labels:
