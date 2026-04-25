@@ -4,11 +4,159 @@ import { useState, useEffect } from 'react';
 
 const SECTIONS = [
   { id: 'project',       label: 'Project'       },
+  { id: 'access',        label: 'Access'        },
   { id: 'github',        label: 'GitHub'        },
   { id: 'notifications', label: 'Notifications' },
   { id: 'storage',       label: 'Storage'       },
   { id: 'danger',        label: 'Danger Zone',  danger: true },
 ];
+
+function AllowlistPanel({ apiUrl }) {
+  const [emails, setEmails] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [hint, setHint] = useState(null);
+
+  const adminKey = () => localStorage.getItem('devpanel_admin_key') || '';
+
+  async function load() {
+    setError(null);
+    const key = adminKey();
+    if (!key) {
+      setError('Set the admin key in the Project tab to manage the allowlist.');
+      return;
+    }
+    try {
+      const r = await fetch(`${apiUrl}/api/admin/allowlist`, {
+        headers: { 'X-Admin-Key': key }
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      const body = await r.json();
+      setEmails(body.emails || []);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-line */ }, [apiUrl]);
+
+  async function add(e) {
+    e.preventDefault();
+    const value = pendingEmail.trim().toLowerCase();
+    if (!value) return;
+    setBusy(true);
+    setError(null);
+    setHint(null);
+    try {
+      const r = await fetch(`${apiUrl}/api/admin/allowlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey() },
+        body: JSON.stringify({ email: value })
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      setEmails(body.emails || []);
+      setPendingEmail('');
+      setHint(body.alreadyPresent
+        ? 'Already in the allowlist.'
+        : 'Committed to main. Live in ~30s once CI refreshes oauth2-proxy.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(email) {
+    if (!confirm(`Remove ${email} from the allowlist?`)) return;
+    setBusy(true);
+    setError(null);
+    setHint(null);
+    try {
+      const r = await fetch(`${apiUrl}/api/admin/allowlist/${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Key': adminKey() }
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      setEmails(body.emails || []);
+      setHint(body.removed
+        ? 'Committed. Live in ~30s.'
+        : 'Email was not in the allowlist.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="surface px-5 py-4">
+      <div className="text-[13px] text-[var(--color-foreground)] mb-1">Google SSO allowlist</div>
+      <div className="text-[11.5px] text-[var(--color-foreground-faint)] mb-3">
+        Each entry is one Google account allowed to sign in at devpanl.dev.
+        Adding or removing commits <code className="font-mono">infra/config/oauth2-proxy-emails.txt</code>
+        {' '}on main; CI refreshes oauth2-proxy and the change goes live in ~30s.
+      </div>
+
+      <form onSubmit={add} className="flex items-center gap-2 mb-4">
+        <input
+          type="email"
+          required
+          placeholder="alice@example.com"
+          value={pendingEmail}
+          onChange={e => setPendingEmail(e.target.value)}
+          disabled={busy}
+          className="input font-mono"
+          style={{ width: 320 }}
+        />
+        <button
+          type="submit"
+          disabled={busy || !pendingEmail.trim()}
+          className="h-7 px-3 rounded-md text-[12.5px] bg-[var(--color-brand)] text-black hover:opacity-90 disabled:opacity-40 cursor-pointer transition-opacity"
+        >
+          Invite
+        </button>
+      </form>
+
+      {error && (
+        <div className="text-[12px] text-[var(--color-error)] mb-3">{error}</div>
+      )}
+      {hint && !error && (
+        <div className="text-[12px] text-[var(--color-foreground-muted)] mb-3">{hint}</div>
+      )}
+
+      {emails === null ? (
+        <div className="text-[12px] text-[var(--color-foreground-faint)]">Loading…</div>
+      ) : emails.length === 0 ? (
+        <div className="text-[12px] text-[var(--color-foreground-faint)]">No emails yet.</div>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {emails.map(email => (
+            <li
+              key={email}
+              className="flex items-center justify-between h-8 px-3 rounded-md bg-[var(--color-surface-1)] border border-[var(--color-border)]"
+            >
+              <span className="font-mono text-[12.5px] text-[var(--color-foreground)]">{email}</span>
+              <button
+                onClick={() => remove(email)}
+                disabled={busy}
+                className="text-[11.5px] text-[var(--color-foreground-faint)] hover:text-[var(--color-error)] cursor-pointer disabled:opacity-40 transition-colors"
+                title="Remove from allowlist"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function PageHeader({ children, right }) {
   return (
@@ -147,6 +295,15 @@ export function SettingsView({ apiUrl, apiKey }) {
                   />
                 </Field>
               </div>
+            </>
+          )}
+
+          {section === 'access' && (
+            <>
+              <p className="text-[12.5px] text-[var(--color-foreground-muted)] mb-4">
+                Manage who can sign in to devpanl.dev via Google.
+              </p>
+              <AllowlistPanel apiUrl={apiUrl} />
             </>
           )}
 
