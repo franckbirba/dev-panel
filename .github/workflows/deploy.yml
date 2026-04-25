@@ -41,7 +41,7 @@ jobs:
           # dist/ is required because docker-compose mounts ./dist:/app/dist;
           # without uploading the freshly-built bundle the container serves
           # the stale dashboard from whatever shipped on the VPS last time.
-          source: "infra/*,infra/config/**,infra/nginx/**,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
+          source: "infra/*,infra/config/**,infra/nginx/**,infra/scripts/**,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
           target: ~/dev-panel/
           strip_components: 0
       - uses: appleboy/ssh-action@v1
@@ -90,7 +90,15 @@ jobs:
             # are persistent team infrastructure — they stay up across
             # deploys. Touching them here has caused repeated Plane outages.
             # Bootstrap / stack rebuild is a manual op, not a CI job.
+            #
+            # Exception: oauth2-proxy (traefik-forward-auth) is stateless
+            # and gates the dashboard via Google SSO. Render the allowlist
+            # from infra/config/oauth2-proxy-emails.txt and refresh the
+            # container so any newly-added invitee is allowed through.
             # ──────────────────────────────────────────────────────────────
+            bash infra/scripts/render-whitelist.sh
+            docker compose up -d --no-deps oauth2-proxy
+
             docker compose pull devpanel
             docker compose up -d --no-deps devpanel
 
