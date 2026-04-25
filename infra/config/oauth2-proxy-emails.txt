@@ -4,3 +4,4 @@
 # refreshes oauth2-proxy (~30s).
 franckbirba@gmail.com
 franckedwin1@gmail.com
+kouawoualex1234@gmail.com
