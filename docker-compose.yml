@@ -274,8 +274,9 @@ services:
       AWS_S3_ENDPOINT_URL: https://minio.devpanl.dev
       # Required by plane-backend's gunicorn entrypoint — otherwise
       # gunicorn -w '' fails with "invalid int value" and the container
-      # restart-loops before serving.
-      GUNICORN_WORKERS: "2"
+      # restart-loops before serving. 4 workers is the minimum for the
+      # browser bootstrap (15+ parallel API calls); 2 saturates and 504s.
+      GUNICORN_WORKERS: "4"
     depends_on:
       plane-db:
         condition: service_healthy
