@@ -539,9 +539,6 @@ export function createRouter(config = {}) {
   // Traefik SSO) or admin key (CLI / scripts) may list all projects. Project
   // API keys are NOT accepted — a project key must not expose sibling projects.
   router.get('/projects', authLimiter, authenticateSpaBootstrap, (req, res) => {
-    if (req.user?.type === 'project_key') {
-      return res.status(403).json({ error: 'project key cannot list all projects' });
-    }
     try {
       const projects = listProjects();
       res.json({ projects });
