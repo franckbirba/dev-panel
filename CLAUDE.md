@@ -81,13 +81,13 @@ See memory `infra_plane_caveats.md` for the full symptom-to-fix decision tree.
 
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
 
-Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the official Telegram channel plugin. You chat with her in Telegram; she dispatches work to other agents and reports back.
+Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the `telegram-multi` plugin (Apache-2.0 fork of `claude-plugins-official:telegram` with multi-bot support). You chat with her in Telegram; she dispatches work to other agents and reports back.
 
 ### Runtime topology
 
 | Host | Role | What runs |
 |---|---|---|
-| `hetzner-vps` — 62.238.0.167 (agents node, internal 10.0.0.3) | Shelly + coding agents | `tmux -L deploy -s shelly` session → `claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions` as user `deploy`, cwd `/home/deploy/projects/dev-panel`. BullMQ worker `node src/worker/index.js` pulls jobs from Redis (services node) and spawns **ephemeral** `claude -p` subprocesses per job. |
+| `hetzner-vps` — 62.238.0.167 (agents node, internal 10.0.0.3) | Shelly + coding agents | `tmux -L deploy -s shelly` session → `claude --channels plugin:telegram-multi@devpanl --dangerously-skip-permissions` as user `deploy`, cwd `/home/deploy/projects/dev-panel`. BullMQ worker `node src/worker/index.js` pulls jobs from Redis (services node) and spawns **ephemeral** `claude -p` subprocesses per job. |
 | services VPS — 77.42.46.87 (internal 10.0.0.2) | Control plane | `devpanel-api` container (Express + MCP + `notifyJob()` push notifications), Redis, Postgres, dashboard, bull-board. |
 
 ### Who polls the Telegram bot token
@@ -95,6 +95,8 @@ Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persist
 **Exactly one process** may call `getUpdates` for a given bot token or Telegram returns `409 Conflict` and *everyone* loses messages. That one process is **Shelly** (the tmux session on `hetzner-vps`). Do not start any other poller with the same token anywhere — no second tmux, no Docker container, no local `node claw.js`, nothing.
 
 Push-only `sendMessage` calls (used by `notifyJob()` in `src/server/alerts.js`) are fine — they don't conflict.
+
+With `telegram-multi`, the plugin manages N grammy `Bot` instances *inside* one Bun process. Telegram's one-poller-per-token rule still holds — there is exactly one `getUpdates` long-poll per token, just N tokens now (one per dev's paired bot, plus Franck's). Do not run a second `telegram-multi` process against the same `dev_bots` table from another host or every token will see 409 Conflict storms.
 
 ### Telegram env vars
 
@@ -119,11 +121,11 @@ ssh hetzner-vps 'su - deploy -c "tmux -L deploy kill-session -t shelly 2>/dev/nu
   cd /home/deploy/projects/dev-panel && \
   tmux -L deploy new-session -d -s shelly \
     \"PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
-     claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions\" && \
+     claude --channels plugin:telegram-multi@devpanl --dangerously-skip-permissions\" && \
   sleep 5 && tmux -L deploy send-keys -t shelly Enter"'
 ```
 
-The `send-keys Enter` dismisses Claude's first-run "trust this folder?" prompt. Token + chat ID come from `/home/deploy/.claude/channels/telegram/.env` — the plugin reads it at startup; no need to pass them on the command line.
+The `send-keys Enter` dismisses Claude's first-run "trust this folder?" prompt. Token + chat ID for Franck's legacy bot still come from `/home/deploy/.claude/channels/telegram/.env` (used by devpanel-api's first-boot seed). Tokens for paired devs come from the shared Postgres `dev_bots` table; the env file also carries the DB connection vars (`PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`) that the plugin uses to read that table.
 
 Verify she's live: `ssh hetzner-vps 'pgrep -af "bun server.ts"'` must show a process. If empty, the plugin failed to start — almost always a PATH issue.
 
