@@ -161,12 +161,23 @@ services:
           memory: 512M
     labels:
       - "traefik.enable=true"
-      # Single backend service shared by both routers below.
+      # Single backend service shared by all routers below.
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
+      # ── SPA-bootstrap router: /api/projects, /api/projects/summary.
+      # Highest priority. Goes through oauth-google so traefik-forward-auth
+      # injects X-Forwarded-User; the Express middleware then trusts it
+      # (TRUST_FORWARDED_USER=true). Without this, the SPA's first call
+      # after Google sign-in 401s and the user sees no projects.
+      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`))"
+      - "traefik.http.routers.devpanel-api-spa.entrypoints=websecure"
+      - "traefik.http.routers.devpanel-api-spa.tls=true"
+      - "traefik.http.routers.devpanel-api-spa.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.devpanel-api-spa.service=devpanel"
+      - "traefik.http.routers.devpanel-api-spa.middlewares=oauth-google@docker"
+      - "traefik.http.routers.devpanel-api-spa.priority=300"
       # ── M2M router: /api/*, /widget.js, /health — NO oauth.
       # Used by the standalone widget (cross-origin <script>), the
       # agents-node worker (X-API-Key / X-Admin-Key), and uptime-kuma probes.
-      # Higher priority so it wins over the catch-all SPA router.
       - "traefik.http.routers.devpanel-api.rule=Host(`devpanl.dev`) && (PathPrefix(`/api`) || Path(`/widget.js`) || PathPrefix(`/health`))"
       - "traefik.http.routers.devpanel-api.entrypoints=websecure"
       - "traefik.http.routers.devpanel-api.tls=true"
