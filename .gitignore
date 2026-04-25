@@ -13,3 +13,4 @@ client_secret_*.json
 *.png
 *.zip
 .claude/scheduled_tasks.lock
+.env.oauth2-proxy

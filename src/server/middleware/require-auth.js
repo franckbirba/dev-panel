@@ -1,30 +1,11 @@
-// Auth chain: Lucia session cookie → project API key → admin key → 401.
-// Used on dashboard-facing routes. M2M widgets and CLI scripts keep working
-// because their X-API-Key / X-Admin-Key are still accepted as fallbacks.
+// Project API key OR admin key. The SPA's per-route auth uses the project
+// key from localStorage (X-API-Key), the CLI uses X-Admin-Key. The Google
+// SSO gate in front of the SPA is enforced by Traefik, not Express — see
+// require-forwarded-user.js for the SPA-bootstrap gate.
 import { timingSafeEqual } from 'crypto';
-import { getLucia } from '../auth.js';
 import { getProjectByApiKey } from '../db.js';
 
 export async function requireAuth(req, res, next) {
-  // 1. Lucia session cookie
-  const sid = req.cookies?.devpanl_session;
-  if (sid) {
-    try {
-      const { session } = await getLucia().validateSession(sid);
-      if (session) {
-        // Lucia handles sliding expiration internally.
-        if (session.fresh) {
-          const cookie = getLucia().createSessionCookie(session.id);
-          res.appendHeader('Set-Cookie', cookie.serialize());
-        }
-        req.user = { type: 'session', session_id: sid };
-        return next();
-      }
-    } catch (err) {
-      // Auth not initialized or storage error — fall through to other auth.
-    }
-  }
-  // 2. Project API key
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
   if (apiKey) {
     const project = getProjectByApiKey(apiKey);
@@ -34,7 +15,6 @@ export async function requireAuth(req, res, next) {
       return next();
     }
   }
-  // 3. Admin key
   const adminKey = req.headers['x-admin-key'];
   const configured = process.env.ADMIN_API_KEY;
   if (adminKey && configured) {

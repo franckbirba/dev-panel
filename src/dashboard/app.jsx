@@ -22,8 +22,6 @@ import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject,
   getAdminKey, hydrateFromSession
 } from "@/lib/projects-store";
-import { useAuth } from "@/lib/use-auth";
-import { LoginView } from "@/views/login-view";
 
 // Derive initial tab from URL
 function getInitialTab() {
@@ -45,11 +43,6 @@ function App() {
   // Migrate v1 storage on first mount, then read from v2.
   useEffect(() => { migrateLegacy(); }, []);
 
-  // Auth gate — probe /auth/me (uses Lucia session cookie). If not authed,
-  // render LoginView (Telegram OTP). The per-project api_key in localStorage
-  // is still used for scoping requests but no longer authenticates the human.
-  const { status: authStatus } = useAuth("");
-
   const [activeTab, setActiveTab] = useState(getInitialTab);
   // currentProject snapshot — re-read on switch via projectVersion bump.
   const [projectVersion, setProjectVersion] = useState(0);
@@ -65,14 +58,14 @@ function App() {
   const [showAddProject, setShowAddProject] = useState(false);
   const sseRef = useRef(null);
 
-  // Fresh browser → empty projects map. Once authenticated, fetch the
-  // server-side project list so the user doesn't have to paste keys again.
+  // Traefik enforces SSO before the SPA loads, so by the time we mount we
+  // know the user is authenticated. Hydrate the project list (which the
+  // server gates on X-Forwarded-User).
   useEffect(() => {
-    if (authStatus !== 'authenticated') return;
     hydrateFromSession("").then((n) => {
       if (n > 0) setProjectVersion((v) => v + 1);
     });
-  }, [authStatus]);
+  }, []);
 
   // ⌘K opens the command palette globally
   useEffect(() => {
@@ -209,14 +202,6 @@ function App() {
     connect();
     return () => { sseRef.current?.close(); };
   }, [apiKey, apiUrl, projectVersion]);
-
-  // ── Auth gate (Telegram-via-Shelly OTP) ─────────────────
-  if (authStatus === 'unknown') {
-    return <div className="flex items-center justify-center h-screen text-sm text-muted-foreground">Connexion…</div>;
-  }
-  if (authStatus === 'unauthenticated') {
-    return <LoginView apiUrl="" />;
-  }
 
   const tabStats = {
     pending: capturesCount,

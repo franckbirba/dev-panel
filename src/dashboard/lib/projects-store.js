@@ -134,7 +134,9 @@ export async function importByApiKey(apiUrl, apiKey) {
 // projects synced (or 0 if the request failed / not authorized).
 export async function hydrateFromSession(apiUrl) {
   try {
-    const res = await fetch(`${apiUrl}/api/projects`, { credentials: 'include' });
+    // Traefik SSO injects X-Forwarded-User; no cookie needed (the
+    // _forward_auth cookie is on auth.devpanl.dev and not relevant here).
+    const res = await fetch(`${apiUrl}/api/projects`);
     if (!res.ok) return 0;
     const { projects = [] } = await res.json();
     for (const p of projects) {
