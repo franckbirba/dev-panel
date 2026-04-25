@@ -1073,18 +1073,22 @@ async function reconcileLoop(): Promise<void> {
   }
 }
 
-await reconcileLoop()
-setInterval(reconcileLoop, 30_000).unref()
-
-if (running.size === 0) {
-  process.stderr.write('telegram-multi: no active bots in dev_bots — waiting for /pair\n')
-}
-
 // ---------------------------------------------------------------------------
 // MCP transport + shutdown
 // ---------------------------------------------------------------------------
 
+// Connect MCP transport BEFORE the first reconcile. The MCP initialize
+// handshake must complete promptly or Claude marks the server failed; a slow
+// Postgres call here would block stdin past that window.
 await mcp.connect(new StdioServerTransport())
+
+// Boot bots in the background so a slow loadActiveBots() doesn't delay startup.
+reconcileLoop().then(() => {
+  if (running.size === 0) {
+    process.stderr.write('telegram-multi: no active bots in dev_bots — waiting for /pair\n')
+  }
+})
+setInterval(reconcileLoop, 30_000).unref()
 
 // When Claude Code closes the MCP connection, stdin gets EOF. Without this
 // the bots keep polling forever as zombies, holding tokens and blocking the
