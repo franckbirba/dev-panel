@@ -24,11 +24,23 @@ import { z } from 'zod'
 import { Bot, GrammyError, InlineKeyboard, InputFile, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, appendFileSync, openSync } from 'fs'
 import { homedir } from 'os'
 import { join, extname, sep } from 'path'
 import { loadActiveBots, markRevoked, touchInbound, updateOwner, type DevBotRow } from './src/loader.ts'
 import { BotRegistry } from './src/registry.ts'
+
+// Stderr is connected to Claude's MCP transport — writes vanish into the
+// JSON-RPC framing buffer and never surface in any log. Mirror everything
+// we'd write to stderr to a real file so we can debug.
+const LOG_FILE = process.env.TELEGRAM_MULTI_LOG ?? '/home/deploy/logs/telegram-multi.log'
+let logFd: number | null = null
+try { logFd = openSync(LOG_FILE, 'a') } catch {}
+function log(msg: string): void {
+  const line = `${new Date().toISOString()} ${msg}\n`
+  process.stderr.write(line)
+  if (logFd != null) { try { appendFileSync(logFd, line) } catch {} }
+}
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -55,10 +67,10 @@ mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
 // Last-resort safety net — without these the process dies silently on any
 // unhandled promise rejection. With them it logs and keeps serving tools.
 process.on('unhandledRejection', err => {
-  process.stderr.write(`telegram-multi: unhandled rejection: ${err}\n`)
+  log(`telegram-multi: unhandled rejection: ${err}`)
 })
 process.on('uncaughtException', err => {
-  process.stderr.write(`telegram-multi: uncaught exception: ${err}\n`)
+  log(`telegram-multi: uncaught exception: ${err}`)
 })
 
 // Permission-reply spec from anthropics/claude-cli-internal
@@ -145,7 +157,7 @@ function readAccessFile(): Access {
     try {
       renameSync(ACCESS_FILE, `${ACCESS_FILE}.corrupt-${Date.now()}`)
     } catch {}
-    process.stderr.write(`telegram-multi: access.json is corrupt, moved aside. Starting fresh.\n`)
+    log(`telegram-multi: access.json is corrupt, moved aside. Starting fresh.`)
     return defaultAccess()
   }
 }
@@ -157,9 +169,7 @@ const BOOT_ACCESS: Access | null = STATIC
   ? (() => {
       const a = readAccessFile()
       if (a.dmPolicy === 'pairing') {
-        process.stderr.write(
-          'telegram-multi: static mode — dmPolicy "pairing" downgraded to "allowlist"\n',
-        )
+        log('telegram-multi: static mode — dmPolicy "pairing" downgraded to "allowlist"')
         a.dmPolicy = 'allowlist'
       }
       a.pending = {}
@@ -388,7 +398,7 @@ mcp.setNotificationHandler(
           // when this bot isn't the one the user paired through. Don't noise stderr.
           const msg = e instanceof Error ? e.message : String(e)
           if (!/chat not found|bot was blocked|forbidden/i.test(msg)) {
-            process.stderr.write(`permission_request send via ${r.row.bot_label} to ${chat_id} failed: ${msg}\n`)
+            log(`permission_request send via ${r.row.bot_label} to ${chat_id} failed: ${msg}`)
           }
         })
       }
@@ -660,7 +670,7 @@ async function deliverApproval(senderId: string): Promise<void> {
       // Try the next bot.
     }
   }
-  process.stderr.write(`telegram-multi: no running bot could deliver approval to ${senderId}\n`)
+  log(`telegram-multi: no running bot could deliver approval to ${senderId}`)
 }
 
 if (!STATIC) setInterval(checkApprovals, 5000).unref()
@@ -688,7 +698,7 @@ function wireBotHandlers(bot: Bot, row: DevBotRow): void {
   // Without this, any throw in a message handler stops polling permanently
   // (grammy's default error handler calls bot.stop() and rethrows).
   bot.catch(err => {
-    process.stderr.write(`telegram-multi: bot ${row.bot_label} handler error (polling continues): ${err.error}\n`)
+    log(`telegram-multi: bot ${row.bot_label} handler error (polling continues): ${err.error}`)
   })
 
   // Commands are DM-only. Responding in groups would: (1) leak pairing codes via
@@ -829,7 +839,7 @@ function wireBotHandlers(bot: Bot, row: DevBotRow): void {
         writeFileSync(path, buf)
         return path
       } catch (err) {
-        process.stderr.write(`telegram-multi: ${row.bot_label} photo download failed: ${err}\n`)
+        log(`telegram-multi: ${row.bot_label} photo download failed: ${err}`)
         return undefined
       }
     })
@@ -925,7 +935,7 @@ async function handleInbound(
       row.owner_tg_user_id = tgUserId
       row.owner_first_name = firstName
     } catch (err) {
-      process.stderr.write(`telegram-multi: updateOwner ${row.bot_label} failed: ${err}\n`)
+      log(`telegram-multi: updateOwner ${row.bot_label} failed: ${err}`)
     }
   }
 
@@ -1014,7 +1024,7 @@ async function handleInbound(
       },
     },
   }).catch(err => {
-    process.stderr.write(`telegram-multi: failed to deliver inbound to Claude: ${err}\n`)
+    log(`telegram-multi: failed to deliver inbound to Claude: ${err}`)
   })
 }
 
@@ -1035,7 +1045,7 @@ const registry = new BotRegistry({
     try {
       me = await b.api.getMe()
     } catch (err: any) {
-      process.stderr.write(`telegram-multi: getMe failed for ${row.bot_label}: ${err?.message ?? err}\n`)
+      log(`telegram-multi: getMe failed for ${row.bot_label}: ${err?.message ?? err}`)
       if (err?.error_code === 401) await markRevoked(row.id).catch(() => {})
       throw err
     }
@@ -1047,20 +1057,20 @@ const registry = new BotRegistry({
     // row stays in `running` here, so we rely on grammy's own reconnect logic
     // for transient errors and on revocation for permanent ones).
     b.start({ drop_pending_updates: true }).catch(err => {
-      process.stderr.write(`telegram-multi: bot ${row.bot_label} polling stopped: ${err}\n`)
+      log(`telegram-multi: bot ${row.bot_label} polling stopped: ${err}`)
       if (err instanceof GrammyError && err.error_code === 401) {
         markRevoked(row.id).catch(() => {})
       }
     })
     running.set(row.id, { row, bot: b, username: me.username ?? '' })
-    process.stderr.write(`telegram-multi: started bot ${row.bot_label} (@${me.username})\n`)
+    log(`telegram-multi: started bot ${row.bot_label} (@${me.username})`)
   },
   stop: async (row) => {
     const r = running.get(row.id)
     if (!r) return
     await r.bot.stop().catch(() => {})
     running.delete(row.id)
-    process.stderr.write(`telegram-multi: stopped bot ${row.bot_label}\n`)
+    log(`telegram-multi: stopped bot ${row.bot_label}`)
   }
 })
 
@@ -1069,7 +1079,7 @@ async function reconcileLoop(): Promise<void> {
     const next = await loadActiveBots()
     await registry.reconcile(next)
   } catch (err) {
-    process.stderr.write(`telegram-multi: reconcile failed: ${err}\n`)
+    log(`telegram-multi: reconcile failed: ${err}`)
   }
 }
 
@@ -1085,7 +1095,7 @@ await mcp.connect(new StdioServerTransport())
 // Boot bots in the background so a slow loadActiveBots() doesn't delay startup.
 reconcileLoop().then(() => {
   if (running.size === 0) {
-    process.stderr.write('telegram-multi: no active bots in dev_bots — waiting for /pair\n')
+    log('telegram-multi: no active bots in dev_bots — waiting for /pair\n')
   }
 })
 setInterval(reconcileLoop, 30_000).unref()
@@ -1097,7 +1107,7 @@ let shuttingDown = false
 function shutdown(): void {
   if (shuttingDown) return
   shuttingDown = true
-  process.stderr.write('telegram-multi: shutting down\n')
+  log('telegram-multi: shutting down\n')
   // bot.stop() signals the poll loops to end; current getUpdates requests
   // may take up to their long-poll timeout to return. Force-exit after 2s.
   setTimeout(() => process.exit(0), 2000)
