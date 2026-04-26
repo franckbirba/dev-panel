@@ -26,6 +26,18 @@ import {
   downloadAttachment as planeDownloadAttachment,
   uploadAttachment as planeUploadAttachment
 } from './plane-attachments.js';
+import {
+  listPages as planeListPages,
+  getPage as planeGetPage,
+  getPageHtml as planeGetPageHtml,
+  createPage as planeCreatePage,
+  updatePage as planeUpdatePage,
+  updatePageContent as planeUpdatePageContent,
+  archivePage as planeArchivePage,
+  unarchivePage as planeUnarchivePage,
+  deletePage as planeDeletePage,
+  pagesHealthcheck as planePagesHealthcheck
+} from './plane-pages.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -632,6 +644,193 @@ server.tool(
     }
   }
 );
+
+// Resolve a Plane project hint (UUID or short identifier like "DEVPA") to
+// the project UUID. The internal pages endpoints require the UUID.
+async function resolvePlaneProjectId(hint) {
+  if (!hint) throw new Error('project_id is required');
+  if (UUID_RE.test(hint)) return hint;
+  if (!PLANE_KEY) throw new Error('PLANE_API_KEY missing — cannot resolve project identifier');
+  const res = await fetch(
+    `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/`,
+    { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(5000) }
+  );
+  if (!res.ok) throw new Error(`Plane projects lookup failed: HTTP ${res.status}`);
+  const list = await res.json();
+  const rows = list.results || list;
+  const match = rows.find(p => p.identifier?.toLowerCase() === String(hint).toLowerCase()
+                            || p.name?.toLowerCase() === String(hint).toLowerCase());
+  if (!match) throw new Error(`No Plane project matches "${hint}"`);
+  return match.id;
+}
+
+server.tool(
+  'plane_list_pages',
+  'List wiki pages on a Plane project. Accepts a project UUID or a short identifier like "DEVPA"/"ZENO"/"EDMS". Returns id + name + access + archive state for each page.',
+  { project: z.string().describe('Plane project UUID or short identifier (DEVPA, ZENO, EDMS)') },
+  async ({ project }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const rows = await planeListPages(pid);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, pages: rows }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_get_page',
+  'Get a single Plane page by id, including description_html (the human-readable body). Use plane_list_pages first to discover page_id.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID')
+  },
+  async ({ project, page_id }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const page = await planeGetPage(pid, page_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, page }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_get_page_html',
+  'Return only the description_html of a Plane page. Convenience wrapper over plane_get_page when you just need the body to feed back into a prompt or render to markdown.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID')
+  },
+  async ({ project, page_id }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const html = await planeGetPageHtml(pid, page_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, description_html: html }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_create_page',
+  'Create a new Plane wiki page. Body uses HTML (description_html). Pages default to public access (0); pass access=1 for private.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    name: z.string().describe('Page title'),
+    description_html: z.string().optional().describe('Initial body in HTML (optional)'),
+    access: z.number().optional().describe('0 = public to project, 1 = private to creator (default 0)'),
+    parent: z.string().optional().describe('Parent page UUID for sub-pages (optional)')
+  },
+  async ({ project, name, description_html, access, parent }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const page = await planeCreatePage(pid, { name, description_html, access, parent });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, page }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_update_page',
+  'Update Plane page metadata (name, access, color, parent, logo_props). To update the body use plane_update_page_content.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID'),
+    name: z.string().optional(),
+    access: z.number().optional(),
+    color: z.string().optional(),
+    parent: z.string().nullable().optional(),
+    logo_props: z.record(z.any()).optional()
+  },
+  async ({ project, page_id, ...fields }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const page = await planeUpdatePage(pid, page_id, fields);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, page }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_update_page_content',
+  'Replace the HTML body of a Plane page. WARNING: last-writer-wins — if a human is live-editing the same page in the UI, this PATCH will overwrite their state. For appending, plane_get_page first to read current description_html, concat your addition, then call this.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID'),
+    description_html: z.string().describe('New full HTML body')
+  },
+  async ({ project, page_id, description_html }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const out = await planeUpdatePageContent(pid, page_id, description_html);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...out }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_archive_page',
+  'Archive a Plane page (soft-removes from active list). Pages must be archived before deletion.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID')
+  },
+  async ({ project, page_id }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const out = await planeArchivePage(pid, page_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(out || {}) }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_delete_page',
+  'Delete a Plane page. Plane requires archive before delete — pass force=true to chain archive+delete.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier'),
+    page_id: z.string().describe('Page UUID'),
+    force: z.boolean().optional().describe('Archive first if not already archived (default false)')
+  },
+  async ({ project, page_id, force }) => {
+    try {
+      const pid = await resolvePlaneProjectId(project);
+      const out = await planeDeletePage(pid, page_id, { force });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(out || {}) }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+// Boot smoke test — log loud if Plane Pages internal endpoint is no longer
+// reachable (e.g. after a Plane upgrade rewrites the URL). Doesn't block boot.
+(async () => {
+  try {
+    if (!process.env.PLANE_SHELLY_EMAIL) return;
+    const sample = process.env.PLANE_SAMPLE_PROJECT_ID || 'd2522fed-e3f2-4eeb-9077-6445261752c1';
+    const out = await planePagesHealthcheck(sample);
+    if (out.ok) {
+      console.log('[plane-pages] OK');
+    } else {
+      console.warn(`[plane-pages] DEGRADED status=${out.status || 'n/a'} ${out.body || out.error || ''}`);
+    }
+  } catch (err) {
+    console.warn(`[plane-pages] DEGRADED error=${err.message}`);
+  }
+})();
 
 // nextAuditTime assumes host timezone is Europe/Paris (spec §5.2).
 // On a non-Paris-TZ container this shifts by the UTC offset — revisit

@@ -29,7 +29,12 @@
         "VOYAGE_API_KEY": "__VOYAGE_API_KEY__",
         "ADMIN_API_KEY": "__ADMIN_API_KEY__",
         "API_BASE": "https://devpanl.dev",
-        "WORKER_API": "http://localhost:3099"
+        "WORKER_API": "http://localhost:3099",
+        "PLANE_BASE_URL": "https://plane.devpanl.dev",
+        "PLANE_WORKSPACE_SLUG": "devpanl",
+        "PLANE_API_KEY": "__PLANE_API_KEY__",
+        "PLANE_SHELLY_EMAIL": "__PLANE_SHELLY_EMAIL__",
+        "PLANE_SHELLY_PASSWORD": "__PLANE_SHELLY_PASSWORD__"
       }
     },
     "playwright": {

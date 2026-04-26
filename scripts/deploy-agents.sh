@@ -21,9 +21,11 @@ TG_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_BOT_TOKEN= ~/dev-panel/.env.prod
 TG_CHAT=$(ssh "$SERVICES_HOST" 'grep ^TELEGRAM_CHAT_ID= ~/dev-panel/.env.production | cut -d= -f2')
 GH_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^GITHUB_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
 PLANE_KEY=$(ssh "$SERVICES_HOST" 'grep ^PLANE_API_KEY= ~/dev-panel/.env.production | cut -d= -f2')
+PLANE_SHELLY_EMAIL=$(ssh "$SERVICES_HOST" 'grep ^PLANE_SHELLY_EMAIL= ~/dev-panel/.env.production | cut -d= -f2')
+PLANE_SHELLY_PASS=$(ssh "$SERVICES_HOST" 'grep ^PLANE_SHELLY_PASSWORD= ~/dev-panel/.env.production | cut -d= -f2')
 
 # Sanity check — all non-empty
-for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY; do
+for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY PLANE_SHELLY_EMAIL PLANE_SHELLY_PASS; do
   [ -n "${!v}" ] || { echo "missing secret: $v"; exit 1; }
 done
 
@@ -47,6 +49,8 @@ TELEGRAM_BOT_TOKEN=${TG_TOKEN}
 TELEGRAM_CHAT_ID=${TG_CHAT}
 GITHUB_TOKEN=${GH_TOKEN}
 PLANE_API_KEY=${PLANE_KEY}
+PLANE_SHELLY_EMAIL=${PLANE_SHELLY_EMAIL}
+PLANE_SHELLY_PASSWORD=${PLANE_SHELLY_PASS}
 ENVEOF
 chown deploy:deploy /home/deploy/projects/dev-panel/.env.agent
 chmod 600 /home/deploy/projects/dev-panel/.env.agent
@@ -65,6 +69,8 @@ su - deploy -c "cd /home/deploy/projects/dev-panel && \\
 # from .env.production so we never drift between hosts.
 sed \
   -e "s|__PLANE_API_KEY__|${PLANE_KEY}|" \
+  -e "s|__PLANE_SHELLY_EMAIL__|${PLANE_SHELLY_EMAIL}|" \
+  -e "s|__PLANE_SHELLY_PASSWORD__|${PLANE_SHELLY_PASS}|" \
   -e "s|__GITHUB_TOKEN__|${GH_TOKEN}|" \
   -e "s|__PG_PASSWORD__|${PG_PASS}|" \
   -e "s|__VOYAGE_API_KEY__|${VOYAGE_KEY}|" \

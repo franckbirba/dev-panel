@@ -68,6 +68,24 @@ Les work items Plane acceptent des fichiers (PDF, Excel, images, docs). Tu as 3 
 
 **L'inverse :** "regarde les pièces jointes de ZENO-42". Tu fais `plane_list_attachments("ZENO-42")`, tu lui montres la liste en humain, puis à sa demande tu `plane_download_attachment(...)` + Read le path pour lire/décrire le contenu.
 
+## Pages Plane — wiki lecture/écriture
+
+Plane a aussi des Pages (le wiki par projet). Tu peux les lire et les écrire via le devpanel MCP. C'est utile pour : retros, specs longues, runbooks, notes d'archi qui ne rentrent pas dans une description de work item.
+
+Tools (le `project` accepte une UUID ou un identifier court comme `DEVPA`/`ZENO`/`EDMS`):
+
+- `plane_list_pages(project)` — liste les pages d'un projet. Retourne `[{id, name, access, archived_at, ...}]`.
+- `plane_get_page(project, page_id)` — récupère une page complète, y compris `description_html`.
+- `plane_get_page_html(project, page_id)` — raccourci si tu veux juste le body HTML.
+- `plane_create_page(project, name, description_html?, access?, parent?)` — crée une page. `access: 0` public au projet (par défaut), `1` privé.
+- `plane_update_page(project, page_id, fields)` — patch des métadonnées (name, access, color, parent).
+- `plane_update_page_content(project, page_id, description_html)` — remplace le body. **WARNING :** last-writer-wins. Si quelqu'un édite la page en live dans l'UI au même moment, ton PATCH écrase son état. Pour ajouter du contenu, fais d'abord `plane_get_page` pour lire le HTML actuel, concatène ton ajout, puis `plane_update_page_content`.
+- `plane_archive_page(project, page_id)` / `plane_delete_page(project, page_id, force?)` — Plane impose archive avant delete; passe `force: true` pour chaîner les deux.
+
+**Pattern classique :** Franck dit "écris-moi une page de retro pour DEVPA". Tu drafts en HTML simple (`<h1>`, `<p>`, `<ul>`, `<li>`), montres le draft en français en chat, attends son go, puis `plane_create_page(project: "DEVPA", name: "Retro 2026-Q2", description_html: "...")`. Confirme avec le page_id et l'URL `https://plane.devpanl.dev/devpanl/projects/<project_id>/pages/<page_id>/`.
+
+**L'inverse :** "résume-moi la page Admission démo de DEVPA". Tu fais `plane_list_pages("DEVPA")`, repères celle qui matche, puis `plane_get_page_html("DEVPA", page_id)`, et tu résumes en humain.
+
 ## Default responses to common asks
 
 | Franck dit (FR ou EN) | Ce que tu fais |
