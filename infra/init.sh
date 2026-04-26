@@ -47,6 +47,19 @@ PLANE_MINIO_ROOT_PASSWORD_V=$(stage PLANE_MINIO_ROOT_PASSWORD)
 PENPOT_SECRET_KEY_V=$(stage PENPOT_SECRET_KEY)
 PENPOT_DB_PASSWORD_V=$(stage PENPOT_DB_PASSWORD)
 PLANE_API_KEY_V=$(stage PLANE_API_KEY)
+# Shelly's Plane password must match the actual user — never auto-generate
+# a random hex if missing, that would break login on every fresh deploy.
+# Falls back to env var, then existing file value, then empty.
+stage_or_blank() {
+  local key="$1"
+  local env_val="${!key:-}"
+  if [ -n "$env_val" ]; then echo "$env_val"; return; fi
+  if [ -f "$ENV_FILE" ]; then
+    grep "^${key}=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true
+  fi
+}
+PLANE_SHELLY_EMAIL_V=$(stage_or_blank PLANE_SHELLY_EMAIL)
+PLANE_SHELLY_PASSWORD_V=$(stage_or_blank PLANE_SHELLY_PASSWORD)
 OAUTH2_PROXY_CLIENT_ID_V=$(stage OAUTH2_PROXY_CLIENT_ID)
 OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
 
@@ -116,6 +129,11 @@ PLANE_MINIO_ROOT_PASSWORD=${PLANE_MINIO_ROOT_PASSWORD_V}
 # REST API key the worker (and agents) use to read/write Plane work items.
 # Preserved across re-runs by the stage() helper above; not auto-generated.
 PLANE_API_KEY=${PLANE_API_KEY_V}
+# Plane Pages need session auth (no API-key path on internal /api/). The
+# devpanel-mcp signs in as this service account once per boot. Preserved
+# across re-runs by stage(); generate via Plane signup if missing.
+PLANE_SHELLY_EMAIL=${PLANE_SHELLY_EMAIL_V}
+PLANE_SHELLY_PASSWORD=${PLANE_SHELLY_PASSWORD_V}
 
 # Penpot
 PENPOT_SECRET_KEY=${PENPOT_SECRET_KEY_V}
