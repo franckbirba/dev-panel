@@ -1,11 +1,14 @@
 // src/dashboard/views/settings-view.jsx
 // Single-column settings with horizontal section tabs. No inner sidebar.
 import { useState, useEffect } from 'react';
+import TeamPanel from './settings-team-panel.jsx';
+import { getCurrentProject } from '@/lib/projects-store';
 
 const SECTIONS = [
   { id: 'project',       label: 'Project'       },
   { id: 'access',        label: 'Access'        },
   { id: 'github',        label: 'GitHub'        },
+  { id: 'team',          label: 'Team'          },
   { id: 'notifications', label: 'Notifications' },
   { id: 'storage',       label: 'Storage'       },
   { id: 'danger',        label: 'Danger Zone',  danger: true },
@@ -238,6 +241,7 @@ function DangerCard({ title, description, action }) {
 export function SettingsView({ apiUrl, apiKey }) {
   const [section, setSection] = useState('project');
   const [health, setHealth] = useState(null);
+  const currentProject = getCurrentProject();
 
   useEffect(() => {
     fetch(`${apiUrl}/api/health`)
@@ -324,6 +328,10 @@ export function SettingsView({ apiUrl, apiKey }) {
                 </Field>
               </div>
             </>
+          )}
+
+          {section === 'team' && (
+            <TeamPanel project={currentProject} apiKey={apiKey} apiUrl={apiUrl} />
           )}
 
           {section === 'notifications' && (
