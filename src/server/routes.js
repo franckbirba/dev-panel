@@ -48,6 +48,7 @@ import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket } from './alerts.js';
+import { defineTeamRoutes } from './routes-team.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
 // first (Shelly's tmux relay), then Bot API. Every attempt writes a
@@ -926,6 +927,11 @@ export function createRouter(config = {}) {
       res.json({ deleted: c.id });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
+
+  // ============================================================================
+  // TEAM & ROUTING — manage project members and label→member routing rules.
+  // ============================================================================
+  defineTeamRoutes(router, authenticateProject);
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
