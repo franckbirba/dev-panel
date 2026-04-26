@@ -9,7 +9,8 @@
 
 import {
   addMember, listMembers, updateMember, deleteMember,
-  setRoutingForProject, listRoutingForProject, listLabelsForProject
+  setRoutingForProject, listRoutingForProject, listLabelsForProject,
+  listUrlPatterns, setUrlPatternsForProject
 } from './team.js';
 
 export function defineTeamRoutes(router, authenticateProject) {
@@ -93,6 +94,32 @@ export function defineTeamRoutes(router, authenticateProject) {
       await deleteMember(parseInt(req.params.id, 10));
       res.status(204).end();
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/team/url-patterns', authenticateProject, async (req, res) => {
+    try {
+      const rows = await listUrlPatterns(req.project.id);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put('/team/url-patterns', authenticateProject, async (req, res) => {
+    const patterns = Array.isArray(req.body) ? req.body : [];
+    if (patterns.some(p => !p || typeof p.pattern !== 'string' || typeof p.label !== 'string')) {
+      return res.status(400).json({ error: 'expected [{pattern, label, priority?}, ...]' });
+    }
+    try {
+      await setUrlPatternsForProject(req.project.id, patterns);
+      const out = await listUrlPatterns(req.project.id);
+      res.json(out);
+    } catch (err) {
+      if (/expected|duplicate|unique/i.test(err.message)) {
+        return res.status(400).json({ error: err.message });
+      }
       res.status(500).json({ error: err.message });
     }
   });

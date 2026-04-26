@@ -880,19 +880,17 @@ export function createRouter(config = {}) {
         content: capture.content
       }).catch(() => {}); // fire-and-forget, never fail the request
 
-      // Server-side autoroute when the user picked a category — DM the
-      // resolved member directly via their paired bot. Shelly's plugin
-      // doesn't see notifyCaptureNew's outbound, so this is the only way
-      // to actually wake the right person.
-      if (category && typeof category === 'string' && category.trim()) {
-        autorouteCapture({
-          project: req.project,
-          capture: { ...capture, routed_label: category.trim() }
-        }).catch(err => {
-          // Never fail the request; log so we can debug missing pings.
-          console.error('[autoroute] capture', capture.id, 'failed:', err.message);
-        });
-      }
+      // Server-side autoroute — DM the resolved member directly via their
+      // paired bot. Tries (1) widget category, (2) URL pattern match against
+      // the capture's metadata.url. Shelly's plugin doesn't see
+      // notifyCaptureNew's outbound, so this is the only way to actually
+      // wake the right person.
+      autorouteCapture({
+        project: req.project,
+        capture
+      }).catch(err => {
+        console.error('[autoroute] capture', capture.id, 'failed:', err.message);
+      });
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });

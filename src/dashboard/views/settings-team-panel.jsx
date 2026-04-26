@@ -13,6 +13,9 @@ export default function TeamPanel({ project, apiKey, apiUrl }) {
   const [newName, setNewName] = useState('');
   const [newBotId, setNewBotId] = useState('');
   const [savingRouting, setSavingRouting] = useState(false);
+  const [patterns, setPatterns] = useState([]);
+  const [draftPatterns, setDraftPatterns] = useState([]);
+  const [savingPatterns, setSavingPatterns] = useState(false);
   const [error, setError] = useState(null);
 
   const headers = { 'X-API-Key': apiKey, 'Content-Type': 'application/json' };
@@ -20,9 +23,10 @@ export default function TeamPanel({ project, apiKey, apiUrl }) {
   async function loadAll() {
     const projectId = project?.id;
     if (!projectId) return;
-    const [teamRes, botsRes] = await Promise.all([
+    const [teamRes, botsRes, patternsRes] = await Promise.all([
       fetch(`${apiUrl}/api/team`, { headers }),
-      fetch(`${apiUrl}/api/dev-bots/available?project=${encodeURIComponent(projectId)}`, { headers })
+      fetch(`${apiUrl}/api/dev-bots/available?project=${encodeURIComponent(projectId)}`, { headers }),
+      fetch(`${apiUrl}/api/team/url-patterns`, { headers })
     ]);
     if (teamRes.ok) {
       const t = await teamRes.json();
@@ -31,6 +35,11 @@ export default function TeamPanel({ project, apiKey, apiUrl }) {
       setDraftRouting(t.routing);
     }
     if (botsRes.ok) setAvailableBots(await botsRes.json());
+    if (patternsRes.ok) {
+      const p = await patternsRes.json();
+      setPatterns(p);
+      setDraftPatterns(p);
+    }
   }
 
   useEffect(() => { loadAll(); }, [project?.id]); // eslint-disable-line
@@ -87,7 +96,37 @@ export default function TeamPanel({ project, apiKey, apiUrl }) {
     setDraftRouting(prev => prev.filter((_, i) => i !== idx));
   }
 
+  async function savePatterns() {
+    setSavingPatterns(true);
+    setError(null);
+    const payload = draftPatterns
+      .filter(p => p.pattern && p.label)
+      .map((p, i) => ({ pattern: p.pattern, label: p.label, priority: 100 + i }));
+    const r = await fetch(`${apiUrl}/api/team/url-patterns`, {
+      method: 'PUT', headers, body: JSON.stringify(payload)
+    });
+    if (!r.ok) {
+      setError((await r.json()).error || `HTTP ${r.status}`);
+    } else {
+      const fresh = await r.json();
+      setPatterns(fresh);
+      setDraftPatterns(fresh);
+    }
+    setSavingPatterns(false);
+  }
+  function addEmptyPattern() {
+    setDraftPatterns(prev => [...prev, { pattern: '', label: '' }]);
+  }
+  function setPatternField(idx, field, value) {
+    setDraftPatterns(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+  }
+  function removePattern(idx) {
+    setDraftPatterns(prev => prev.filter((_, i) => i !== idx));
+  }
+
   const dirty = JSON.stringify(draftRouting) !== JSON.stringify(routing);
+  const dirtyPatterns = JSON.stringify(draftPatterns) !== JSON.stringify(patterns);
+  const labelOptions = Array.from(new Set(routing.map(r => r.label))).sort();
 
   return (
     <div className="flex flex-col gap-8 px-6 py-6">
@@ -211,6 +250,73 @@ export default function TeamPanel({ project, apiKey, apiUrl }) {
                 className="text-[13px] px-3 py-1 rounded bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-40"
               >
                 {savingRouting ? 'Saving…' : 'Save routing'}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-[14px] font-semibold mb-1">URL patterns</h2>
+        <p className="text-[13px] text-[var(--color-foreground-muted)] mb-3">
+          Classifie automatiquement les bug reports selon l&apos;URL de la page où ils sont signalés. Premier match (ordre de la liste) gagne. Le pattern est un sous-texte du chemin (ex&nbsp;: <code>/admissions</code> matche <code>/app/admissions/123</code>).
+        </p>
+        {labelOptions.length === 0 ? (
+          <p className="text-[13px] text-[var(--color-foreground-muted)]">Définis au moins un label de routing avant d&apos;ajouter des patterns.</p>
+        ) : (
+          <>
+            <table className="w-full text-[13px]">
+              <thead className="text-[var(--color-foreground-muted)]">
+                <tr>
+                  <th className="text-left font-normal py-1 w-1/2">URL pattern</th>
+                  <th className="text-left font-normal py-1">Label</th>
+                  <th className="w-24"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {draftPatterns.map((p, idx) => (
+                  <tr key={idx} className="border-t border-[var(--color-border-subtle)]">
+                    <td className="py-2">
+                      <input
+                        value={p.pattern}
+                        onChange={e => setPatternField(idx, 'pattern', e.target.value)}
+                        placeholder="/admissions"
+                        className="w-full bg-transparent border border-[var(--color-border-subtle)] rounded px-2 py-1 font-mono text-[12px]"
+                      />
+                    </td>
+                    <td className="py-2">
+                      <select
+                        value={p.label}
+                        onChange={e => setPatternField(idx, 'label', e.target.value)}
+                        className="w-full bg-transparent border border-[var(--color-border-subtle)] rounded px-2 py-1"
+                      >
+                        <option value="">Pick a label…</option>
+                        {labelOptions.map(l => (
+                          <option key={l} value={l}>{l}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-2 text-right">
+                      <button onClick={() => removePattern(idx)} className="text-[var(--color-error)] hover:underline">Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-3 flex items-center gap-3">
+              <button onClick={addEmptyPattern} className="text-[13px] text-[var(--color-accent)] hover:underline">+ Add pattern</button>
+              <div className="flex-1" />
+              {dirtyPatterns && (
+                <button onClick={() => setDraftPatterns(patterns)} className="text-[13px] text-[var(--color-foreground-muted)] hover:underline">
+                  Discard
+                </button>
+              )}
+              <button
+                onClick={savePatterns}
+                disabled={!dirtyPatterns || savingPatterns}
+                className="text-[13px] px-3 py-1 rounded bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-40"
+              >
+                {savingPatterns ? 'Saving…' : 'Save patterns'}
               </button>
             </div>
           </>

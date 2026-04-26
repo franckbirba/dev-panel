@@ -158,17 +158,20 @@ export async function listLabelsForProject(project_id) {
 }
 
 export async function resolveLabel(project_id, label) {
+  // Case-insensitive label match — Settings UI may store "Campus" while a
+  // widget submits "campus". Routing is small per-project; LOWER() is fine.
   const { rows } = await pool.query(
     `SELECT r.label, m.id AS member_id
        FROM team_routing r
        JOIN team_members m ON m.id = r.member_id
-      WHERE r.project_id = $1 AND r.label = $2`,
+      WHERE r.project_id = $1 AND LOWER(r.label) = LOWER($2)`,
     [project_id, label]
   );
   if (!rows[0]) return null;
   const member = await findMember(rows[0].member_id);
   if (!member || !member.dev_bot) return null;
   return {
+    label: rows[0].label,
     member: {
       id: member.id,
       display_name: member.display_name,
@@ -176,4 +179,70 @@ export async function resolveLabel(project_id, label) {
     },
     dev_bot: member.dev_bot
   };
+}
+
+// ============================================================================
+// URL PATTERNS — server-side classifier for captures without a category
+// ============================================================================
+
+export async function listUrlPatterns(project_id) {
+  const { rows } = await pool.query(
+    `SELECT id, pattern, label, priority
+       FROM team_url_patterns
+      WHERE project_id = $1
+      ORDER BY priority, id`,
+    [project_id]
+  );
+  return rows;
+}
+
+export async function setUrlPatternsForProject(project_id, patterns) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM team_url_patterns WHERE project_id = $1`, [project_id]);
+    let i = 0;
+    for (const p of patterns) {
+      if (!p || typeof p.pattern !== 'string' || typeof p.label !== 'string') {
+        throw new Error('expected [{pattern, label, priority?}, ...]');
+      }
+      const priority = Number.isInteger(p.priority) ? p.priority : 100 + i;
+      await client.query(
+        `INSERT INTO team_url_patterns (project_id, pattern, label, priority)
+         VALUES ($1, $2, $3, $4)`,
+        [project_id, p.pattern, p.label, priority]
+      );
+      i++;
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Classify a URL against a project's patterns. First match (lowest priority)
+// wins. Pattern is a case-insensitive substring on the URL path. Returns the
+// matched label, or null.
+export function classifyUrlAgainstPatterns(url, patterns) {
+  if (!url || !Array.isArray(patterns) || patterns.length === 0) return null;
+  let path;
+  try {
+    path = new URL(url).pathname.toLowerCase();
+  } catch {
+    path = String(url).toLowerCase();
+  }
+  for (const p of patterns) {
+    if (path.includes(String(p.pattern).toLowerCase())) {
+      return p.label;
+    }
+  }
+  return null;
+}
+
+export async function classifyUrlForProject(project_id, url) {
+  const patterns = await listUrlPatterns(project_id);
+  return classifyUrlAgainstPatterns(url, patterns);
 }
