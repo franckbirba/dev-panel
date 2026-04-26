@@ -280,6 +280,30 @@ server.tool(
 );
 
 server.tool(
+  'route_capture',
+  'Persist routing for a capture and return the resolved team member + dev_bot. Idempotent: if the capture is already routed, returns the existing routing with already_routed=true and ignores the new label.',
+  {
+    project: z.string().describe('Project name'),
+    capture_id: z.string().describe('Capture UUID'),
+    label: z.string().describe('Routing label (e.g. "com", "pedago")')
+  },
+  async ({ project, capture_id, label }) => {
+    try {
+      const proj = await resolveProjectByName(project);
+      if (!proj) return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+      const r = await projectFetch(proj, `/captures/${capture_id}/route`, {
+        method: 'POST',
+        body: JSON.stringify({ label })
+      });
+      if (!r.ok) return { content: [{ type: 'text', text: `POST /api/captures/${capture_id}/route → ${r.status}: ${JSON.stringify(r.data)}` }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `route_capture failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   'update_status',
   'Update the status of a ticket',
   {

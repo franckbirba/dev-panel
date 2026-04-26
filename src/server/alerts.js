@@ -287,6 +287,23 @@ export async function notifyJob({
 //
 // This deliberately uses the same _hasDestination + _sendText path as
 // notifyJob — push-only, no polling, never throws.
+// notifyCaptureNew — emit a [capture-new] system line into Shelly's channel
+// when the widget creates a capture. Same shape as notifyTicketNew but for
+// the captures inbox. Push-only, never throws.
+export function formatCaptureNewLine({ project, capture_id, category, content }) {
+  const cat = category || '';
+  const cleanContent = String(content || '')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 100);
+  return `[capture-new] project=${project} capture=${capture_id} category=${cat} content="${cleanContent}"`;
+}
+
+export async function notifyCaptureNew({ project, capture_id, category, content }) {
+  if (!_hasDestination()) return;
+  const line = formatCaptureNewLine({ project, capture_id, category, content });
+  return _sendText(line);
+}
+
 export function formatTicketNewLine({ project, ticket_id, category, title }) {
   const cat = category || '';
   const cleanTitle = String(title || '')

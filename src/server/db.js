@@ -271,6 +271,21 @@ export function initMasterDatabase(storagePath = './storage') {
     masterDb.pragma(`user_version = ${ENVIRONMENT_TAG_VERSION}`);
   }
 
+  // Migration v5: team routing columns on captures.
+  // routed_label — the routing label (mirrors widget category or Shelly's choice)
+  // routed_member_id — resolved Postgres member id (INTEGER, matches tickets pattern)
+  // routed_at — when routing was persisted
+  // Guarded by user_version. Same PRAGMA cols.has() pattern as above.
+  const CAPTURE_ROUTING_VERSION = 5;
+  const currentVersion5 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion5 < CAPTURE_ROUTING_VERSION) {
+    const capCols5 = new Set(masterDb.prepare("PRAGMA table_info(captures)").all().map(c => c.name));
+    if (!capCols5.has('routed_label'))     masterDb.exec(`ALTER TABLE captures ADD COLUMN routed_label TEXT`);
+    if (!capCols5.has('routed_member_id')) masterDb.exec(`ALTER TABLE captures ADD COLUMN routed_member_id INTEGER`);
+    if (!capCols5.has('routed_at'))        masterDb.exec(`ALTER TABLE captures ADD COLUMN routed_at DATETIME`);
+    masterDb.pragma(`user_version = ${CAPTURE_ROUTING_VERSION}`);
+  }
+
   return masterDb;
 }
 

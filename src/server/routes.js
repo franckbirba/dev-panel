@@ -15,7 +15,8 @@ import {
 } from './db.js';
 import {
   createCapture, getCapture, listCaptures,
-  updateCapture, deleteCapture
+  updateCapture, deleteCapture,
+  setCaptureRouting, getCaptureRouting
 } from './captures.js';
 import { upsertSubject, getSubject, setPriority } from './subjects.js';
 import { getOrCreateThread, listMessages as listThreadMessages, appendMessage as appendThreadMessage } from './threads.js';
@@ -48,9 +49,10 @@ import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetc
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
-import { notifyTicket, notifyTicketNew } from './alerts.js';
+import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { routeTicket } from './ticket-routing.js';
+import { routeCapture } from './capture-routing.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
 // first (Shelly's tmux relay), then Bot API. Every attempt writes a
@@ -837,9 +839,9 @@ export function createRouter(config = {}) {
   // Note: messages are appended via POST /threads/capture/:id/messages (generic thread endpoint).
   // ============================================================================
 
-  router.post('/captures', authenticateProject, (req, res) => {
+  router.post('/captures', authenticateProject, async (req, res) => {
     try {
-      const { content = '', kind = 'idea', reporter, environment } = req.body || {};
+      const { content = '', kind = 'idea', reporter, environment, category } = req.body || {};
       if (!String(content).trim()) return res.status(400).json({ error: 'content required' });
       if (reporter !== undefined && reporter !== null) {
         if (typeof reporter !== 'object' || Array.isArray(reporter)) {
@@ -864,6 +866,18 @@ export function createRouter(config = {}) {
         reporter: reporter ?? null,
         environment: env
       });
+      // If the widget submitted a category, pre-write routed_label (no member
+      // resolution yet — Shelly will call /captures/:id/route to do that).
+      if (category && typeof category === 'string' && category.trim()) {
+        setCaptureRouting(capture.id, { label: category.trim(), member_id: null });
+      }
+      // Notify Shelly so she can triage and route.
+      notifyCaptureNew({
+        project: req.project.name,
+        capture_id: capture.id,
+        category: category || '',
+        content: capture.content
+      }).catch(() => {}); // fire-and-forget, never fail the request
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -927,6 +941,24 @@ export function createRouter(config = {}) {
       if (!c || c.project_id !== req.project.id) return res.status(404).json({ error: 'not found' });
       deleteCapture(c.id);
       res.json({ deleted: c.id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.post('/captures/:id/route', authenticateProject, async (req, res) => {
+    try {
+      const { label } = req.body || {};
+      if (!label || typeof label !== 'string' || !label.trim()) {
+        return res.status(400).json({ error: 'label required' });
+      }
+      let result;
+      try {
+        result = await routeCapture(req.params.id, label.trim());
+      } catch (e) {
+        if (e.message && e.message.includes('not found')) return res.status(404).json({ error: e.message });
+        throw e;
+      }
+      if (result === null) return res.status(409).json({ error: 'no member for that label' });
+      res.json(result);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
