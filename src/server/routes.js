@@ -1980,6 +1980,22 @@ export function createRouter(config = {}) {
           text, thread_message_id: id, subject_type, subject_id
         }).catch(err => console.error('[threads] telegram forward failed:', err.message));
       }
+
+      // Capture autoroute trigger — the widget posts the user content to
+      // POST /captures (autoroute fires there but the URL/screenshot metadata
+      // hasn't arrived yet), then immediately posts a `system` message here
+      // carrying metadata.url + metadata.screenshot. That's the moment we can
+      // actually classify by URL pattern and DM the resolved member with the
+      // screenshot. routeCapture is idempotent so a duplicate trigger is safe.
+      if (subject_type === 'capture' && role === 'system' && req.project) {
+        const { getCapture } = await import('./captures.js');
+        const cap = getCapture(subject_id);
+        if (cap && !cap.routed_member_id) {
+          const { autorouteCapture } = await import('./autoroute-capture.js');
+          autorouteCapture({ project: req.project, capture: cap })
+            .catch(err => console.error('[autoroute] capture', subject_id, 'failed:', err.message));
+        }
+      }
       res.json({ id, thread_id: thread.thread_id });
     } catch (e) {
       const status = /not found/i.test(e.message) ? 404 : 500;

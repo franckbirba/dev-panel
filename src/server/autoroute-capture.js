@@ -24,6 +24,9 @@ import {
 import { getCapture } from './captures.js';
 
 const TG_API = 'https://api.telegram.org';
+// Telegram caps photo captions at 1024 chars. We slice well under so the
+// caller's `[thread:...]` tag + URL fit even when the bug content is long.
+const TG_CAPTION_MAX = 1000;
 
 async function sendDirect({ token, chat_id, text }) {
   const r = await fetch(`${TG_API}/bot${token}/sendMessage`, {
@@ -37,6 +40,26 @@ async function sendDirect({ token, chat_id, text }) {
   }
 }
 
+// sendPhoto — multipart upload of a base64 data URL. We can't pass the data:
+// URL directly (Telegram's `photo` field wants either a file_id, an http(s)
+// URL, or a multipart upload). So decode → Blob → FormData.
+async function sendPhoto({ token, chat_id, dataUrl, caption }) {
+  const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!m) throw new Error('screenshot is not a base64 data URL');
+  const mime = m[1];
+  const buf = Buffer.from(m[2], 'base64');
+  const ext = mime === 'image/jpeg' ? 'jpg' : (mime.split('/')[1] || 'png');
+  const fd = new FormData();
+  fd.append('chat_id', String(chat_id));
+  if (caption) fd.append('caption', caption.slice(0, TG_CAPTION_MAX));
+  fd.append('photo', new Blob([buf], { type: mime }), `capture.${ext}`);
+  const r = await fetch(`${TG_API}/bot${token}/sendPhoto`, { method: 'POST', body: fd });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(`telegram sendPhoto ${r.status}: ${body}`);
+  }
+}
+
 // Pull the page URL out of the capture's system message metadata. The widget
 // posts a `Captured: screenshot · DOM snapshot` system message immediately
 // after the user's content message; metadata.url carries the page.
@@ -46,6 +69,20 @@ function extractUrlFromCapture(capture) {
     const meta = m && m.metadata;
     if (meta && typeof meta === 'object' && typeof meta.url === 'string') {
       return meta.url;
+    }
+  }
+  return null;
+}
+
+// Same scan, looking for the base64 screenshot the widget attaches in the
+// system message's metadata. Returns the data: URL string or null.
+function extractScreenshotFromCapture(capture) {
+  if (!capture || !Array.isArray(capture.messages)) return null;
+  for (const m of capture.messages) {
+    const meta = m && m.metadata;
+    if (meta && typeof meta === 'object' && typeof meta.screenshot === 'string'
+        && meta.screenshot.startsWith('data:image/')) {
+      return meta.screenshot;
     }
   }
   return null;
@@ -90,26 +127,72 @@ export async function autorouteCapture({ project, capture, dashboardBase = 'http
   const bot = await findDevBotByLabel(resolved.dev_bot.label);
   if (!bot) return { routed: false, reason: `dev_bot ${resolved.dev_bot.label} not found` };
 
-  const url = `${dashboardBase}/dashboard/captures/${capture.id}`;
+  const dashUrl = `${dashboardBase}/dashboard/captures/${capture.id}`;
   const truncated = String(full.content || '').replace(/\s+/g, ' ').slice(0, 240);
-  const sourceNote = pick.source === 'url-pattern' && pick.url
-    ? ` (depuis ${new URL(pick.url).pathname})`
-    : '';
+  const screenshot = extractScreenshotFromCapture(full);
+  const pageUrl = extractUrlFromCapture(full);
+
+  // Reporter — surfaces "qui a chié dans la colle" so the dev knows who to
+  // ping back. Falls back to "quelqu'un" rather than a robotic "anonymous".
+  const reporterName =
+    (full.reporter && (full.reporter.name || full.reporter.email))
+    || (full.reporter && full.reporter.id)
+    || 'quelqu\'un';
+
+  // Where it happened, in human form. URL pattern path takes priority because
+  // it's already the route the user navigated to; otherwise the raw page URL.
+  let where = '';
+  if (pick.source === 'url-pattern' && pick.url) {
+    try { where = ` sur ${new URL(pick.url).pathname}`; } catch { where = ''; }
+  } else if (pageUrl) {
+    try { where = ` sur ${new URL(pageUrl).pathname}`; } catch { where = ''; }
+  }
+
+  // Conversational, warm — Shelly's voice. Tag prefix preserved because the
+  // capture-thread routing protocol (SOUL.md) reads it on the reply path.
+  const greet = resolved.member.display_name
+    ? `Salut ${resolved.member.display_name}`
+    : 'Hey';
+  const screenshotNote = screenshot ? '' : '\n(pas de screenshot cette fois)';
   const text =
-    `[thread:capture/${capture.id}] Salut ${resolved.member.display_name},\n\n` +
-    `nouveau bug sur ${project.name} taggé "${resolved.label}"${sourceNote} :\n` +
-    `« ${truncated} »\n\n` +
-    `Tu peux répondre ici, ça atterrit dans le thread du ticket.\n` +
-    `Détails: ${url}`;
+    `[thread:capture/${capture.id}] ${greet} — ${reporterName} vient de remonter un bug sur ${project.name}${where}.\n` +
+    `Ça touche "${resolved.label}" donc je te le passe.\n\n` +
+    `Ce qu'il/elle dit :\n` +
+    `« ${truncated} »${screenshotNote}\n\n` +
+    `Tu peux répondre direct ici, ça part dans le thread du ticket.\n` +
+    `Le détail complet (logs, DOM, replay) : ${dashUrl}`;
 
   try {
-    await sendDirect({
-      token: bot.bot_token,
-      chat_id: resolved.member.tg_user_id,
-      text
-    });
+    if (screenshot) {
+      await sendPhoto({
+        token: bot.bot_token,
+        chat_id: resolved.member.tg_user_id,
+        dataUrl: screenshot,
+        caption: text
+      });
+    } else {
+      await sendDirect({
+        token: bot.bot_token,
+        chat_id: resolved.member.tg_user_id,
+        text
+      });
+    }
   } catch (err) {
-    return { routed: false, reason: `telegram DM failed: ${err.message}` };
+    // sendPhoto can fail (caption too long, image rejected) — fall back to
+    // text so the dev at least gets pinged.
+    if (screenshot) {
+      try {
+        await sendDirect({
+          token: bot.bot_token,
+          chat_id: resolved.member.tg_user_id,
+          text
+        });
+      } catch (e2) {
+        return { routed: false, reason: `telegram send failed: ${e2.message}` };
+      }
+    } else {
+      return { routed: false, reason: `telegram DM failed: ${err.message}` };
+    }
   }
 
   return {
@@ -117,6 +200,7 @@ export async function autorouteCapture({ project, capture, dashboardBase = 'http
     member: resolved.member,
     dev_bot: { label: resolved.dev_bot.label, username: resolved.dev_bot.username },
     label: resolved.label,
-    source: pick.source
+    source: pick.source,
+    with_screenshot: Boolean(screenshot)
   };
 }
