@@ -50,6 +50,7 @@ import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
+import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
@@ -871,13 +872,27 @@ export function createRouter(config = {}) {
       if (category && typeof category === 'string' && category.trim()) {
         setCaptureRouting(capture.id, { label: category.trim(), member_id: null });
       }
-      // Notify Shelly so she can triage and route.
+      // Notify Shelly so she can triage when no category was provided.
       notifyCaptureNew({
         project: req.project.name,
         capture_id: capture.id,
         category: category || '',
         content: capture.content
       }).catch(() => {}); // fire-and-forget, never fail the request
+
+      // Server-side autoroute when the user picked a category — DM the
+      // resolved member directly via their paired bot. Shelly's plugin
+      // doesn't see notifyCaptureNew's outbound, so this is the only way
+      // to actually wake the right person.
+      if (category && typeof category === 'string' && category.trim()) {
+        autorouteCapture({
+          project: req.project,
+          capture: { ...capture, routed_label: category.trim() }
+        }).catch(err => {
+          // Never fail the request; log so we can debug missing pings.
+          console.error('[autoroute] capture', capture.id, 'failed:', err.message);
+        });
+      }
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
