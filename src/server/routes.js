@@ -41,13 +41,14 @@ import {
   logActivity,
   listActivity,
   listMessages,
-  addMessage
+  addMessage,
+  setTicketRouting
 } from './db.js';
 import { initGitHub, listIssues, getGitHub, fetchRepoDocs, fetchMilestones, fetchIssueComments } from './github.js';
 import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
-import { notifyTicket } from './alerts.js';
+import { notifyTicket, notifyTicketNew } from './alerts.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { routeTicket } from './ticket-routing.js';
 
@@ -1240,7 +1241,7 @@ export function createRouter(config = {}) {
   // Create ticket
   router.post('/tickets', ticketCreateLimiter, authenticateProject, async (req, res) => {
     try {
-      const { type, title, description, context, screenshot, created_by } = req.body;
+      const { type, title, description, context, screenshot, created_by, category } = req.body;
 
       if (!type || !title || !description) {
         return res.status(400).json({ error: 'Missing required fields: type, title, description' });
@@ -1276,6 +1277,19 @@ export function createRouter(config = {}) {
       });
       broadcast('ticket:created', { id: ticketId, type, title });
       notifyTicket({ id: ticketId, type, title, project: req.project.name, created_by });
+
+      // If the user picked a category in the widget, persist it as routed_label up
+      // front. Shelly will skip classification and call route_ticket directly.
+      if (category) {
+        setTicketRouting(storagePath, req.project.id, ticketId, { label: category, member_id: null });
+      }
+
+      notifyTicketNew({
+        project: req.project.name,
+        ticket_id: ticketId,
+        category: category || '',
+        title
+      });
 
       res.status(201).json({
         id: ticketId,
