@@ -217,6 +217,93 @@ server.tool(
 );
 
 server.tool(
+  'get_team_labels',
+  'List the routing labels defined on a project (used by Shelly to classify a new ticket).',
+  { project: z.string().describe('Project name') },
+  async ({ project }) => {
+    try {
+      const proj = await resolveProjectByName(project);
+      if (!proj) return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+      const r = await projectFetch(proj, '/team/labels');
+      if (!r.ok) return { content: [{ type: 'text', text: `GET /api/team/labels → ${r.status}: ${JSON.stringify(r.data)}` }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `get_team_labels failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'get_team_member',
+  'Get a team member by id, including their paired Telegram bot info.',
+  {
+    project: z.string().describe('Project name'),
+    member_id: z.number().describe('team_members.id')
+  },
+  async ({ project, member_id }) => {
+    try {
+      const proj = await resolveProjectByName(project);
+      if (!proj) return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+      const r = await projectFetch(proj, '/team');
+      if (!r.ok) return { content: [{ type: 'text', text: `GET /api/team → ${r.status}: ${JSON.stringify(r.data)}` }], isError: true };
+      const member = (r.data?.members ?? []).find(m => m.id === member_id);
+      if (!member) return { content: [{ type: 'text', text: `member ${member_id} not found in project "${project}"` }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(member, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `get_team_member failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'route_ticket',
+  'Persist routing for a ticket and return the resolved team member + dev_bot. Idempotent: if the ticket is already routed, returns the existing routing with already_routed=true and ignores the new label.',
+  {
+    project: z.string().describe('Project name'),
+    ticket_id: z.number().describe('Ticket numeric id'),
+    label: z.string().describe('Routing label (e.g. "com", "pedago")')
+  },
+  async ({ project, ticket_id, label }) => {
+    try {
+      const proj = await resolveProjectByName(project);
+      if (!proj) return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+      const r = await projectFetch(proj, `/tickets/${ticket_id}/route`, {
+        method: 'POST',
+        body: JSON.stringify({ label })
+      });
+      if (!r.ok) return { content: [{ type: 'text', text: `POST /api/tickets/${ticket_id}/route → ${r.status}: ${JSON.stringify(r.data)}` }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `route_ticket failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'route_capture',
+  'Persist routing for a capture and return the resolved team member + dev_bot. Idempotent: if the capture is already routed, returns the existing routing with already_routed=true and ignores the new label.',
+  {
+    project: z.string().describe('Project name'),
+    capture_id: z.string().describe('Capture UUID'),
+    label: z.string().describe('Routing label (e.g. "com", "pedago")')
+  },
+  async ({ project, capture_id, label }) => {
+    try {
+      const proj = await resolveProjectByName(project);
+      if (!proj) return { content: [{ type: 'text', text: `Project "${project}" not found` }], isError: true };
+      const r = await projectFetch(proj, `/captures/${capture_id}/route`, {
+        method: 'POST',
+        body: JSON.stringify({ label })
+      });
+      if (!r.ok) return { content: [{ type: 'text', text: `POST /api/captures/${capture_id}/route → ${r.status}: ${JSON.stringify(r.data)}` }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `route_capture failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   'update_status',
   'Update the status of a ticket',
   {

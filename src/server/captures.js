@@ -178,6 +178,30 @@ export function updateCapture(id, patch) {
   return getCapture(id);
 }
 
+// setCaptureRouting — persist routed_label + routed_member_id + routed_at.
+// member_id may be null when the widget pre-writes a label at submission time
+// before Shelly has resolved it to an actual member.
+export function setCaptureRouting(id, { label, member_id }) {
+  const db = getMasterDatabase();
+  db.prepare(
+    `UPDATE captures
+        SET routed_label = ?,
+            routed_member_id = ?,
+            routed_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE routed_at END,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`
+  ).run(label ?? null, member_id ?? null, member_id ?? null, id);
+}
+
+// getCaptureRouting — read routing columns for a capture by id.
+// Returns { routed_label, routed_member_id, routed_at } or null if not found.
+export function getCaptureRouting(id) {
+  const db = getMasterDatabase();
+  return db.prepare(
+    `SELECT routed_label, routed_member_id, routed_at FROM captures WHERE id = ?`
+  ).get(id) ?? null;
+}
+
 export function deleteCapture(id) {
   const db = getMasterDatabase();
   const tx = db.transaction(() => {

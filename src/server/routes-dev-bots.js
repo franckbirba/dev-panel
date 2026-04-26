@@ -95,6 +95,24 @@ export function mountDevBotsRoutes(app) {
     res.status(204).end();
   });
 
+  router.get('/available', async (req, res) => {
+    const project = req.query.project;
+    if (!project) return res.status(400).json({ error: 'project query param required' });
+    const { pool: pg } = await import('./pg.js');
+    const { rows } = await pg.query(
+      `SELECT b.id, b.bot_label, b.bot_username, b.owner_first_name
+         FROM dev_bots b
+        WHERE b.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members m
+             WHERE m.project_id = $1 AND m.dev_bot_id = b.id
+          )
+        ORDER BY b.id`,
+      [project]
+    );
+    res.json(rows);
+  });
+
   app.use('/api/dev-bots', router);
   app.use('/api/dev-bot-allowlist', allowRouter);
 }

@@ -37,6 +37,8 @@ export function DevPanel({
   const [screenshot, setScreenshot] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [labels, setLabels] = useState([]);
+  const [category, setCategory] = useState('');
 
   const consoleBuffer = useRef(null);
   const networkInterceptor = useRef(null);
@@ -69,6 +71,17 @@ export function DevPanel({
     const timer = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Fetch team labels for category dropdown (tolerates failure silently)
+  useEffect(() => {
+    if (!apiKey || !apiUrl) return;
+    let cancelled = false;
+    fetch(`${apiUrl}/api/team/labels`, { headers: { 'X-API-Key': apiKey } })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (!cancelled) setLabels(Array.isArray(data) ? data : []); })
+      .catch(() => { /* widget keeps working without categories */ });
+    return () => { cancelled = true; };
+  }, [apiKey, apiUrl]);
 
   // Escape key: menu → idle
   useEffect(() => {
@@ -110,11 +123,13 @@ export function DevPanel({
     setMode('bug-report');
   }, []);
 
-  const postCapture = useCallback(async ({ kind, content, metadata }) => {
+  const postCapture = useCallback(async ({ kind, content, metadata, category: cat }) => {
+    const payload = buildCaptureRequestPayload(user, kind, content, environment);
+    if (cat) payload.category = cat;
     const createRes = await fetch(`${apiUrl}/api/captures`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-      body: JSON.stringify(buildCaptureRequestPayload(user, kind, content, environment))
+      body: JSON.stringify(payload)
     });
     if (!createRes.ok) {
       const errData = await createRes.json().catch(() => ({}));
@@ -182,7 +197,7 @@ export function DevPanel({
     };
 
     try {
-      await postCapture({ kind: 'bug', content: description, metadata });
+      await postCapture({ kind: 'bug', content: description, metadata, category: category || undefined });
       setToast({ kind: 'success', message: 'Bug reported' });
     } catch (err) {
       setToast({ kind: 'error', message: err.message });
@@ -206,7 +221,7 @@ export function DevPanel({
     const content = `${title}\n\n${description}`;
 
     try {
-      await postCapture({ kind: 'feature', content, metadata });
+      await postCapture({ kind: 'feature', content, metadata, category: category || undefined });
       setToast({ kind: 'success', message: 'Feature submitted' });
     } catch (err) {
       setToast({ kind: 'error', message: err.message });
@@ -313,6 +328,30 @@ export function DevPanel({
           >
             ✨ Request Feature
           </button>
+          {labels.length > 0 && (
+            <select
+              data-devtool-ignore
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              style={{
+                minWidth: '180px',
+                padding: '8px 10px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                border: '1px solid #444',
+                background: '#1a1a2e',
+                color: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">— Auto (Shelly choisit) —</option>
+              {labels.map(l => (
+                <option key={l.label} value={l.label}>
+                  {l.label}{l.member_name ? ` (${l.member_name})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
 

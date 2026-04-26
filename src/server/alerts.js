@@ -279,3 +279,41 @@ export async function notifyJob({
     _debounceTimer = setTimeout(_flushDebounce, DEBOUNCE);
   }
 }
+
+// notifyTicketNew — emit a [ticket-new] system line into Shelly's channel
+// when the widget creates a ticket. Shelly's SOUL has the protocol on the
+// other side: read this line, classify (or trust the category), call
+// route_ticket, DM the resolved member.
+//
+// This deliberately uses the same _hasDestination + _sendText path as
+// notifyJob — push-only, no polling, never throws.
+// notifyCaptureNew — emit a [capture-new] system line into Shelly's channel
+// when the widget creates a capture. Same shape as notifyTicketNew but for
+// the captures inbox. Push-only, never throws.
+export function formatCaptureNewLine({ project, capture_id, category, content }) {
+  const cat = category || '';
+  const cleanContent = String(content || '')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 100);
+  return `[capture-new] project=${project} capture=${capture_id} category=${cat} content="${cleanContent}"`;
+}
+
+export async function notifyCaptureNew({ project, capture_id, category, content }) {
+  if (!_hasDestination()) return;
+  const line = formatCaptureNewLine({ project, capture_id, category, content });
+  return _sendText(line);
+}
+
+export function formatTicketNewLine({ project, ticket_id, category, title }) {
+  const cat = category || '';
+  const cleanTitle = String(title || '')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 100);
+  return `[ticket-new] project=${project} ticket=${ticket_id} category=${cat} title="${cleanTitle}"`;
+}
+
+export async function notifyTicketNew({ project, ticket_id, category, title }) {
+  if (!_hasDestination()) return;
+  const line = formatTicketNewLine({ project, ticket_id, category, title });
+  return _sendText(line);
+}
