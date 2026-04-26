@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { initMasterDatabase, getMasterDatabase } from '../../src/server/db.js';
+import Database from 'better-sqlite3';
+import { initMasterDatabase, getMasterDatabase, initProjectDatabase } from '../../src/server/db.js';
 
 describe('signal-inbox schema', () => {
   let tmpDir;
@@ -52,5 +53,18 @@ describe('signal-inbox schema', () => {
     ]));
     const indexes = db.prepare("PRAGMA index_list(deploy_events)").all().map(i => i.name);
     expect(indexes).toEqual(expect.arrayContaining(['deploy_events_project_created']));
+  });
+
+  it('tickets table has routed_label, routed_member_id, routed_at columns after initProjectDatabase', () => {
+    const projectTmpDir = mkdtempSync(join(tmpdir(), 'devpanel-tickets-'));
+    try {
+      initProjectDatabase(projectTmpDir, 'test-project');
+      const ticketDb = new Database(join(projectTmpDir, 'test-project', 'tickets.db'));
+      const cols = ticketDb.prepare("PRAGMA table_info(tickets)").all().map(c => c.name);
+      expect(cols).toEqual(expect.arrayContaining(['routed_label', 'routed_member_id', 'routed_at']));
+      ticketDb.close();
+    } finally {
+      rmSync(projectTmpDir, { recursive: true, force: true });
+    }
   });
 });

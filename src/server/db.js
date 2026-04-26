@@ -330,7 +330,23 @@ export function initProjectDatabase(storagePath, projectId) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       created_by TEXT
     );
+  `);
 
+  // Migration: add team-routing columns to tickets.
+  // Uses PRAGMA table_info guard so it is idempotent on existing databases.
+  // Spec: docs/superpowers/plans/2026-04-25-team-routing.md — Task 5
+  const ticketCols = new Set(db.prepare("PRAGMA table_info(tickets)").all().map(c => c.name));
+  for (const [col, def] of [
+    ['routed_label',     'TEXT'],
+    ['routed_member_id', 'INTEGER'],
+    ['routed_at',        'DATETIME']
+  ]) {
+    if (!ticketCols.has(col)) {
+      db.exec(`ALTER TABLE tickets ADD COLUMN ${col} ${def}`);
+    }
+  }
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_status ON tickets(status);
     CREATE INDEX IF NOT EXISTS idx_github_issue ON tickets(github_issue_number);
 
@@ -600,6 +616,25 @@ export function deleteTicket(storagePath, projectId, ticketId) {
   const db = getProjectDatabase(storagePath, projectId);
   const stmt = db.prepare('DELETE FROM tickets WHERE id = ?');
   return stmt.run(ticketId);
+}
+
+export function setTicketRouting(storagePath, projectId, ticketId, { label, member_id }) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const stmt = db.prepare(`
+    UPDATE tickets
+       SET routed_label = ?, routed_member_id = ?, routed_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `);
+  return stmt.run(label ?? null, member_id ?? null, ticketId);
+}
+
+export function getTicketRouting(storagePath, projectId, ticketId) {
+  const db = getProjectDatabase(storagePath, projectId);
+  const row = db.prepare(
+    'SELECT routed_label, routed_member_id, routed_at FROM tickets WHERE id = ?'
+  ).get(ticketId);
+  if (!row) return null;
+  return row;
 }
 
 export function getStats(storagePath, projectId) {
