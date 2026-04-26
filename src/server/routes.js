@@ -49,6 +49,7 @@ import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket } from './alerts.js';
 import { defineTeamRoutes } from './routes-team.js';
+import { routeTicket } from './ticket-routing.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
 // first (Shelly's tmux relay), then Bot API. Every attempt writes a
@@ -1155,6 +1156,22 @@ export function createRouter(config = {}) {
       res.json({ message: 'Clarification answered', clarification: result });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Route a ticket to a team member via label resolution
+  router.post('/tickets/:id/route', authenticateProject, async (req, res) => {
+    const { label } = req.body ?? {};
+    if (!label) return res.status(400).json({ error: 'label required' });
+    try {
+      const out = await routeTicket(storagePath, req.project.id, parseInt(req.params.id, 10), label);
+      if (out === null) {
+        return res.status(409).json({ error: `no member registered for label "${label}"` });
+      }
+      res.json(out);
+    } catch (err) {
+      if (/not found/i.test(err.message)) return res.status(404).json({ error: err.message });
+      res.status(500).json({ error: err.message });
     }
   });
 
