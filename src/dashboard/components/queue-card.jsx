@@ -1,20 +1,20 @@
 import { useState } from "react";
-import { StatusChip } from "@/components/status-chip";
-import { Badge } from "@/components/ui/badge";
 
-const statusStyles = {
-  healthy: "healthy",
-  warning: "warning",
-  critical: "bug",
-  unreachable: "rejected",
+const STATUS_DOT = {
+  healthy:     'var(--color-success)',
+  warning:     'var(--color-warning)',
+  critical:    'var(--color-error)',
+  unreachable: 'var(--color-error)',
 };
 
-const countEntries = [
-  { key: "waiting", label: "Wait", color: "text-warning", barColor: "bg-warning" },
-  { key: "active", label: "Active", color: "text-info", barColor: "bg-info" },
-  { key: "delayed", label: "Delay", color: "text-muted-foreground", barColor: "bg-muted-foreground" },
-  { key: "failed", label: "Fail", color: "text-error", barColor: "bg-error" },
-  { key: "completed", label: "Done", color: "text-success", barColor: "bg-success" },
+// Compact horizontal stat row inside the queue chip — every queue card was
+// 220px wide before, now they fit 6+ on a row without the eyestrain.
+const COUNT_KEYS = [
+  { key: "waiting",   label: "wait",   tone: 'var(--color-warning)' },
+  { key: "active",    label: "active", tone: 'var(--color-info)' },
+  { key: "delayed",   label: "delay",  tone: 'var(--color-foreground-muted)' },
+  { key: "failed",    label: "fail",   tone: 'var(--color-error)' },
+  { key: "completed", label: "done",   tone: 'var(--color-success)' },
 ];
 
 export function QueueCard({ queue, selected, onSelect, apiUrl, adminKey }) {
@@ -31,66 +31,80 @@ export function QueueCard({ queue, selected, onSelect, apiUrl, adminKey }) {
         body: action === "clean" ? JSON.stringify({ status: "completed" }) : undefined,
       });
     } catch {
-      // silently fail — next SSE update will show current state
+      // SSE will refresh state.
     }
     setActing(false);
   }
 
-  const hasActivity = (c.waiting || 0) + (c.active || 0) + (c.delayed || 0) + (c.failed || 0) > 0;
-  const total = Object.values(c).reduce((sum, v) => sum + (v || 0), 0) || 1;
+  const dot = STATUS_DOT[queue.status] || 'var(--color-foreground-faint)';
 
   return (
-    <button
+    <div
       onClick={() => onSelect(shortName)}
-      className={`glass-card rounded-xl p-4 text-left cursor-pointer transition-all shrink-0 min-w-[220px] animate-fade-in-up ${
-        selected ? "ring-2 ring-brand/50 shadow-lg shadow-brand/5" : "hover:ring-1 hover:ring-brand/20"
-      }`}
+      className="rounded-lg p-3 cursor-pointer transition-colors shrink-0"
+      style={{
+        width: 200,
+        background: selected ? 'var(--color-surface-3)' : 'var(--color-surface-1)',
+        border: `1px solid ${selected ? 'var(--color-info)' : 'var(--color-border-subtle)'}`,
+        boxShadow: selected ? '0 0 0 1px var(--color-info-soft)' : 'none',
+      }}
+      onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--color-surface-2)'; }}
+      onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'var(--color-surface-1)'; }}
     >
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-foreground text-[13px] font-mono font-semibold truncate">{shortName}</span>
-        <div className="flex-1" />
-        <StatusChip type={statusStyles[queue.status] || "pending"} label={queue.status} />
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dot }} />
+        <span className="text-[12px] font-mono font-medium text-[var(--color-foreground)] truncate flex-1">{shortName}</span>
         {queue.paused && (
-          <Badge variant="outline" className="font-mono text-[10px] bg-warning/10 text-warning border-warning/20 px-1.5 py-0">
-            PAUSED
-          </Badge>
+          <span
+            className="font-mono text-[9px] px-1 rounded uppercase tracking-wider"
+            style={{ color: 'var(--color-warning)', background: 'var(--color-warning-soft)' }}
+          >
+            paused
+          </span>
         )}
       </div>
 
-      {/* Mini bar chart */}
-      <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden flex mb-3">
-        {countEntries.filter(({ key }) => c[key] > 0).map(({ key, barColor }) => (
-          <div key={key} className={`${barColor} transition-all duration-500`}
-            style={{ width: `${Math.max((c[key] / total) * 100, 2)}%` }} />
-        ))}
+      <div className="grid grid-cols-5 gap-1">
+        {COUNT_KEYS.map(({ key, label, tone }) => {
+          const v = c[key] || 0;
+          const dim = v === 0;
+          return (
+            <div key={key} className="flex flex-col items-center py-1 rounded" style={{ background: dim ? 'transparent' : 'var(--color-surface-2)' }}>
+              <span className="text-[12px] font-bold tabular-nums" style={{ color: dim ? 'var(--color-foreground-faint)' : tone }}>{v}</span>
+              <span className="text-[8.5px] font-mono mt-0.5" style={{ color: 'var(--color-foreground-faint)' }}>{label}</span>
+            </div>
+          );
+        })}
       </div>
 
-      <div className="flex gap-2">
-        {countEntries.filter(({ key }) => hasActivity || key === "waiting" || key === "active" || key === "failed").map(({ key, label, color }) => (
-          <div key={key} className="flex flex-col items-center rounded-lg py-1.5 px-2 min-w-[38px] bg-white/[0.02]">
-            <span className={`text-sm font-bold tabular-nums ${color}`}>{c[key] || 0}</span>
-            <span className="text-muted-foreground/40 text-[8px] font-mono mt-0.5">{label}</span>
-          </div>
-        ))}
-      </div>
       {adminKey && (
-        <div className="flex gap-3 mt-3 pt-3 border-t border-border/50" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="flex gap-2 mt-2 pt-2"
+          style={{ borderTop: '1px solid var(--color-border-subtle)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <button
             onClick={() => adminAction(queue.paused ? "resume" : "pause")}
             disabled={acting}
-            className="text-[11px] font-mono text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+            className="text-[10.5px] font-mono cursor-pointer disabled:opacity-50 transition-colors"
+            style={{ color: 'var(--color-foreground-faint)' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-foreground)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-foreground-faint)'}
           >
             {queue.paused ? "Resume" : "Pause"}
           </button>
           <button
             onClick={() => adminAction("clean")}
             disabled={acting}
-            className="text-[11px] font-mono text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+            className="text-[10.5px] font-mono cursor-pointer disabled:opacity-50 transition-colors"
+            style={{ color: 'var(--color-foreground-faint)' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-foreground)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-foreground-faint)'}
           >
             Clean done
           </button>
         </div>
       )}
-    </button>
+    </div>
   );
 }

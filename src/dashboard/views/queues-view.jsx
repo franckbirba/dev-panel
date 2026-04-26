@@ -49,8 +49,8 @@ export function QueuesView({ apiUrl, apiKey, queueHealth, sseConnected }) {
       <div className="flex-1 overflow-y-auto">
         {!isUnreachable && (
           <>
-            {/* Queue cards */}
-            <div className="flex gap-3 px-6 py-4 overflow-x-auto">
+            {/* Queue cards — flex-wrap so they pack tightly instead of scrolling off-screen */}
+            <div className="flex flex-wrap gap-2 px-6 py-3">
               {queues.map(q => (
                 <QueueCard
                   key={q.queue}

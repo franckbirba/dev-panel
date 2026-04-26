@@ -54,6 +54,8 @@ import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
+import { pool as pgPool } from './pg.js';
+import { enrichWorkItems } from './plane-enrich.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
 // first (Shelly's tmux relay), then Bot API. Every attempt writes a
@@ -1724,79 +1726,98 @@ export function createRouter(config = {}) {
   // every job that executed under those instances + any PR/branch/commit
   // artifacts extracted from the job's final result event. Powers the
   // /dashboard/work-items view.
-  router.get('/admin/work-items', authenticateAdmin, (req, res) => {
+  //
+  // Reads from shared Postgres (single source of truth — orchestration moved
+  // there in migration 003) and enriches each row with Plane metadata
+  // (title, sequence_id, project, state, priority) so the PM can read the
+  // list as humans, not UUIDs.
+  router.get('/admin/work-items', authenticateAdmin, async (req, res) => {
     try {
-      const db = getMasterDatabase();
-      const rows = db.prepare(`
+      const { rows } = await pgPool.query(`
         SELECT
           work_item_id,
-          COUNT(*) AS instances,
-          SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
-          SUM(CASE WHEN status IN ('failed','blocked','exhausted') THEN 1 ELSE 0 END) AS failed,
-          SUM(CASE WHEN status IN ('running','awaiting_approval') THEN 1 ELSE 0 END) AS active,
+          COUNT(*)::int AS instances,
+          SUM(CASE WHEN status='done' THEN 1 ELSE 0 END)::int AS done,
+          SUM(CASE WHEN status IN ('failed','blocked','exhausted') THEN 1 ELSE 0 END)::int AS failed,
+          SUM(CASE WHEN status IN ('running','awaiting_approval') THEN 1 ELSE 0 END)::int AS active,
           MAX(last_event_at) AS last_event_at,
-          GROUP_CONCAT(DISTINCT workflow_name) AS workflows
+          string_agg(DISTINCT workflow_name, ',') AS workflows,
+          (array_agg(current_step ORDER BY last_event_at DESC))[1] AS latest_step,
+          (array_agg(status        ORDER BY last_event_at DESC))[1] AS latest_status,
+          (array_agg(last_job_id   ORDER BY last_event_at DESC))[1] AS latest_job_id
         FROM workflow_instances
         GROUP BY work_item_id
         ORDER BY MAX(last_event_at) DESC
-      `).all();
-      res.json({ work_items: rows });
+      `);
+
+      const uuids = rows.map(r => r.work_item_id);
+      const meta = await enrichWorkItems(uuids);
+
+      const enriched = rows.map(r => {
+        const m = meta.get(r.work_item_id) || {};
+        return {
+          ...r,
+          title: m.title || null,
+          sequence_id: m.sequence_id || null,
+          identifier: m.identifier || null,
+          project_id: m.project_id || null,
+          project_name: m.project_name || null,
+          priority: m.priority || null,
+          state_name: m.state_name || null,
+          state_group: m.state_group || null,
+          state_color: m.state_color || null,
+          plane_url: m.plane_url || null,
+          completed_at: m.completed_at || null
+        };
+      });
+      res.json({ work_items: enriched });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  router.get('/admin/work-items/:id', authenticateAdmin, (req, res) => {
+  router.get('/admin/work-items/:id', authenticateAdmin, async (req, res) => {
     try {
-      const db = getMasterDatabase();
       const workItemId = req.params.id;
-      const instances = db.prepare(
+
+      const { rows: instances } = await pgPool.query(
         `SELECT id, workflow_name, revision, current_step, status, started_at,
                 last_event_at, exhausted_at, last_job_id, metadata
-         FROM workflow_instances
-         WHERE work_item_id = ?
-         ORDER BY started_at ASC`
-      ).all(workItemId);
+           FROM workflow_instances
+          WHERE work_item_id = $1
+          ORDER BY started_at ASC`,
+        [workItemId]
+      );
 
-      // Every job touching this work item — join by last_job_id is too narrow;
-      // instead pull from agent_job_log rows whose job_id appears in any of
-      // these instances' last_job_id OR any event whose job matches.
-      // Simpler: list every distinct job_id found in events that reference
-      // this work item via the job's workflow_instance_id (stored in data).
-      // BullMQ data isn't here, so fall back to last_job_id per instance +
-      // any agent_job_log rows with those job_ids.
-      const jobIds = instances
-        .map(i => i.last_job_id)
-        .filter(Boolean);
+      const jobIds = instances.map(i => i.last_job_id).filter(Boolean);
 
-      // Union: also find jobs whose events mention this work_item_id in
-      // their payload (best-effort string match).
-      const extraJobs = db.prepare(
-        `SELECT DISTINCT job_id FROM agent_job_events
-         WHERE payload LIKE ?`
-      ).all(`%${workItemId}%`).map(r => r.job_id);
-
-      const allJobIds = [...new Set([...jobIds, ...extraJobs])];
+      const { rows: extras } = await pgPool.query(
+        `SELECT DISTINCT job_id FROM agent_job_events WHERE payload::text LIKE $1`,
+        [`%${workItemId}%`]
+      );
+      const allJobIds = [...new Set([...jobIds, ...extras.map(r => r.job_id)])];
 
       const jobs = [];
       for (const job_id of allJobIds) {
-        const steps = db.prepare(
+        const { rows: steps } = await pgPool.query(
           `SELECT step, status, error, duration_ms, timestamp, agent
-           FROM agent_job_log WHERE job_id = ? ORDER BY id ASC`
-        ).all(job_id);
-
-        // Find the terminal 'result' event to extract PR/branch/commits.
-        const resultRow = db.prepare(
+             FROM agent_job_log WHERE job_id = $1 ORDER BY id ASC`,
+          [job_id]
+        );
+        const { rows: resultRows } = await pgPool.query(
           `SELECT payload FROM agent_job_events
-           WHERE job_id = ? AND event_type = 'result'
-           ORDER BY seq DESC LIMIT 1`
-        ).get(job_id);
+            WHERE job_id = $1 AND event_type = 'result'
+            ORDER BY seq DESC LIMIT 1`,
+          [job_id]
+        );
+        const resultRow = resultRows[0];
 
         let artifacts = null;
         let status = null;
         if (resultRow) {
           try {
-            const p = JSON.parse(resultRow.payload);
+            const p = typeof resultRow.payload === 'string'
+              ? JSON.parse(resultRow.payload) : resultRow.payload;
             const inner = typeof p.result === 'string' ? JSON.parse(p.result) : p.result;
             artifacts = inner?.artifacts || null;
             status = inner?.status || p.subtype || null;
@@ -1814,9 +1835,23 @@ export function createRouter(config = {}) {
           error_count: steps.filter(s => s.status === 'error').length
         });
       }
-      jobs.sort((a, b) => (a.first_at || '').localeCompare(b.first_at || ''));
+      jobs.sort((a, b) => String(a.first_at || '').localeCompare(String(b.first_at || '')));
 
-      res.json({ work_item_id: workItemId, instances, jobs });
+      const meta = (await enrichWorkItems([workItemId])).get(workItemId) || {};
+
+      res.json({
+        work_item_id: workItemId,
+        title: meta.title || null,
+        sequence_id: meta.sequence_id || null,
+        identifier: meta.identifier || null,
+        project_name: meta.project_name || null,
+        priority: meta.priority || null,
+        state_name: meta.state_name || null,
+        state_group: meta.state_group || null,
+        plane_url: meta.plane_url || null,
+        instances,
+        jobs
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
