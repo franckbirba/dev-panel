@@ -1,14 +1,14 @@
 // tests/_helpers/pg.js
-// Spins a throwaway Postgres container, applies migration 003 (orchestration
-// tables), wires the shared pg pool to it, and returns cleanup helpers.
+// Spins a throwaway Postgres container, applies migrations 003-006 (orchestration
+// tables, dev_bots, dev_bot_allowlist, team_members + team_routing), wires the shared pg pool to it, and returns cleanup helpers.
 //
 // Usage:
-//   import { startPg, stopPg, truncateOrchestration } from '../_helpers/pg.js';
+//   import { startPg, stopPg, truncateOrchestration, truncateTeam } from '../_helpers/pg.js';
 //   beforeAll(async () => { await startPg(); });
 //   afterAll(async () => { await stopPg(); });
 //   beforeEach(() => truncateOrchestration());
 //
-// Requires: docker on PATH, migration file at infra/migrations/003-orchestration-pg.sql.
+// Requires: docker on PATH, migration files at infra/migrations/{003,004,005,006}-*.sql.
 import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
@@ -16,7 +16,12 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MIGRATION = resolve(__dirname, '../../infra/migrations/003-orchestration-pg.sql');
+const MIGRATIONS = [
+  resolve(__dirname, '../../infra/migrations/003-orchestration-pg.sql'),
+  resolve(__dirname, '../../infra/migrations/004-dev-bots.sql'),
+  resolve(__dirname, '../../infra/migrations/005-dev-bot-allowlist.sql'),
+  resolve(__dirname, '../../infra/migrations/006-team-routing.sql'),
+];
 
 let containerId = null;
 let poolRef = null;
@@ -61,14 +66,16 @@ export async function startPg() {
   process.env.PG_PASSWORD = 'test';
   process.env.PG_DATABASE = 'test';
   await waitReady();
-  // Apply migration 003. We read the file and pipe via docker exec so we don't
-  // need to bind-mount anything (keeps the helper portable across runners).
-  const sql = readFileSync(MIGRATION, 'utf8');
-  const r = spawnSync('docker', ['exec', '-i', containerId, 'psql', '-U', 'test', '-d', 'test', '-v', 'ON_ERROR_STOP=1'], {
-    input: sql, encoding: 'utf8'
-  });
-  if (r.status !== 0) {
-    throw new Error(`migration 003 failed: ${r.stderr}`);
+  // Apply migrations 003, 004, 005, 006. We read each file and pipe via docker exec
+  // so we don't need to bind-mount anything (keeps the helper portable across runners).
+  for (const path of MIGRATIONS) {
+    const sql = readFileSync(path, 'utf8');
+    const r = spawnSync('docker', ['exec', '-i', containerId, 'psql', '-U', 'test', '-d', 'test', '-v', 'ON_ERROR_STOP=1'], {
+      input: sql, encoding: 'utf8'
+    });
+    if (r.status !== 0) {
+      throw new Error(`migration ${path} failed: ${r.stderr}`);
+    }
   }
   // Reset the pg pool module so it re-reads the env. We import after setting
   // env because src/server/pg.js captures env at module-load time.
@@ -91,6 +98,13 @@ export async function truncateOrchestration() {
   if (!poolRef) throw new Error('startPg() must be called first');
   await poolRef.query(
     `TRUNCATE workflow_instances, agent_job_log, agent_job_events, agent_memory_writes RESTART IDENTITY`
+  );
+}
+
+export async function truncateTeam() {
+  if (!poolRef) throw new Error('startPg() must be called first');
+  await poolRef.query(
+    `TRUNCATE team_routing, team_members, dev_bot_allowlist, dev_bots RESTART IDENTITY CASCADE`
   );
 }
 
