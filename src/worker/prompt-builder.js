@@ -32,6 +32,10 @@ export function buildPrompt(jobData) {
     ...contextRaw,
     branch: contextRaw?.branch ?? task?.branch
   };
+  // When the worker prepared a per-job worktree (DEVPA-144), surface its path
+  // so the agent runs git/code there instead of PROJECT_ROOT. Falls back to
+  // PROJECT_ROOT for non-coding agents and disabled-isolation runs.
+  const workingDir = context.worktree_path || PROJECT_ROOT;
 
   const sections = [];
 
@@ -85,7 +89,8 @@ export function buildPrompt(jobData) {
     work_item.priority ? `**Priority:** ${work_item.priority}` : '',
     '',
     '### Context',
-    context.branch ? `**Branch:** ${context.branch}` : '',
+    context.worktree_path ? `**Worktree:** ${context.worktree_path} (already checked out — work here, not in PROJECT_ROOT)` : '',
+    context.branch ? `**Branch:** ${context.branch} (already created and checked out by the worker)` : '',
     context.github_issue_number ? `**GitHub issue:** #${context.github_issue_number}` : '',
     context.devpanel_ticket_id ? `**DevPanel ticket:** ${context.devpanel_ticket_id}` : '',
     context.parent_job_id ? `**Parent job:** ${context.parent_job_id}` : '',
@@ -101,7 +106,7 @@ export function buildPrompt(jobData) {
   sections.push([
     '## Rules',
     '',
-    `- Working directory: ${PROJECT_ROOT}`,
+    `- Working directory: ${workingDir}`,
     `- Memory namespace: ${memory_namespace}`,
     '- Never use `git add -A` or `git add .` — add files explicitly.',
     '- You MUST call `memory_search` at the start (search the spec for how).',

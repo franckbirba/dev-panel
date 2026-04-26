@@ -80,6 +80,7 @@ import { runAutomation } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
 import { initMasterDatabase } from '../server/db.js';
+import { prepareWorktree, shouldUseWorktree } from './worktree.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -140,7 +141,7 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  *  - Raw stderr is appended to storage/agent-logs/<jobId>.err.log.
  *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
-function spawnAgent(jobId, prompt, agentRole = 'unknown') {
+function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
   return new Promise((resolve, reject) => {
     const proc = spawn('claude', [
       '-p', prompt,
@@ -148,7 +149,7 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown') {
       '--verbose',
       '--dangerously-skip-permissions'
     ], {
-      cwd: PROJECT_ROOT,
+      cwd,
       env: {
         ...process.env,
         JOB_ID: jobId,
@@ -252,7 +253,37 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // plane-mcp's pydantic deserialisation bug entirely.
   await enrichWorkItemFromPlane(jobData);
 
-  // Build prompt
+  // DEVPA-144: per-job git worktree isolation for coding agents.
+  // Non-coding agents (pm/architect/designer/deploy) run in PROJECT_ROOT
+  // because they don't touch the working tree. Reviewer/QA reuse the
+  // builder's branch via context.branch, in their own worktree, so a
+  // dirty checkout from a sibling job can't leak into their diff.
+  let worktree = null;
+  try {
+    worktree = await prepareWorktree(jobData.job_id, {
+      agent: jobData.agent,
+      workItem: jobData.work_item || {},
+      sequenceId: jobData.work_item?.sequence_id,
+      projectIdentifier: jobData.plane?.project_identifier,
+      workItemId: jobData.plane?.work_item_id,
+      branch: jobData.context?.branch  // reuse if set (reviewer/qa retreat)
+    });
+  } catch (err) {
+    // Worktree setup failure is fatal for coding agents — running them in
+    // PROJECT_ROOT alongside other concurrent jobs is exactly the bug we're
+    // fixing. Fail loudly so the job retries with a clean slate.
+    if (shouldUseWorktree(jobData.agent)) throw err;
+  }
+
+  if (worktree) {
+    jobData.context = {
+      ...(jobData.context || {}),
+      worktree_path: worktree.path,
+      branch: worktree.branch
+    };
+  }
+
+  // Build prompt (now sees worktree_path + branch in context)
   const prompt = buildPrompt(jobData);
 
   const startedAt = Date.now();
@@ -262,41 +293,51 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     fetch(process.env.WORKER_EVENTS_URL || 'http://localhost:3030/api/admin/events/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Key': process.env.ADMIN_API_KEY },
-      body: JSON.stringify({ event: 'job.started', data: { job_id: jobData.job_id, agent: jobData.agent, work_item_id: jobData.plane?.work_item_id } })
+      body: JSON.stringify({ event: 'job.started', data: { job_id: jobData.job_id, agent: jobData.agent, work_item_id: jobData.plane?.work_item_id, worktree: worktree?.path || null, branch: worktree?.branch || null } })
     }).catch(() => {});
   }
 
-  // Spawn agent (propagate job_id + agent role to MCP subprocess)
-  const output = await spawnAgent(jobData.job_id, prompt, jobData.agent);
+  try {
+    // Spawn agent in the worktree (or PROJECT_ROOT if isolation skipped/disabled)
+    const output = await spawnAgent(jobData.job_id, prompt, jobData.agent, worktree?.path);
 
-  // Parse result (strict: returns { ok, data } | { ok: false, error })
-  const parsed = parseResult(output);
-  if (!parsed.ok) {
-    await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
-              status: 'error', error: parsed.error });
-    await notifyJob({
-      job_id: jobData.job_id, agent: jobData.agent,
-      work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
-      title: jobData.work_item?.title || jobData.task?.title,
-      status: 'failed',
-      extra: `parseResult: ${parsed.error}`
-    });
-    throw new Error(`parseResult failed: ${parsed.error}`);
+    // Parse result (strict: returns { ok, data } | { ok: false, error })
+    const parsed = parseResult(output);
+    if (!parsed.ok) {
+      await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
+                status: 'error', error: parsed.error });
+      await notifyJob({
+        job_id: jobData.job_id, agent: jobData.agent,
+        work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
+        title: jobData.work_item?.title || jobData.task?.title,
+        status: 'failed',
+        extra: `parseResult: ${parsed.error}`
+      });
+      throw new Error(`parseResult failed: ${parsed.error}`);
+    }
+    await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
+
+    await runAutomation({ jobData, result: parsed.data, startedAt });
+
+    const result = {
+      ...parsed.data,
+      agent,
+      task_id: task?.id || null,
+      raw_length: output.length
+    };
+
+    console.log(`[Worker] Job ${job.id} completed — ${result.summary?.slice(0, 100)}`);
+
+    return result;
+  } finally {
+    // Cleanup runs even on parseResult/spawn failures. Push + PR already
+    // happened inside the worktree by this point (publishWorkItem ran
+    // through runAutomation), so removing the worktree is safe.
+    if (worktree) {
+      try { await worktree.cleanup(); }
+      catch (err) { console.warn(`[Worker] worktree cleanup failed for ${job.id}: ${err.message}`); }
+    }
   }
-  await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
-
-  await runAutomation({ jobData, result: parsed.data, startedAt });
-
-  const result = {
-    ...parsed.data,
-    agent,
-    task_id: task?.id || null,
-    raw_length: output.length
-  };
-
-  console.log(`[Worker] Job ${job.id} completed — ${result.summary?.slice(0, 100)}`);
-
-  return result;
 
 }, {
   connection,

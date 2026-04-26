@@ -127,9 +127,9 @@ function isTerminalDone({ flow, agent, status }) {
 // Find the feature branch whose name contains the first 8 chars of the
 // work_item_id (builder convention: feat/<uuid-short>-<slug>). Falls back to
 // any branch referencing the full work_item_id in its name.
-function findWorkItemBranch(workItemId) {
+function findWorkItemBranch(workItemId, cwdOverride) {
   if (!workItemId) return null;
-  const cwd = process.env.PROJECT_ROOT || process.cwd();
+  const cwd = cwdOverride || process.env.PROJECT_ROOT || process.cwd();
   const shortId = workItemId.slice(0, 8);
   try {
     const out = execSync(
@@ -147,15 +147,15 @@ function findWorkItemBranch(workItemId) {
   }
 }
 
-function pushBranch(branch) {
-  const cwd = process.env.PROJECT_ROOT || process.cwd();
+function pushBranch(branch, cwdOverride) {
+  const cwd = cwdOverride || process.env.PROJECT_ROOT || process.cwd();
   // --force-with-lease keeps us safe if the remote has moved (e.g. replan
   // round overwrites a prior push), without the danger of plain --force.
   execSync(`git -C "${cwd}" push --force-with-lease origin ${branch}`, { stdio: 'pipe' });
 }
 
-function createPullRequest({ branch, title, body }) {
-  const cwd = process.env.PROJECT_ROOT || process.cwd();
+function createPullRequest({ branch, title, body, cwd: cwdOverride }) {
+  const cwd = cwdOverride || process.env.PROJECT_ROOT || process.cwd();
   const safeTitle = String(title || '').slice(0, 100).replace(/\n/g, ' ');
   const safeBody = String(body || '');
   // gh CLI reads GH_TOKEN. We mirror GITHUB_TOKEN into it for this call.
@@ -220,7 +220,11 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
   const workItemId = jobData.plane?.work_item_id;
   if (!workItemId) return;
 
-  const branch = findWorkItemBranch(workItemId);
+  // When the worker ran in a per-job worktree (DEVPA-144), every git
+  // operation must use that path. Otherwise the push happens from the
+  // wrong checkout and the branch the agent actually created isn't visible.
+  const wtPath = jobData.context?.worktree_path;
+  const branch = jobData.context?.branch || findWorkItemBranch(workItemId, wtPath);
   const summary = result.summary || `Auto work item ${workItemId.slice(0, 8)}`;
   const title = (jobData.work_item?.title || summary).slice(0, 100);
   const body =
@@ -230,9 +234,9 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
 
   let prUrl = null;
   if (branch) {
-    await runStep(job_id, agent, 'publish.git_push', () => pushBranch(branch));
+    await runStep(job_id, agent, 'publish.git_push', () => pushBranch(branch, wtPath));
     await runStep(job_id, agent, 'publish.pr_create', () => {
-      prUrl = createPullRequest({ branch, title, body });
+      prUrl = createPullRequest({ branch, title, body, cwd: wtPath });
     });
   } else {
     console.warn(`[publish] no feature branch found for work_item ${workItemId}`);
