@@ -1,15 +1,4 @@
 {
-  "enabledPlugins": {
-    "telegram@claude-plugins-official": true
-  },
-  "extraKnownMarketplaces": {
-    "claude-plugins-official": {
-      "source": {
-        "source": "github",
-        "repo": "anthropics/claude-plugins-official"
-      }
-    }
-  },
   "skipDangerousModePermissionPrompt": true,
   "permissions": {
     "deny": [

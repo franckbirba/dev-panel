@@ -40,7 +40,14 @@ ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
 # poller fighting telegram-multi for the same bot token (Telegram returns 409
 # Conflict when two pollers share a token, both eventually go silent). Switched
 # to `server:telegram` 2026-04-27 so telegram-multi is the sole poller.
-ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-skip-permissions"
+# `--dangerously-load-development-channels` is a hidden flag (not in --help)
+# required when --channels references a manually-configured MCP server (the
+# `server:<name>` form), because such servers haven't been vetted by an
+# allowlist marketplace. Without it Claude refuses to subscribe and shows
+# `server:telegram · server: entries need --dangerously-load-development-channels`
+# in the tmux pane — telegram-multi keeps long-polling but inbound never
+# reaches the session.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-load-development-channels --dangerously-skip-permissions"
 
 # 1) Dismiss claude's first-run "trust this folder?" prompt.
 # 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
