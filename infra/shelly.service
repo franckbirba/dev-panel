@@ -43,11 +43,11 @@ ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
 # `--dangerously-load-development-channels` is a hidden flag (not in --help)
 # required when --channels references a manually-configured MCP server (the
 # `server:<name>` form), because such servers haven't been vetted by an
-# allowlist marketplace. Without it Claude refuses to subscribe and shows
-# `server:telegram · server: entries need --dangerously-load-development-channels`
-# in the tmux pane — telegram-multi keeps long-polling but inbound never
-# reaches the session.
-ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-load-development-channels --dangerously-skip-permissions"
+# allowlist marketplace. It takes one or more channel tags (NOT a boolean) —
+# pass it the same `server:telegram` value as --channels. Without this Claude
+# shows `server:telegram · server: entries need --dangerously-load-development-channels`
+# and won't subscribe.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-load-development-channels server:telegram --dangerously-skip-permissions"
 
 # 1) Dismiss claude's first-run "trust this folder?" prompt.
 # 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
