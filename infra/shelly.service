@@ -32,13 +32,15 @@ ExecStartPre=-/bin/chown deploy:deploy /home/deploy/logs
 # Always start from a clean tmux session.
 ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
 
-# Inbound Telegram is delivered by the `telegram-multi` MCP server wired in
-# ~/.mcp.json (it's both a stdio MCP server AND a grammy long-poller). The
-# legacy `--channels plugin:telegram@claude-plugins-official` arg used to be
-# here; it spawned a SECOND poller that fought telegram-multi for the same
-# bot token (Telegram returns 409 Conflict when two pollers share a token,
-# both eventually drop their connection silently). Removed 2026-04-27.
-ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --dangerously-skip-permissions"
+# Inbound Telegram is delivered by `telegram-multi` (stdio MCP server + grammy
+# long-poller, wired in ~/.mcp.json under server name `telegram`). `--channels`
+# uses the `server:<name>` form for manually configured MCP servers (vs.
+# `plugin:<name>@<marketplace>` for plugin-marketplace channels). Previously
+# this used `plugin:telegram@claude-plugins-official`, which spawned a SECOND
+# poller fighting telegram-multi for the same bot token (Telegram returns 409
+# Conflict when two pollers share a token, both eventually go silent). Switched
+# to `server:telegram` 2026-04-27 so telegram-multi is the sole poller.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-skip-permissions"
 
 # 1) Dismiss claude's first-run "trust this folder?" prompt.
 # 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
