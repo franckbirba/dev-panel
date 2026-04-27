@@ -19,9 +19,11 @@ mkdir -p "$STAMP_DIR"
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 REASON=""
 
-# 1) Liveness — bun process must exist.
-if ! pgrep -af "bun server.ts" >/dev/null 2>&1; then
-  REASON="bun server.ts missing"
+# 1) Liveness — at least one Telegram-plugin bun process must exist.
+# The legacy claude-plugins-official spawn was `bun server.ts` (bare arg);
+# the current telegram-multi spawn is `bun /full/path/server.ts`. Match both.
+if ! pgrep -f "bun.*server\.ts" >/dev/null 2>&1; then
+  REASON="bun telegram plugin missing"
 fi
 
 # 2) Telegram reachability — at least one ESTABLISHED socket from a bun proc
