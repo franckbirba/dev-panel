@@ -14,7 +14,7 @@ const BRANCH_UUID_RE = /^feat\/wi-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const BRANCH_SEQ_RE = /\b(devpa|zeno|edms)-(\d+)\b/i;
 const TITLE_SEQ_RE = /\b(DEVPA|ZENO|EDMS)-(\d+)\b/;
 
-const ALLOWED_ACTIONS = new Set(['opened', 'reopened', 'synchronize']);
+const ALLOWED_ACTIONS = new Set(['opened', 'reopened', 'synchronize', 'closed']);
 
 export function verifySignature(payload, signature, secret = WEBHOOK_SECRET) {
   if (!secret || !signature) return false;
@@ -104,7 +104,7 @@ export function mountGitHubWebhook(app) {
         const event = req.headers['x-github-event'];
         if (event !== 'pull_request') return res.status(204).end();
 
-        // Filter: only opened / reopened / synchronize
+        // Filter: only opened / reopened / synchronize / closed
         if (!ALLOWED_ACTIONS.has(payload.action)) return res.status(204).end();
 
         const pr = payload.pull_request;
@@ -118,6 +118,14 @@ export function mountGitHubWebhook(app) {
 
         if (!repo || !prNumber) {
           return res.status(400).json({ error: 'missing repo or pr number' });
+        }
+
+        // Closed + merged → release-note broadcast, never dispatch merge-coordinator.
+        if (payload.action === 'closed') {
+          if (!pr.merged) return res.status(204).end();
+          const { broadcastRelease } = await import('./release-notes.js');
+          const result = await broadcastRelease({ repo, pr });
+          return res.status(result.broadcast ? 202 : 204).end();
         }
 
         // Idempotence: skip if merge-coordinator already active for this PR
