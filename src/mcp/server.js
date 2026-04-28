@@ -38,6 +38,7 @@ import {
   deletePage as planeDeletePage,
   pagesHealthcheck as planePagesHealthcheck
 } from './plane-pages.js';
+import { listWorkItemsByAssignee as planeListWorkItemsByAssignee } from './plane-work-items.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -809,6 +810,25 @@ server.tool(
       const pid = await resolvePlaneProjectId(project);
       const out = await planeDeletePage(pid, page_id, { force });
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(out || {}) }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'plane_list_work_items_by_assignee',
+  'List Plane work items assigned to a specific person. Accepts project identifier (DEVPA/ZENO/EDMS) or UUID, and assignee as email, display_name, or UUID. Workaround for Plane self-hosted advanced-search 403.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier (DEVPA, ZENO, EDMS)'),
+    assignee: z.string().describe('Assignee email, display_name, or UUID'),
+    state_group: z.enum(['backlog', 'unstarted', 'started', 'completed', 'cancelled']).optional().describe('Filter by state group'),
+    limit: z.number().default(25).describe('Max results (default 25)')
+  },
+  async ({ project, assignee, state_group, limit }) => {
+    try {
+      const items = await planeListWorkItemsByAssignee({ project, assignee, state_group, limit });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, count: items.length, items }, null, 2) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
     }
