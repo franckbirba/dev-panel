@@ -176,6 +176,31 @@ describe('resolveCycle', () => {
     const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
     expect(r).toBeNull();
   });
+
+  it('walks projects to find the host of a uuid ref, then returns the active cycle', async () => {
+    const uuid = '7096cee4-889b-403d-b924-2ad2dfbf371c';
+    fetch
+      // 1) list projects
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'p1', identifier: 'ZENO' },
+        { id: 'p2', identifier: 'DEVPA' }
+      ] }) })
+      // 2) probe p1 — 404
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      // 3) probe p2 — 200, this is the host
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: uuid }) })
+      // 4) active cycle on p2
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'cyc-9', name: 'Sprint 21' }
+      ] }) });
+
+    const r = await resolveCycle({ type: 'uuid', value: uuid });
+    expect(r).toEqual({
+      name: 'Sprint 21',
+      url: 'https://plane.devpanl.dev/devpanl/projects/p2/cycles/cyc-9/'
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
 });
 
 import { fanOut } from '../../src/server/release-notes.js';
@@ -283,5 +308,34 @@ describe('broadcastRelease', () => {
     expect(r).toEqual({ broadcast: false, reason: 'replay' });
     expect(fetch).not.toHaveBeenCalled();
     expect(listActiveMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the Cycle line when planeRef matches and active cycle exists', async () => {
+    const prWithSeqBranch = {
+      ...pr,
+      head: { ref: 'feat/devpa-93-foo' }   // matches BRANCH_SEQ_RE → sequence ref DEVPA-93
+    };
+
+    queryMock.mockResolvedValueOnce({ rows: [{ synthetic_id: 'github:owner/repo#42:merged' }] });
+    fetch
+      // 1) fetchCommits → empty array is fine
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      // 2) resolveCycle: list projects → DEVPA matches
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'p1', identifier: 'DEVPA' }
+      ] }) })
+      // 3) active cycle on p1
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'cyc-1', name: 'Sprint 14' }
+      ] }) });
+    listActiveMock.mockResolvedValueOnce([{ bot_token: 't', owner_tg_user_id: 1 }]);
+    fetch.mockResolvedValueOnce({ ok: true });   // 4) telegram
+
+    const r = await broadcastRelease({ repo: 'owner/repo', pr: prWithSeqBranch });
+    expect(r).toEqual({ broadcast: true });
+
+    const tgCall = fetch.mock.calls.find(c => c[0].includes('api.telegram.org'));
+    const text = JSON.parse(tgCall[1].body).text;
+    expect(text).toContain('Cycle: Sprint 14 — https://plane.devpanl.dev/devpanl/projects/p1/cycles/cyc-1/');
   });
 });
