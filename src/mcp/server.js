@@ -746,7 +746,7 @@ server.tool(
     access: z.number().optional(),
     color: z.string().optional(),
     parent: z.string().nullable().optional(),
-    logo_props: z.record(z.any()).optional()
+    logo_props: z.record(z.string(), z.any()).optional()
   },
   async ({ project, page_id, ...fields }) => {
     try {
