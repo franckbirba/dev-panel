@@ -417,6 +417,14 @@ registerCrons().catch(err => console.error('[Crons] Registration failed:', err))
 // unique index). Disabled cleanly if Plane env vars are missing.
 startBacklogPuller();
 
+// Connect to the services-VPS agent hub so every workflow_instance and
+// agent_job_log write streams live to the dashboard instead of waiting
+// for the next poll cycle. Postgres still gets the durable record;
+// socket.io is now the bus.
+import('./agent-hub-client.js').then(m => m.connectAgentHub()).catch(
+  err => console.warn('[agent-hub-client] not connected:', err.message)
+);
+
 // Export for api.js
 export { activeProcesses, worker, getMode };
 

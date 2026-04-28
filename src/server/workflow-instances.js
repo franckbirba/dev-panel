@@ -3,19 +3,31 @@
 // Shared between services API and agents-host worker (same pg, migration 003).
 import { pool } from './pg.js';
 
-// Lazy-loaded SSE broadcast — keep this module loadable from worker context
-// where ./sse.js may not be importable cleanly. Each write fans out a
-// `workflow:changed` event so the dashboard can patch in real time without
-// polling.
+// Lazy-loaded SSE broadcast (API process) AND socket.io agent-hub emit
+// (worker process). On the API side broadcast() fans out to dashboard SSE
+// clients. On the worker side it no-ops because there's no HTTP server,
+// so emitAgentEvent() ships the same event to the hub via socket.io and
+// the hub re-broadcasts to dashboards. Either path produces real-time
+// updates without postgres polling.
 let _broadcast = null;
+let _emitAgent = null;
 async function broadcast(event, data) {
+  // 1. SSE fan-out (API process) — no-op in worker.
   try {
-    if (!_broadcast) {
+    if (_broadcast === null) {
       const m = await import('./sse.js');
-      _broadcast = m.broadcast;
+      _broadcast = m.broadcast || (() => {});
     }
     _broadcast(event, data);
-  } catch { /* sse not available in this process — degrade silently */ }
+  } catch { /* sse not available */ }
+  // 2. socket.io to hub (worker process) — no-op in API.
+  try {
+    if (_emitAgent === null) {
+      const m = await import('../worker/agent-hub-client.js');
+      _emitAgent = m.emitAgentEvent || (() => {});
+    }
+    _emitAgent(event, data);
+  } catch { /* hub client not loaded in this process */ }
 }
 
 // Normalize a row's `metadata` field to a JSON string (the shape callers

@@ -105,6 +105,20 @@ export function startServer(storagePath = './storage', port = 3030, host = 'loca
     console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`✓ CORS: ${process.env.ALLOWED_ORIGINS || '* (all origins)'}`);
 
+    // Agent socket.io hub — workers on the agents host connect here and
+    // stream events live. Replaces postgres-as-bus polling. Refuses to
+    // start without AGENT_HUB_TOKEN to avoid running unauthenticated.
+    if (process.env.AGENT_HUB_TOKEN) {
+      try {
+        const { initAgentHub } = await import('./agent-hub.js');
+        initAgentHub(server, { token: process.env.AGENT_HUB_TOKEN });
+      } catch (err) {
+        console.error('[agent-hub] failed to start:', err.message);
+      }
+    } else {
+      console.warn('[agent-hub] AGENT_HUB_TOKEN not set — agent socket.io disabled');
+    }
+
     // Start monitoring
     if (process.env.ENABLE_MONITORING === 'true') {
       const { alertManager } = await import('./alerts.js');

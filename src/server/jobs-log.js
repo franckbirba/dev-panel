@@ -3,16 +3,27 @@
 // Shared between services API and agents-host worker (same pg, migration 003).
 import { pool } from './pg.js';
 
-// Lazy SSE broadcast so this module stays loadable from worker context.
+// Dual-channel broadcast: SSE fan-out on the API process, socket.io agent
+// hub on the worker process. Both are no-ops if the other side isn't
+// loaded, which is exactly what we want — same call site fires the right
+// transport for the runtime.
 let _broadcast = null;
+let _emitAgent = null;
 async function broadcast(event, data) {
   try {
-    if (!_broadcast) {
+    if (_broadcast === null) {
       const m = await import('./sse.js');
-      _broadcast = m.broadcast;
+      _broadcast = m.broadcast || (() => {});
     }
     _broadcast(event, data);
-  } catch { /* sse unavailable — degrade silently */ }
+  } catch { /* sse unavailable in this process */ }
+  try {
+    if (_emitAgent === null) {
+      const m = await import('../worker/agent-hub-client.js');
+      _emitAgent = m.emitAgentEvent || (() => {});
+    }
+    _emitAgent(event, data);
+  } catch { /* hub client not in this process */ }
 }
 
 export async function logStep({ job_id, agent, step, status, error = null, duration_ms = null }) {
