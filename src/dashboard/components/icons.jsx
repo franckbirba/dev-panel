@@ -184,3 +184,9 @@ export const IconLogo = (props) => (
     </defs>
   </svg>
 );
+
+// Memory icon (brain/knowledge)
+export const IconMemory = I(<>
+  <path d="M12 2a7 7 0 0 0-4.6 12.3c.6.5 1 1.1 1.2 1.9l.4 1.8h6l.4-1.8c.2-.8.6-1.4 1.2-1.9A7 7 0 0 0 12 2z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+  <path d="M10 22h4M12 18v4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+</>);

@@ -17,6 +17,8 @@ import { SignalsView } from "@/views/signals-view";
 import { OpsView } from "@/views/ops-view";
 import { AgentsView } from "@/views/agents-view";
 import { WorkItemsView } from "@/views/work-items-view";
+import { MemoryView } from '@/views/memory-view';
+import { MemoryWriteModal } from '@/components/memory-write-modal';
 import { IconLogo } from "@/components/icons";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject,
@@ -35,6 +37,7 @@ function getInitialTab() {
   if (path.includes("/settings")) return "settings";
   if (path.includes("/today")) return "today";
   if (path.includes("/signals")) return "signals";
+  if (path.includes("/memory")) return "memory";
   // Default landing: captures. The old /inbox alias also lands here.
   return "captures";
 }
@@ -56,6 +59,7 @@ function App() {
   const [capturesCount, setCapturesCount] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
+  const [showWriteMemory, setShowWriteMemory] = useState(false);
   const sseRef = useRef(null);
 
   // Traefik enforces SSO before the SPA loads, so by the time we mount we
@@ -230,6 +234,7 @@ function App() {
           <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
           <div className="flex-1 overflow-hidden">
             {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
+            {activeTab === "memory" && <MemoryView apiUrl={apiUrl} />}
             {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
             {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
             {activeTab === "projects" && <ProjectsView apiUrl={apiUrl} onProjectChange={handleProjectSwitch} />}
@@ -255,6 +260,7 @@ function App() {
         onNavigate={(tab) => handleTabChange(tab)}
         onProjectSwitch={handleProjectSwitch}
         onAddProject={() => setShowAddProject(true)}
+        onWriteMemory={() => setShowWriteMemory(true)}
       />
 
       {showAddProject && (
@@ -264,6 +270,11 @@ function App() {
           onCreated={() => { setShowAddProject(false); handleProjectSwitch(); }}
         />
       )}
+      <MemoryWriteModal
+        open={showWriteMemory}
+        onClose={() => setShowWriteMemory(false)}
+        apiUrl={apiUrl}
+        />
     </div>
   );
 }

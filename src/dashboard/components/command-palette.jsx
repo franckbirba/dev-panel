@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { listLocalProjects, setCurrentProject } from '@/lib/projects-store';
 import {
-  IconSignals, IconToday, IconInbox, IconQueues, IconOps, IconAgents, IconChain,
+  IconSignals, IconToday, IconInbox, IconQueues, IconOps, IconAgents, IconChain, IconMemory,
   IconShelly, IconProjects, IconSettings, IconPlus, IconSearch
 } from './icons';
 
@@ -11,6 +11,7 @@ const NAV = [
   { id: 'captures',   label: 'Inbox',      icon: IconInbox,     hint: 'Operations' },
   { id: 'today',      label: 'Today',      icon: IconToday,     hint: 'Operations' },
   { id: 'signals',    label: 'Signals',    icon: IconSignals,   hint: 'Operations' },
+  { id: 'memory',     label: 'Memory',     icon: IconMemory,    hint: 'Operations' },
   { id: 'agents',     label: 'Agents',     icon: IconAgents,    hint: 'Infrastructure' },
   { id: 'work-items', label: 'Work items', icon: IconChain,     hint: 'Infrastructure' },
   { id: 'queues',     label: 'Queues',     icon: IconQueues,    hint: 'Infrastructure' },
@@ -30,7 +31,7 @@ function fuzzyMatch(query, text) {
   return false;
 }
 
-export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onAddProject }) {
+export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onAddProject, onWriteMemory }) {
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const inputRef = useRef(null);
@@ -61,6 +62,20 @@ export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onA
         onPick: () => { setCurrentProject(p.id); onProjectSwitch?.(p.id); },
       });
     });
+    if (fuzzyMatch(q, 'write memory') || fuzzyMatch(q, 'write a memory') || fuzzyMatch(q, 'new memory')) {
+      list.push({
+        kind: 'action', id: 'write-memory', label: 'Write a memory',
+        hint: 'Memory', icon: IconPlus,
+        onPick: () => onWriteMemory?.(),
+      });
+    }
+    if (fuzzyMatch(q, 'find memory') || fuzzyMatch(q, 'search memory') || fuzzyMatch(q, 'memory about')) {
+      list.push({
+        kind: 'action', id: 'find-memory', label: 'Find memory about...',
+        hint: 'Memory', icon: IconSearch,
+        onPick: () => { onNavigate('memory'); },
+      });
+    }
     if (fuzzyMatch(q, 'add project') || fuzzyMatch(q, 'new project')) {
       list.push({
         kind: 'action', id: 'add-project', label: 'Add a new project',

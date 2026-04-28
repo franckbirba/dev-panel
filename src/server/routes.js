@@ -55,6 +55,7 @@ import { defineTeamRoutes } from './routes-team.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
 import { pool as pgPool } from './pg.js';
+import { defineMemoryRoutes } from './routes-memory.js';
 import { enrichWorkItems } from './plane-enrich.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
@@ -981,6 +982,7 @@ export function createRouter(config = {}) {
   // TEAM & ROUTING — manage project members and label→member routing rules.
   // ============================================================================
   defineTeamRoutes(router, authenticateProject);
+  defineMemoryRoutes(router, { authenticateAdmin });
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
