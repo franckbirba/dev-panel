@@ -50,6 +50,67 @@ export function buildReleaseNote({ pr, repo, commits, cycle }) {
   return lines.join('\n');
 }
 
+function planeConfig() {
+  const base = (process.env.PLANE_BASE_URL || 'https://plane.devpanl.dev').replace(/\/$/, '');
+  const slug = process.env.PLANE_WORKSPACE_SLUG || 'devpanl';
+  const key = process.env.PLANE_API_TOKEN || process.env.PLANE_API_KEY || '';
+  if (!key) return null;
+  return { base, slug, key };
+}
+
+async function planeGet(cfg, path) {
+  const r = await fetch(`${cfg.base}/api/v1/workspaces/${cfg.slug}${path}`, {
+    headers: { 'X-API-Key': cfg.key },
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!r.ok) return null;
+  const data = await r.json();
+  return data.results || data || [];
+}
+
+export async function resolveCycle(planeRef) {
+  if (!planeRef) return null;
+  const cfg = planeConfig();
+  if (!cfg) return null;
+
+  try {
+    let projectId = null;
+
+    if (planeRef.type === 'sequence') {
+      const projects = await planeGet(cfg, '/projects/');
+      if (!projects) return null;
+      const match = projects.find(p => p.identifier === planeRef.project);
+      if (!match) return null;
+      projectId = match.id;
+    } else if (planeRef.type === 'uuid') {
+      const projects = await planeGet(cfg, '/projects/');
+      if (!projects) return null;
+      for (const p of projects) {
+        const r = await fetch(
+          `${cfg.base}/api/v1/workspaces/${cfg.slug}/projects/${p.id}/issues/${planeRef.value}/`,
+          { headers: { 'X-API-Key': cfg.key }, signal: AbortSignal.timeout(5000) }
+        ).catch(() => null);
+        if (r && r.ok) { projectId = p.id; break; }
+      }
+      if (!projectId) return null;
+    } else {
+      return null;
+    }
+
+    const cycles = await planeGet(cfg, `/projects/${projectId}/cycles/active/`);
+    if (!cycles || cycles.length === 0) return null;
+
+    const cycle = cycles[0];
+    return {
+      name: cycle.name,
+      url: `${cfg.base}/${cfg.slug}/projects/${projectId}/cycles/${cycle.id}/`
+    };
+  } catch (err) {
+    console.warn(`[release-notes] resolveCycle failed: ${err.message}`);
+    return null;
+  }
+}
+
 export async function fetchCommits(repo, prNumber) {
   const token = process.env.GITHUB_TOKEN;
   if (!token) {

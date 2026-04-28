@@ -117,3 +117,58 @@ describe('fetchCommits', () => {
     expect(r).toBeNull();
   });
 });
+
+import { resolveCycle } from '../../src/server/release-notes.js';
+
+describe('resolveCycle', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    process.env.PLANE_API_TOKEN = 'plane-tok';
+    process.env.PLANE_WORKSPACE_SLUG = 'devpanl';
+    process.env.PLANE_BASE_URL = 'https://plane.devpanl.dev';
+  });
+
+  it('returns null when planeRef is null', async () => {
+    expect(await resolveCycle(null)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns null when no projects match the sequence prefix', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+      { id: 'p1', identifier: 'ZENO' }
+    ] }) });
+    const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
+    expect(r).toBeNull();
+  });
+
+  it('returns null when there is no active cycle', async () => {
+    fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'p1', identifier: 'DEVPA' }
+      ] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [] }) });
+    const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
+    expect(r).toBeNull();
+  });
+
+  it('returns {name, url} when an active cycle exists', async () => {
+    fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'p1', identifier: 'DEVPA' }
+      ] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [
+        { id: 'c1', name: 'Sprint 14' }
+      ] }) });
+    const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
+    expect(r).toEqual({
+      name: 'Sprint 14',
+      url: 'https://plane.devpanl.dev/devpanl/projects/p1/cycles/c1/'
+    });
+  });
+
+  it('returns null when the projects fetch throws', async () => {
+    fetch.mockRejectedValueOnce(new Error('plane down'));
+    const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
+    expect(r).toBeNull();
+  });
+});
