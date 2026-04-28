@@ -1,24 +1,14 @@
 // src/dashboard/components/command-palette.jsx
-// ⌘K palette: navigate, switch project, add project, common actions.
+// ⌘K palette — the universal action plane. Renders three groups:
+//   1. Commands from the registry (commands.js): dispatch, write memory,
+//      route capture, set Shelly mode, …
+//   2. Project switcher
+//   3. Add project quick action
+// The legacy "Go to <tab>" entries also live in the registry as nav-* commands,
+// so adopting the registry shape unifies everything.
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { listLocalProjects, setCurrentProject } from '@/lib/projects-store';
-import {
-  IconSignals, IconToday, IconInbox, IconQueues, IconOps, IconAgents, IconChain,
-  IconShelly, IconProjects, IconSettings, IconPlus, IconSearch
-} from './icons';
-
-const NAV = [
-  { id: 'captures',   label: 'Inbox',      icon: IconInbox,     hint: 'Operations' },
-  { id: 'today',      label: 'Today',      icon: IconToday,     hint: 'Operations' },
-  { id: 'signals',    label: 'Signals',    icon: IconSignals,   hint: 'Operations' },
-  { id: 'agents',     label: 'Agents',     icon: IconAgents,    hint: 'Infrastructure' },
-  { id: 'work-items', label: 'Work items', icon: IconChain,     hint: 'Infrastructure' },
-  { id: 'queues',     label: 'Queues',     icon: IconQueues,    hint: 'Infrastructure' },
-  { id: 'shelly',     label: 'Shelly',     icon: IconShelly,    hint: 'Infrastructure' },
-  { id: 'ops',        label: 'Ops',        icon: IconOps,       hint: 'Infrastructure' },
-  { id: 'projects',   label: 'Projects',   icon: IconProjects,  hint: 'Manage' },
-  { id: 'settings',   label: 'Settings',   icon: IconSettings,  hint: 'Manage' },
-];
+import { IconPlus, IconSearch } from './icons';
 
 function fuzzyMatch(query, text) {
   if (!query) return true;
@@ -30,7 +20,7 @@ function fuzzyMatch(query, text) {
   return false;
 }
 
-export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onAddProject }) {
+export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onAddProject, commands = [] }) {
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const inputRef = useRef(null);
@@ -48,10 +38,12 @@ export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onA
 
   const items = useMemo(() => {
     const list = [];
-    NAV.forEach(n => {
-      if (fuzzyMatch(q, n.label)) list.push({
-        kind: 'nav', id: n.id, label: `Go to ${n.label}`, hint: n.hint, icon: n.icon,
-        onPick: () => onNavigate(n.id),
+    // Action commands first — Cmd-K is the action plane, not just nav.
+    commands.forEach(c => {
+      const haystack = [c.label, c.hint, ...(c.keywords || [])].join(' ');
+      if (fuzzyMatch(q, haystack)) list.push({
+        kind: 'cmd', id: c.id, label: c.label, hint: c.hint || 'Command', icon: c.icon,
+        onPick: () => { c.run(); },
       });
     });
     projects.forEach(p => {
@@ -69,7 +61,7 @@ export function CommandPalette({ open, onClose, onNavigate, onProjectSwitch, onA
       });
     }
     return list;
-  }, [q, projects, onNavigate, onProjectSwitch, onAddProject]);
+  }, [q, projects, commands, onProjectSwitch, onAddProject]);
 
   useEffect(() => { if (idx >= items.length) setIdx(0); }, [items, idx]);
 

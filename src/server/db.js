@@ -286,6 +286,30 @@ export function initMasterDatabase(storagePath = './storage') {
     masterDb.pragma(`user_version = ${CAPTURE_ROUTING_VERSION}`);
   }
 
+  // Migration v6: inbox_state — per-(subject_type, subject_id) row state for
+  // the typed Inbox surface. A row stops showing once the user has dismissed
+  // it (handled), or until snoozed_until passes. last_seen_at is purely
+  // informational (used for "X new since you last looked"). PK on
+  // (subject_type, subject_id) so we can upsert idempotently.
+  const INBOX_STATE_VERSION = 6;
+  const currentVersion6 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion6 < INBOX_STATE_VERSION) {
+    masterDb.exec(`
+      CREATE TABLE IF NOT EXISTS inbox_state (
+        subject_type    TEXT NOT NULL,
+        subject_id      TEXT NOT NULL,
+        last_seen_at    DATETIME,
+        snoozed_until   DATETIME,
+        dismissed_at    DATETIME,
+        updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (subject_type, subject_id)
+      );
+      CREATE INDEX IF NOT EXISTS inbox_state_active
+        ON inbox_state(dismissed_at, snoozed_until);
+    `);
+    masterDb.pragma(`user_version = ${INBOX_STATE_VERSION}`);
+  }
+
   return masterDb;
 }
 

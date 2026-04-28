@@ -4,6 +4,8 @@ import "./app.css";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 import { CommandPalette } from "@/components/command-palette";
+import { CaptureComposer } from "@/components/capture-composer";
+import { buildCommands } from "@/lib/commands";
 import { CommandDock } from "@/components/command-dock";
 import { ProjectRibbon } from "@/components/project-ribbon";
 import { PasteUrlModal } from "@/components/paste-url-modal";
@@ -17,6 +19,9 @@ import { SignalsView } from "@/views/signals-view";
 import { OpsView } from "@/views/ops-view";
 import { AgentsView } from "@/views/agents-view";
 import { WorkItemsView } from "@/views/work-items-view";
+import { InboxView } from "@/views/inbox-view";
+import { FleetView } from "@/views/fleet-view";
+import { MemoryView } from "@/views/memory-view";
 import { IconLogo } from "@/components/icons";
 import {
   migrateLegacy, listLocalProjects, getCurrentProject, addOrUpdateProject,
@@ -26,17 +31,23 @@ import {
 // Derive initial tab from URL
 function getInitialTab() {
   const path = window.location.pathname;
-  if (path.includes("/queues")) return "queues";
-  if (path.includes("/shelly")) return "shelly";
-  if (path.includes("/agents")) return "agents";
+  // Flight-deck primary surfaces (preferred)
+  if (path.includes("/inbox"))      return "inbox";
+  if (path.includes("/fleet"))      return "fleet";
+  if (path.includes("/memory"))     return "memory";
+  // Legacy tabs (still mountable during transition)
+  if (path.includes("/queues"))     return "queues";
+  if (path.includes("/shelly"))     return "shelly";
+  if (path.includes("/agents"))     return "agents";
   if (path.includes("/work-items")) return "work-items";
-  if (path.includes("/ops")) return "ops";
-  if (path.includes("/projects")) return "projects";
-  if (path.includes("/settings")) return "settings";
-  if (path.includes("/today")) return "today";
-  if (path.includes("/signals")) return "signals";
-  // Default landing: captures. The old /inbox alias also lands here.
-  return "captures";
+  if (path.includes("/ops"))        return "ops";
+  if (path.includes("/projects"))   return "projects";
+  if (path.includes("/settings"))   return "settings";
+  if (path.includes("/today"))      return "today";
+  if (path.includes("/signals"))    return "signals";
+  if (path.includes("/captures"))   return "captures";
+  // Default landing: the typed Inbox.
+  return "inbox";
 }
 
 function App() {
@@ -56,6 +67,7 @@ function App() {
   const [capturesCount, setCapturesCount] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
+  const [globalCaptureOpen, setGlobalCaptureOpen] = useState(false);
   const sseRef = useRef(null);
 
   // Traefik enforces SSO before the SPA loads, so by the time we mount we
@@ -92,7 +104,10 @@ function App() {
   function handleTabChange(tab) {
     setActiveTab(tab);
     // Update URL for bookmarking without full navigation
-    const path = tab === "queues" ? "/dashboard/queues"
+    const path = tab === "inbox" ? "/dashboard/inbox"
+      : tab === "fleet" ? "/dashboard/fleet"
+      : tab === "memory" ? "/dashboard/memory"
+      : tab === "queues" ? "/dashboard/queues"
       : tab === "shelly" ? "/dashboard/shelly"
       : tab === "agents" ? "/dashboard/agents"
       : tab === "work-items" ? "/dashboard/work-items"
@@ -102,7 +117,7 @@ function App() {
       : tab === "signals" ? "/dashboard/signals"
       : tab === "today" ? "/dashboard/today"
       : tab === "captures" ? "/dashboard/captures"
-      : "/dashboard/";
+      : "/dashboard/inbox";
     window.history.replaceState(null, "", path);
   }
 
@@ -197,6 +212,13 @@ function App() {
         const data = JSON.parse(e.data);
         setQueueHealth(data);
       });
+
+      // Inbox cache-bust — server fires this on capture create + (TODO) deploy
+      // failure / workflow exhaustion. Causes InboxView to refetch on its
+      // refreshKey effect.
+      es.addEventListener("inbox:invalidate", () => {
+        setRefreshKey((k) => k + 1);
+      });
     }
 
     connect();
@@ -229,6 +251,11 @@ function App() {
           {/* Cross-project pulse — only renders if 2+ projects are local */}
           <ProjectRibbon apiUrl={apiUrl} refreshKey={projectVersion} onSwitch={handleProjectSwitch} />
           <div className="flex-1 overflow-hidden">
+            {/* Flight-deck — 4 primary surfaces */}
+            {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} refreshKey={refreshKey} />}
+            {activeTab === "fleet" && <FleetView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
+            {activeTab === "memory" && <MemoryView apiUrl={apiUrl} apiKey={apiKey} />}
+            {/* Legacy views — kept mountable during the transition */}
             {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
             {activeTab === "today" && <TodayView apiUrl={apiUrl} apiKey={apiKey} />}
             {activeTab === "captures" && <CapturesView apiUrl={apiUrl} apiKey={apiKey} />}
@@ -252,9 +279,51 @@ function App() {
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        onNavigate={(tab) => handleTabChange(tab)}
         onProjectSwitch={handleProjectSwitch}
         onAddProject={() => setShowAddProject(true)}
+        commands={buildCommands({
+          apiUrl,
+          apiKey,
+          adminKey: getAdminKey(),
+          navigate: (tab) => handleTabChange(tab),
+          navigateWithQuery: (tab, params) => {
+            handleTabChange(tab);
+            const qs = new URLSearchParams(params).toString();
+            if (qs) window.history.replaceState(null, "", `/dashboard/${tab}?${qs}`);
+          },
+          openModal: async (name /* , opts */) => {
+            // Phase 2 minimum — capture and memory-write open their own modals
+            // mounted from the relevant view; from Cmd-K we route the user to
+            // the surface where the modal appears. Param-prompt uses native
+            // window.prompt for now; a polished form lands in a follow-up.
+            if (name === 'capture') {
+              setPaletteOpen(false);
+              setGlobalCaptureOpen(true);
+              return null;
+            }
+            if (name === 'memory-write') {
+              setPaletteOpen(false);
+              handleTabChange('memory');
+              // The Memory view auto-opens its write modal when ?write=1 is set.
+              window.history.replaceState(null, "", "/dashboard/memory?write=1");
+              return null;
+            }
+            if (name === 'param-prompt') {
+              // eslint-disable-next-line no-alert
+              return window.prompt('input:');
+            }
+            return null;
+          },
+          toast: ({ kind, message }) => {
+            // No toast component yet — fall back to console + alert for errors.
+            // eslint-disable-next-line no-console
+            console.log(`[cmd:${kind}]`, message);
+            if (kind === 'error') {
+              // eslint-disable-next-line no-alert
+              window.alert(message);
+            }
+          },
+        })}
       />
 
       {showAddProject && (
@@ -264,6 +333,18 @@ function App() {
           onCreated={() => { setShowAddProject(false); handleProjectSwitch(); }}
         />
       )}
+
+      {/* Global capture composer — reachable from Cmd-K's "New capture" command
+          regardless of which surface the user is on. The Inbox view also has
+          its own composer with the "c" shortcut, both hit the same /api/captures
+          endpoint. */}
+      <CaptureComposer
+        open={globalCaptureOpen}
+        apiUrl={apiUrl}
+        apiKey={apiKey}
+        onClose={() => setGlobalCaptureOpen(false)}
+        onCreated={() => { setGlobalCaptureOpen(false); setRefreshKey(k => k + 1); }}
+      />
     </div>
   );
 }

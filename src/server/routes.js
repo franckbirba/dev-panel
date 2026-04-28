@@ -52,6 +52,10 @@ import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
 import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
+import { defineInboxRoutes } from './routes-inbox.js';
+import { defineMemoryRoutes } from './routes-memory.js';
+import { defineFleetRoutes } from './routes-fleet.js';
+import { defineCommandRoutes } from './routes-commands.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
 import { pool as pgPool } from './pg.js';
@@ -893,6 +897,10 @@ export function createRouter(config = {}) {
       }).catch(err => {
         console.error('[autoroute] capture', capture.id, 'failed:', err.message);
       });
+      // Tell the dashboard's Inbox view to refetch — capture_new is a NOTIFY/QUESTION
+      // signal but we don't push the whole row over SSE; the client refetches
+      // /api/inbox on this event.
+      broadcast('inbox:invalidate', { reason: 'capture_new', capture_id: capture.id });
       res.status(201).json(capture);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
@@ -981,6 +989,10 @@ export function createRouter(config = {}) {
   // TEAM & ROUTING — manage project members and label→member routing rules.
   // ============================================================================
   defineTeamRoutes(router, authenticateProject);
+  defineInboxRoutes(router, authenticateProject);
+  defineMemoryRoutes(router, authenticateProject);
+  defineFleetRoutes(router, authenticateProject);
+  defineCommandRoutes(router, authenticateProject);
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
@@ -991,17 +1003,41 @@ export function createRouter(config = {}) {
 
   router.get('/today', authenticateProject, async (req, res) => {
     try {
-      const masterDb = getMasterDatabase();
       const now = Date.now();
       const dayAgo = now - 24 * 3600 * 1000;
       const ageMin = (ts) => Math.max(0, Math.round((now - ts) / 60000));
 
-      // Workflow instances — full picture from the engine.
-      const allInstances = masterDb.prepare(
-        `SELECT * FROM workflow_instances ORDER BY last_event_at DESC LIMIT 200`
-      ).all();
+      // Workflow instances — full picture from the engine. Reads from shared
+      // Postgres (migration 003 moved orchestration there). Until 2026-04-28
+      // this read from SQLite workflow_instances which the worker stopped
+      // writing to weeks ago — that's why Today showed IN PROGRESS=0 even
+      // when 8+ workflows were running on Zeno.
+      let allInstances = [];
+      try {
+        const r = await pgPool.query(
+          `SELECT id, work_item_id, workflow_name, revision, current_step, status,
+                  started_at, last_event_at, exhausted_at, last_job_id, metadata
+             FROM workflow_instances
+             ORDER BY last_event_at DESC NULLS LAST
+             LIMIT 200`
+        );
+        allInstances = r.rows;
+      } catch (e) {
+        console.warn('[/today] pg workflow_instances unreachable:', e.message);
+      }
 
-      const parseMeta = (m) => { try { return m ? JSON.parse(m) : null; } catch { return null; } };
+      const parseMeta = (m) => {
+        if (!m) return null;
+        if (typeof m !== 'string') return m; // pg JSONB already parsed
+        try { return JSON.parse(m); } catch { return null; }
+      };
+      // BIGINT epoch ms comes back as string from node-postgres — coerce.
+      const asNum = (v) => {
+        if (v == null) return 0;
+        if (typeof v === 'number') return v;
+        const n = parseInt(String(v).trim(), 10);
+        return Number.isFinite(n) ? n : 0;
+      };
 
       const needs_attention = [];
       const in_progress = [];
@@ -1009,6 +1045,7 @@ export function createRouter(config = {}) {
 
       for (const inst of allInstances) {
         const meta = parseMeta(inst.metadata);
+        const lastEvtMs = asNum(inst.last_event_at);
         const base = {
           instance_id: inst.id,
           work_item_id: inst.work_item_id,
@@ -1016,15 +1053,15 @@ export function createRouter(config = {}) {
           step: inst.current_step,
           revision: inst.revision,
           status: inst.status,
-          age_min: ageMin(inst.last_event_at),
-          last_event_at: inst.last_event_at,
+          age_min: ageMin(lastEvtMs),
+          last_event_at: lastEvtMs,
           metadata: meta
         };
         if (inst.status === 'exhausted' || inst.status === 'awaiting_approval') {
           needs_attention.push({ kind: `workflow_${inst.status}`, ...base });
         } else if (inst.status === 'running') {
           in_progress.push({ kind: 'workflow_running', ...base });
-        } else if (inst.status === 'done' && inst.last_event_at >= dayAgo) {
+        } else if (inst.status === 'done' && lastEvtMs >= dayAgo) {
           shipped_today.push({ kind: 'workflow_done', ...base });
         }
       }
@@ -1858,45 +1895,48 @@ export function createRouter(config = {}) {
   });
 
   // Per-agent roll-up: which agents have run, how often, success rate, last-seen.
-  // Feeds /dashboard/agents. Aggregates off agent_job_log which the worker
-  // mirrors here from hetzner in real time.
-  router.get('/admin/agents', authenticateAdmin, (req, res) => {
+  // Feeds /dashboard/agents. Reads from shared Postgres (migration 003 moved
+  // agent_job_log out of SQLite). Until 2026-04-28 this was reading from the
+  // dead SQLite table — which is why every agent showed "4d ago" no matter
+  // how recently it had actually run. The worker has been writing to PG for
+  // weeks, the dashboard just wasn't following.
+  router.get('/admin/agents', authenticateAdmin, async (req, res) => {
     try {
-      const db = getMasterDatabase();
-      const rows = db.prepare(`
+      const { rows } = await pgPool.query(`
         SELECT
           agent,
-          COUNT(*) AS total,
-          SUM(CASE WHEN status='ok'    THEN 1 ELSE 0 END) AS ok,
-          SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error,
-          SUM(CASE WHEN status='stub'  THEN 1 ELSE 0 END) AS stub,
-          SUM(CASE WHEN timestamp > datetime('now','-24 hours') THEN 1 ELSE 0 END) AS last_24h,
+          COUNT(*)::int AS total,
+          SUM(CASE WHEN status='ok'    THEN 1 ELSE 0 END)::int AS ok,
+          SUM(CASE WHEN status='error' THEN 1 ELSE 0 END)::int AS error,
+          SUM(CASE WHEN status='stub'  THEN 1 ELSE 0 END)::int AS stub,
+          SUM(CASE WHEN timestamp > now() - interval '24 hours' THEN 1 ELSE 0 END)::int AS last_24h,
           MAX(timestamp) AS last_seen,
-          AVG(duration_ms) AS avg_duration_ms
+          AVG(duration_ms)::int AS avg_duration_ms
         FROM agent_job_log
         GROUP BY agent
         ORDER BY MAX(timestamp) DESC
-      `).all();
+      `);
       res.json({ agents: rows });
     } catch (e) {
+      console.error('[admin/agents]', e);
       res.status(500).json({ error: e.message });
     }
   });
 
   // Per-agent recent job log. Used when you drill into one agent card.
-  router.get('/admin/agents/:agent/recent', authenticateAdmin, (req, res) => {
+  router.get('/admin/agents/:agent/recent', authenticateAdmin, async (req, res) => {
     try {
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-      const db = getMasterDatabase();
-      const rows = db.prepare(`
+      const { rows } = await pgPool.query(`
         SELECT id, job_id, step, status, error, duration_ms, timestamp
         FROM agent_job_log
-        WHERE agent = ?
+        WHERE agent = $1
         ORDER BY id DESC
-        LIMIT ?
-      `).all(req.params.agent, limit);
+        LIMIT $2
+      `, [req.params.agent, limit]);
       res.json({ steps: rows });
     } catch (e) {
+      console.error('[admin/agents/:agent/recent]', e);
       res.status(500).json({ error: e.message });
     }
   });

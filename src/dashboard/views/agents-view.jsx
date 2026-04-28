@@ -16,16 +16,13 @@ async function fetchJson(url, adminKey) {
   return r.json();
 }
 
-function timeAgo(iso) {
-  if (!iso) return '—';
-  const date = new Date(iso.replace(' ', 'T') + (iso.endsWith('Z') ? '' : 'Z'));
-  const delta = Date.now() - date.getTime();
-  const min = Math.floor(delta / 60000);
-  if (min < 0) return 'just now';
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  if (min < 1440) return `${Math.floor(min / 60)}h ago`;
-  return `${Math.floor(min / 1440)}d ago`;
+// Wrap the shared helper so the rendered text matches this view's "Nm ago"
+// suffix style. The shared helper handles BIGINT-as-string + ISO + numeric.
+import { timeAgo as _timeAgoCore } from '@/lib/time';
+function timeAgo(input) {
+  const out = _timeAgoCore(input);
+  if (out === '—' || out === 'now') return out === 'now' ? 'just now' : '—';
+  return `${out} ago`;
 }
 
 // "Alive" = ran something in the last 24h. Colors health at a glance.

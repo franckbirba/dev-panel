@@ -3,6 +3,21 @@
 // Shared between services API and agents-host worker (same pg, migration 003).
 import { pool } from './pg.js';
 
+// Lazy-loaded SSE broadcast — keep this module loadable from worker context
+// where ./sse.js may not be importable cleanly. Each write fans out a
+// `workflow:changed` event so the dashboard can patch in real time without
+// polling.
+let _broadcast = null;
+async function broadcast(event, data) {
+  try {
+    if (!_broadcast) {
+      const m = await import('./sse.js');
+      _broadcast = m.broadcast;
+    }
+    _broadcast(event, data);
+  } catch { /* sse not available in this process — degrade silently */ }
+}
+
 // Normalize a row's `metadata` field to a JSON string (the shape callers
 // expect — engine.js does JSON.parse(instance.metadata)). Pg stores JSONB
 // which node-postgres returns as a parsed object, so we re-stringify here.
@@ -30,6 +45,15 @@ export async function createInstance({
      RETURNING id`,
     [work_item_id, workflow_name, current_step, module_id, cycle_id, now, metaStr]
   );
+  // Push a real-time event so any open dashboard tab updates immediately
+  // instead of waiting for the next poll. Fire-and-forget — never block the
+  // worker on the broadcast.
+  broadcast('workflow:changed', {
+    op: 'insert',
+    id: rows[0].id,
+    work_item_id, workflow_name, status: 'running', current_step,
+    last_event_at: now,
+  });
   return rows[0].id;
 }
 
@@ -87,7 +111,17 @@ export async function updateInstance({ work_item_id, workflow_name }, patch) {
   if (rows.length === 0) {
     throw new Error(`no instance for (${work_item_id}, ${workflow_name})`);
   }
-  return normalizeRow(rows[0]);
+  const updated = normalizeRow(rows[0]);
+  broadcast('workflow:changed', {
+    op: 'update',
+    id: updated.id,
+    work_item_id: updated.work_item_id,
+    workflow_name: updated.workflow_name,
+    status: updated.status,
+    current_step: updated.current_step,
+    last_event_at: now,
+  });
+  return updated;
 }
 
 export async function listActive() {

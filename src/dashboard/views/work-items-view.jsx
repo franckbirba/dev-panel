@@ -21,10 +21,19 @@ function shortId(id) {
 }
 
 function timeAgo(input) {
-  if (!input) return '—';
-  const ts = typeof input === 'number'
-    ? input
-    : Date.parse(String(input).replace(' ', 'T') + (String(input).endsWith('Z') ? '' : 'Z'));
+  if (input == null || input === '') return '—';
+  let ts;
+  if (typeof input === 'number') {
+    ts = input;
+  } else if (/^\d+$/.test(String(input).trim())) {
+    // node-postgres returns BIGINT (workflow_instances.last_event_at,
+    // .started_at, .exhausted_at) as a numeric string. Treat all-digits
+    // input as epoch ms.
+    ts = parseInt(String(input).trim(), 10);
+  } else {
+    const s = String(input);
+    ts = Date.parse(s.replace(' ', 'T') + (s.endsWith('Z') ? '' : 'Z'));
+  }
   if (!Number.isFinite(ts)) return '—';
   const min = Math.floor((Date.now() - ts) / 60000);
   if (min < 1) return 'now';
