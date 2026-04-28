@@ -23,39 +23,56 @@ Environment=PG_HOST=10.0.0.2
 Environment=PG_PORT=5432
 Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
 Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+# Where telegram-multi writes its per-bot heartbeat snapshot. The watchdog
+# (running as root) reads the same path. Pinned here so we don't depend on
+# XDG_RUNTIME_DIR being passed through every shell layer.
+Environment=TELEGRAM_MULTI_HEALTH_DIR=/home/deploy/logs/telegram-multi
 EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
 
-# Make sure log destination exists.
-ExecStartPre=-/bin/mkdir -p /home/deploy/logs
-ExecStartPre=-/bin/chown deploy:deploy /home/deploy/logs
+# Make sure log + health destinations exist.
+ExecStartPre=-/bin/mkdir -p /home/deploy/logs/telegram-multi
+ExecStartPre=-/bin/chown -R deploy:deploy /home/deploy/logs
 
 # Always start from a clean tmux session.
 ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
 
 # Inbound Telegram is delivered by `telegram-multi` (stdio MCP server + grammy
-# long-poller, wired in ~/.mcp.json under server name `telegram`). `--channels`
-# uses the `server:<name>` form for manually configured MCP servers (vs.
-# `plugin:<name>@<marketplace>` for plugin-marketplace channels). Previously
-# this used `plugin:telegram@claude-plugins-official`, which spawned a SECOND
+# long-poller, wired in ~/.mcp.json under server name `telegram`). The previous
+# config used `plugin:telegram@claude-plugins-official`, which spawned a SECOND
 # poller fighting telegram-multi for the same bot token (Telegram returns 409
 # Conflict when two pollers share a token, both eventually go silent). Switched
 # to `server:telegram` 2026-04-27 so telegram-multi is the sole poller.
-# `--dangerously-load-development-channels` is a hidden flag (not in --help)
-# required when --channels references a manually-configured MCP server (the
-# `server:<name>` form), because such servers haven't been vetted by an
-# allowlist marketplace. It takes one or more channel tags (NOT a boolean) —
-# pass it the same `server:telegram` value as --channels. Without this Claude
-# shows `server:telegram · server: entries need --dangerously-load-development-channels`
-# and won't subscribe.
-ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --channels server:telegram --dangerously-load-development-channels server:telegram --dangerously-skip-permissions"
+#
+# `--dangerously-load-development-channels server:telegram` is sufficient on
+# its own to subscribe — both `--channels` and `--dangerously-load-development-channels`
+# feed entries into the same merged list, and the parser only flags non-dev
+# entries with `server: entries need --dangerously-load-development-channels`.
+# Passing `server:telegram` to BOTH flags creates two entries; one is dev:false
+# and trips the warning, the other works, so the channel is registered twice
+# under the same name and the pane shows duplicated "server:telegram, server:telegram"
+# with the warning still printed. Pass it ONLY to dev-channels.
+# Both flags are hidden (not in --help) and live in cli.js; verified empirically
+# 2026-04-28 against /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --dangerously-load-development-channels server:telegram --dangerously-skip-permissions"
 
-# 1) Dismiss claude's first-run "trust this folder?" prompt.
+# 1) Dismiss claude's startup dialogs. Two are possible:
+#    a) "Trust this folder?" — first-run only (~/.claude state remembers it
+#       afterwards). We don't normally see it; covered by the first Enter.
+#    b) "Channels: server:telegram — I am using this for local development"
+#       — appears EVERY startup because --dangerously-load-development-channels
+#       requires explicit per-session acceptance (Claude Max sessions get the
+#       interactive dialog; non-authenticated sessions auto-accept). Covered by
+#       the second Enter (4s after the first, well after the dialog renders).
+#    Without these the channel never registers and the pane warns
+#    "server: entries need --dangerously-load-development-channels".
 # 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
 #    -t shelly survives a session kill (tmux pty would otherwise lose the
 #    crash trace). pipe-pane appends to a fresh stream on every restart.
 # 3) Also tee to a plain file so a frustrated human doesn't need journalctl
 #    to read the last 200 lines.
-ExecStartPost=/bin/sh -c "sleep 6 && \
+ExecStartPost=/bin/sh -c "sleep 4 && \
+  /usr/bin/tmux -L deploy send-keys -t shelly Enter && \
+  sleep 4 && \
   /usr/bin/tmux -L deploy send-keys -t shelly Enter && \
   /usr/bin/tmux -L deploy pipe-pane -O -t shelly:0.0 'tee -a /home/deploy/logs/shelly.log | systemd-cat -t shelly -p info'"
 

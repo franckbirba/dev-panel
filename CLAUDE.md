@@ -87,7 +87,7 @@ Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persist
 
 | Host | Role | What runs |
 |---|---|---|
-| `hetzner-vps` — 62.238.0.167 (agents node, internal 10.0.0.3) | Shelly + coding agents | `tmux -L deploy -s shelly` session → `claude --channels plugin:telegram-multi@devpanl --dangerously-skip-permissions` as user `deploy`, cwd `/home/deploy/projects/dev-panel`. BullMQ worker `node src/worker/index.js` pulls jobs from Redis (services node) and spawns **ephemeral** `claude -p` subprocesses per job. |
+| `hetzner-vps` — 62.238.0.167 (agents node, internal 10.0.0.3) | Shelly + coding agents | `tmux -L deploy -s shelly` session → `claude --dangerously-load-development-channels server:telegram --dangerously-skip-permissions` as user `deploy`, cwd `/home/deploy/projects/dev-panel`. The `server:telegram` form points at the manually-configured `telegram` MCP server in `~/.mcp.json` (the `telegram-multi` bun process). Don't also pass `--channels server:telegram` — the parser de-dupes weirdly and Claude will subscribe twice with one entry trapped in dev:false / dev:true conflict; symptom is the pane showing "server:telegram, server:telegram" with a "server: entries need…" warning. BullMQ worker `node src/worker/index.js` pulls jobs from Redis (services node) and spawns **ephemeral** `claude -p` subprocesses per job. |
 | services VPS — 77.42.46.87 (internal 10.0.0.2) | Control plane | `devpanel-api` container (Express + MCP + `notifyJob()` push notifications), Redis, Postgres, dashboard, bull-board. |
 
 ### Who polls the Telegram bot token
@@ -114,20 +114,24 @@ Both `.env` and `.env.production` on services VPS must carry `TELEGRAM_BOT_TOKEN
 
 ### Relaunching Shelly
 
-**Critical:** `bun` lives at `/home/deploy/.bun/bin/bun` and must be on `PATH` inside the tmux session, otherwise the telegram plugin silently fails to spawn its bun subprocess — Shelly will *say* "Listening for channel messages" but will never actually receive any. `su -` strips `.bun/bin` from PATH by default. Always set it explicitly:
+Use `systemctl restart shelly.service` on hetzner-vps — that's the unit at `infra/shelly.service`. The `ExecStart` pins the right channel flags and PATH; do not hand-craft `tmux new-session` calls (the old runbook here did, and people kept reverting to it after each new failure mode, accumulating drift).
 
-```bash
-ssh hetzner-vps 'su - deploy -c "tmux -L deploy kill-session -t shelly 2>/dev/null; \
-  cd /home/deploy/projects/dev-panel && \
-  tmux -L deploy new-session -d -s shelly \
-    \"PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
-     claude --channels plugin:telegram-multi@devpanl --dangerously-skip-permissions\" && \
-  sleep 5 && tmux -L deploy send-keys -t shelly Enter"'
-```
+The unit launches `claude --dangerously-load-development-channels server:telegram --dangerously-skip-permissions` inside a tmux session. `bun` must live at `/home/deploy/.bun/bin/bun` and be on the unit's PATH — already pinned in `Environment=PATH=...` in the unit. Token + chat ID for Franck's legacy bot still come from `/home/deploy/.claude/channels/telegram/.env` (used by devpanel-api's first-boot seed); tokens for paired devs come from the shared Postgres `dev_bots` table.
 
-The `send-keys Enter` dismisses Claude's first-run "trust this folder?" prompt. Token + chat ID for Franck's legacy bot still come from `/home/deploy/.claude/channels/telegram/.env` (used by devpanel-api's first-boot seed). Tokens for paired devs come from the shared Postgres `dev_bots` table; the env file also carries the DB connection vars (`PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`) that the plugin uses to read that table.
+Verify she's live: `ssh hetzner-vps 'pgrep -af "bun.*server.ts"'` must show one process, and `cat /home/deploy/logs/telegram-multi/health.json` must list every active dev_bots row with a timestamp <30s old. If `pgrep` is empty, the plugin failed to start. If `health.json` shows fewer keys than `dev_bots.status='active'` rows, a specific bot's polling died — check `/home/deploy/logs/telegram-multi.log` for the `polling stopped` line.
 
-Verify she's live: `ssh hetzner-vps 'pgrep -af "bun server.ts"'` must show a process. If empty, the plugin failed to start — almost always a PATH issue.
+### Self-heal — `telegram-multi` is supposed to recover from 409s on its own
+
+Each grammy `Bot` runs under a per-bot supervisor (`plugins/telegram-multi/server.ts`, `startWithSupervisor`). When `bot.start()` rejects with anything other than 401:
+- It logs `polling stopped (attempt N, retry in Mms)`
+- It schedules a retry via `pollRetryDelayMs(N)` — exponential backoff capped at 60s
+- The row stays in `running` so `BotRegistry.diffBots` doesn't double-add
+
+A 401 marks the row revoked and gives up. Anything else loops forever (with backoff) until polling succeeds or the row is removed from `dev_bots`.
+
+In parallel the plugin writes `/home/deploy/logs/telegram-multi/health.json` every 15s. The systemd watchdog (`infra/shelly-watchdog.sh`) reads it: if any bot's stamp is >180s old, it restarts `shelly.service` with `reason="bot deaf: <label>(Ns)"`. This is the safety net for the failure mode the supervisor can't recover from on its own (e.g., bun process running but grammy is wedged).
+
+The original failure that motivated this (Apr 27 19:12 UTC, fixed Apr 28): franck's bot got a 409 during a restart race, polling stopped, the row stayed in `running`, no retry, no restart, dead until the daily 4 AM cycle. The supervisor fixes the recovery. The watchdog fixes detection. The smoke test (`scripts/smoke-shelly.sh`, called from `deploy-agents.sh`) makes the next regression visible at deploy time instead of at 9 AM the next day.
 
 Attach to observe: `ssh hetzner-vps 'su - deploy -c "tmux -L deploy attach -t shelly"'` (read-only preferable — `Ctrl-b d` to detach).
 

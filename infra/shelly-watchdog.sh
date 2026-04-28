@@ -1,6 +1,10 @@
 #!/bin/bash
-# Restart shelly.service when the Telegram plugin is gone OR has gone deaf
-# (bun alive but no ESTABLISHED socket to api.telegram.org for >2 ticks).
+# Restart shelly.service when the Telegram plugin is gone, has gone deaf at
+# the process level (bun alive but no ESTABLISHED socket to api.telegram.org
+# for >2 ticks), OR when a SPECIFIC bot has stopped polling while peers are
+# still healthy (per-bot deafness — the 2026-04-27 franck-bot regression
+# that the original socket-only check could not see).
+#
 # Outer `claude` can stay up while bun silently exits — Restart=on-failure
 # alone wouldn't catch this. See dev-panel/CLAUDE.md.
 #
@@ -15,6 +19,15 @@ mkdir -p "$(dirname "$LOG")"
 STAMP_DIR=/run/shelly-watchdog
 STAMP=$STAMP_DIR/last-telegram-ok
 mkdir -p "$STAMP_DIR"
+
+# telegram-multi writes one ISO timestamp per active bot here every 15s.
+# Path mirrors $TELEGRAM_MULTI_HEALTH_DIR in shelly.service. If the file is
+# missing (older plugin, fresh boot, plugin crashed) we silently skip the
+# per-bot check and rely on the socket heuristic — no regression.
+HEALTH_FILE=/home/deploy/logs/telegram-multi/health.json
+# Per-bot deafness threshold. The plugin bumps every 15s, so 180s = >10 missed
+# ticks → genuinely stuck, not a normal long-poll dwell.
+PER_BOT_DEAF_AFTER=180
 
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 REASON=""
@@ -45,21 +58,50 @@ if [ -z "$REASON" ]; then
 
   if [ "$HAS_TG_SOCKET" -eq 1 ]; then
     touch "$STAMP"
-    exit 0
+  else
+    # No socket right now. Check how long it's been bad.
+    if [ ! -f "$STAMP" ]; then
+      touch "$STAMP"
+      # First time we notice — give it a tick to recover.
+      exit 0
+    fi
+    AGE=$(( $(date -u +%s) - $(stat -c %Y "$STAMP") ))
+    if [ "$AGE" -lt 120 ]; then
+      # Still within grace window.
+      exit 0
+    fi
+    REASON="no Telegram socket for ${AGE}s"
   fi
+fi
 
-  # No socket right now. Check how long it's been bad.
-  if [ ! -f "$STAMP" ]; then
-    touch "$STAMP"
-    # First time we notice — give it a tick to recover.
-    exit 0
+# 3) Per-bot deafness — at least one ESTABLISHED socket isn't enough when
+# we have N>1 bots: the franck-bot 2026-04-27 regression had 3 healthy bots
+# masking the dead one. Read telegram-multi's health.json and trip if any
+# label is stale by more than $PER_BOT_DEAF_AFTER seconds.
+if [ -z "$REASON" ] && [ -f "$HEALTH_FILE" ] && command -v jq >/dev/null 2>&1; then
+  NOW=$(date -u +%s)
+  # jq's fromdateiso8601 doesn't accept fractional seconds — strip ".###"
+  # before parsing. The plugin writes Date.toISOString() which always has
+  # ".###Z"; this filter handles both forms defensively.
+  STALE_BOTS=$(jq -r --argjson now "$NOW" --argjson thresh "$PER_BOT_DEAF_AFTER" '
+    def secs: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+    to_entries
+    | map(select(($now - (.value | secs)) > $thresh)
+          | "\(.key)(\($now - (.value | secs))s)")
+    | join(",")
+  ' "$HEALTH_FILE" 2>/dev/null || true)
+  if [ -n "$STALE_BOTS" ]; then
+    REASON="bot deaf: $STALE_BOTS"
   fi
-  AGE=$(( $(date -u +%s) - $(stat -c %Y "$STAMP") ))
-  if [ "$AGE" -lt 120 ]; then
-    # Still within grace window.
-    exit 0
-  fi
-  REASON="no Telegram socket for ${AGE}s"
+fi
+
+# CRITICAL: only restart when REASON is non-empty. Falling through to the
+# restart block on a healthy run is exactly the bug that caused the 65s
+# restart loop on 2026-04-28 — empty REASON, but logger+systemctl ran
+# unconditionally because all earlier checks merely *populated* REASON
+# instead of `exit 0`-ing on success.
+if [ -z "$REASON" ]; then
+  exit 0
 fi
 
 logger -t shelly-watchdog "$REASON — restarting shelly.service"

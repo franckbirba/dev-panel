@@ -29,6 +29,7 @@ import { homedir } from 'os'
 import { join, extname, sep } from 'path'
 import { loadActiveBots, loadAllowlist, addToAllowlist, markRevoked, touchInbound, updateOwner, type DevBotRow } from './src/loader.ts'
 import { BotRegistry } from './src/registry.ts'
+import { pollRetryDelayMs } from './src/supervisor.ts'
 
 // In-memory mirror of the dev_bot_allowlist Postgres table. Refreshed on
 // every reconcile tick (30s). The gate() reads this set as well as the
@@ -312,7 +313,18 @@ function isMentioned(ctx: Context, botUsername: string, extraPatterns?: string[]
 // Multi-bot runtime
 // ---------------------------------------------------------------------------
 
-type RunningBot = { row: DevBotRow; bot: Bot; username: string }
+type RunningBot = {
+  row: DevBotRow
+  bot: Bot
+  username: string
+  // Wall-clock timestamp (ms since epoch) of the last sign of life from
+  // Telegram for this bot — bumped on every received update and on a
+  // successful supervisor restart. Read by the heartbeat tick to write
+  // /run/telegram-multi/health.json, which the systemd watchdog uses to
+  // detect per-bot deafness (vs. the original "any socket alive" heuristic
+  // which missed a single dead bot among healthy peers).
+  lastPollOkAt: number
+}
 
 // Each running grammy Bot, keyed by dev_bots.id.
 const running = new Map<number, RunningBot>()
@@ -708,6 +720,16 @@ function wireBotHandlers(bot: Bot, row: DevBotRow): void {
     log(`telegram-multi: bot ${row.bot_label} handler error (polling continues): ${err.error}`)
   })
 
+  // Heartbeat — every received update bumps the bot's lastPollOkAt. This is
+  // the signal the systemd watchdog reads to detect single-bot deafness.
+  // bot.use runs before any message-specific handler so it fires for every
+  // update type (text, photo, callback_query, etc.).
+  bot.use(async (_ctx, next) => {
+    const r = running.get(row.id)
+    if (r) r.lastPollOkAt = Date.now()
+    await next()
+  })
+
   // Commands are DM-only. Responding in groups would: (1) leak pairing codes via
   // /status to other group members, (2) confirm bot presence in non-allowlisted
   // groups, (3) spam channels the operator never approved. Silent drop matches
@@ -1050,33 +1072,62 @@ void escapeAttr
 // Bot lifecycle (start / stop / reconcile)
 // ---------------------------------------------------------------------------
 
-const registry = new BotRegistry({
-  start: async (row) => {
-    const b = new Bot(row.bot_token)
-    let me
-    try {
-      me = await b.api.getMe()
-    } catch (err: any) {
-      log(`telegram-multi: getMe failed for ${row.bot_label}: ${err?.message ?? err}`)
-      if (err?.error_code === 401) await markRevoked(row.id).catch(() => {})
-      throw err
-    }
-    wireBotHandlers(b, row)
-    // Polling runs as a background task — kicked off here, errors trapped to
-    // keep one bot's polling crash from taking down the others. Retry/backoff
-    // happens via the next reconcile cycle (registry will see the row missing
-    // from `running` and try to start it again on the next 30s tick — but the
-    // row stays in `running` here, so we rely on grammy's own reconnect logic
-    // for transient errors and on revocation for permanent ones).
-    b.start({ drop_pending_updates: true }).catch(err => {
-      log(`telegram-multi: bot ${row.bot_label} polling stopped: ${err}`)
+// Per-bot supervisor: keeps polling alive across transient grammy errors
+// (409 Conflict during restart races, 5xx, network blips). A 401 (revoked
+// token) is terminal — we mark the row revoked and let the next reconcile
+// drop it. Anything else: bounded backoff + restart.
+//
+// The previous implementation stored the row in `running` BEFORE the
+// b.start().catch() handler ran, so when polling died (e.g. 409 Conflict),
+// the row stayed in `running.current`, BotRegistry.diffBots saw no addition,
+// and the dead bot was never restarted. Bot remained silently deaf until
+// the daily 4h restart. Confirmed observed Apr 27 19:12 UTC for franck's bot.
+async function startWithSupervisor(row: DevBotRow): Promise<void> {
+  const b = new Bot(row.bot_token)
+  let me
+  try {
+    me = await b.api.getMe()
+  } catch (err: any) {
+    log(`telegram-multi: getMe failed for ${row.bot_label}: ${err?.message ?? err}`)
+    if (err?.error_code === 401) await markRevoked(row.id).catch(() => {})
+    throw err
+  }
+  wireBotHandlers(b, row)
+
+  let attempt = 0
+  const supervise = (): void => {
+    b.start({ drop_pending_updates: true }).catch(async (err) => {
+      // 401 — token revoked. Stop trying; let the row drop on next reconcile.
       if (err instanceof GrammyError && err.error_code === 401) {
-        markRevoked(row.id).catch(() => {})
+        log(`telegram-multi: bot ${row.bot_label} revoked (401), giving up`)
+        await markRevoked(row.id).catch(() => {})
+        running.delete(row.id)
+        return
       }
+      // Transient — wait, then re-enter supervise(). The grammy Bot instance
+      // can be restarted in place; no need to recreate it (re-handling
+      // wireBotHandlers would double-register middleware).
+      const delay = pollRetryDelayMs(attempt)
+      attempt += 1
+      log(`telegram-multi: bot ${row.bot_label} polling stopped (attempt ${attempt}, retry in ${delay}ms): ${err}`)
+      setTimeout(() => {
+        // If reconcile removed the row in the meantime, give up — the stop
+        // path already cleaned up.
+        if (!running.has(row.id)) return
+        const r = running.get(row.id)!
+        r.lastPollOkAt = Date.now() // optimistic: we're about to try again
+        supervise()
+      }, delay).unref()
     })
-    running.set(row.id, { row, bot: b, username: me.username ?? '' })
-    log(`telegram-multi: started bot ${row.bot_label} (@${me.username})`)
-  },
+  }
+  supervise()
+
+  running.set(row.id, { row, bot: b, username: me.username ?? '', lastPollOkAt: Date.now() })
+  log(`telegram-multi: started bot ${row.bot_label} (@${me.username})`)
+}
+
+const registry = new BotRegistry({
+  start: startWithSupervisor,
   stop: async (row) => {
     const r = running.get(row.id)
     if (!r) return
@@ -1112,6 +1163,45 @@ reconcileLoop().then(() => {
   }
 })
 setInterval(reconcileLoop, 30_000).unref()
+
+// Per-bot heartbeat snapshot for the systemd watchdog. Written to a tmpfs
+// path that clears at boot, so a stale file from a previous run can't make
+// the watchdog think a bot is alive when bun is dead.
+//
+// Format: { "<bot_label>": "<ISO timestamp of last poll OK>" }
+//
+// Liveness signal: a bot is healthy iff bot.isRunning() === true. We bump
+// lastPollOkAt every tick for any running bot so a long idle (no inbound
+// traffic for hours) doesn't look like deafness. The middleware bump in
+// wireBotHandlers gives sub-tick freshness when traffic does arrive. The
+// watchdog's threshold (~3 minutes) is much larger than this 15s tick, so
+// only an actual stuck/crashed bot stays stale.
+// Default to the per-user XDG_RUNTIME_DIR (tmpfs that clears at boot), so
+// deploy doesn't need write to /run. Watchdog (root) reads via the same
+// canonical path the systemd unit advertises. Fall back to /tmp on systems
+// without XDG_RUNTIME_DIR.
+const HEALTH_DIR =
+  process.env.TELEGRAM_MULTI_HEALTH_DIR ??
+  (process.env.XDG_RUNTIME_DIR
+    ? join(process.env.XDG_RUNTIME_DIR, 'telegram-multi')
+    : '/tmp/telegram-multi')
+const HEALTH_FILE = join(HEALTH_DIR, 'health.json')
+function writeHealth(): void {
+  try {
+    mkdirSync(HEALTH_DIR, { recursive: true, mode: 0o755 })
+    const now = Date.now()
+    const snapshot: Record<string, string> = {}
+    for (const r of running.values()) {
+      if (r.bot.isRunning()) r.lastPollOkAt = now
+      snapshot[r.row.bot_label] = new Date(r.lastPollOkAt).toISOString()
+    }
+    writeFileSync(HEALTH_FILE, JSON.stringify(snapshot, null, 2))
+  } catch (err) {
+    log(`telegram-multi: writeHealth failed: ${err}`)
+  }
+}
+writeHealth()
+setInterval(writeHealth, 15_000).unref()
 
 // When Claude Code closes the MCP connection, stdin gets EOF. Without this
 // the bots keep polling forever as zombies, holding tokens and blocking the

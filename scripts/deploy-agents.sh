@@ -140,6 +140,19 @@ else
   journalctl -u devpanel-worker --no-pager -n 20 -o cat | tail -20
   exit 1
 fi
+
+# Smoke test: confirm telegram-multi is actually polling every active bot,
+# not just that bun is alive. Wait for the health.json heartbeat tick (15s)
+# before checking — the bots connect within 10s of restart but the file
+# isn't written until the first interval fires.
+echo "==> waiting 25s for telegram-multi to settle, then smoke testing"
+sleep 25
+if su - deploy -c "/home/deploy/projects/dev-panel/scripts/smoke-shelly.sh"; then
+  echo "==> smoke green"
+else
+  echo "==> SMOKE FAILED — Shelly is partially deaf, deploy NOT successful"
+  exit 1
+fi
 EOF
 
 echo "==> done"
