@@ -82,39 +82,77 @@ function FleetHeader() {
   );
 }
 
+// Coerce BIGINT-as-string from node-postgres into a JS Date. Mirrors the
+// shared timeAgo helper but renders an absolute timestamp instead of "Nm".
+// Returns null when input can't be parsed so the caller renders "—".
+function asDate(input) {
+  if (input == null || input === '') return null;
+  let ts;
+  if (typeof input === 'number') ts = input;
+  else if (/^\d+$/.test(String(input).trim())) ts = parseInt(String(input).trim(), 10);
+  else {
+    const s = String(input);
+    ts = Date.parse(s.replace(' ', 'T') + (s.endsWith('Z') ? '' : 'Z'));
+  }
+  if (!Number.isFinite(ts)) return null;
+  return new Date(ts);
+}
+
 function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [reply, setReply] = useState('');
+  const [replyOpen, setReplyOpen] = useState(false);
 
-  async function setAutonomy(autonomy) {
+  async function postFleetAction(action, body = {}) {
     setBusy(true); setError(null);
     try {
-      const r = await fetch(`${apiUrl}/api/fleet/${row.instance_id}/autonomy`, {
+      const r = await fetch(`${apiUrl}/api/fleet/${row.instance_id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: JSON.stringify({ autonomy }),
+        body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
       onRefresh?.();
-    } catch (e) { setError(e.message); }
+      return await r.json();
+    } catch (e) { setError(e.message); throw e; }
     finally { setBusy(false); }
   }
 
+  async function setAutonomy(autonomy) { await postFleetAction('autonomy', { autonomy }); }
+  async function approve()             { await postFleetAction('approve');                 }
+  async function retry()                { await postFleetAction('retry');                   }
   async function cancel() {
     if (!window.confirm('Cancel this workflow instance?')) return;
+    await postFleetAction('cancel');
+    onClose();
+  }
+
+  // Reply hits the existing /api/threads/:type/:id/messages — the same
+  // pipe Shelly uses for capture/work_item conversations. Lands in
+  // Telegram with the [thread:work_item/<id>] tag so the response routes
+  // back. This is the "talk to the agent that's stuck" affordance.
+  async function sendReply() {
+    if (!reply.trim()) return;
     setBusy(true); setError(null);
     try {
-      const r = await fetch(`${apiUrl}/api/fleet/${row.instance_id}/cancel`, {
+      const r = await fetch(`${apiUrl}/api/threads/work_item/${encodeURIComponent(row.work_item_id)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: '{}',
+        body: JSON.stringify({ content: reply.trim(), role: 'user' }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setReply(''); setReplyOpen(false);
       onRefresh?.();
-      onClose();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
+
+  const startedDate = asDate(row.started_at);
+  const isBlocked = ['blocked', 'exhausted'].includes(row.status);
+  const isWaiting = row.status === 'awaiting_approval';
+  const isRunning = row.status === 'running';
+  const isTerminal = ['done', 'cancelled'].includes(row.status);
 
   const tone = STATUS_TONE[row.status] || STATUS_TONE.cancelled;
   return (
@@ -142,7 +180,7 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
           {row.last_step_error && (
             <div className="flex"><dt className="w-32 text-[var(--color-foreground-faint)]">Last error</dt><dd className="text-[var(--color-error)] font-mono text-[10px] whitespace-pre-wrap">{row.last_step_error}</dd></div>
           )}
-          <div className="flex"><dt className="w-32 text-[var(--color-foreground-faint)]">Started</dt><dd>{row.started_at ? new Date(row.started_at).toLocaleString() : '—'}</dd></div>
+          <div className="flex"><dt className="w-32 text-[var(--color-foreground-faint)]">Started</dt><dd>{startedDate ? startedDate.toLocaleString() : '—'}</dd></div>
           <div className="flex"><dt className="w-32 text-[var(--color-foreground-faint)]">Last event</dt><dd>{timeAgo(row.last_event_at)}</dd></div>
           <div className="flex"><dt className="w-32 text-[var(--color-foreground-faint)]">Job</dt><dd className="font-mono">{row.last_job_id || '—'}</dd></div>
           {row.plane_url && (
@@ -165,15 +203,67 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
           </div>
         </div>
 
+        {/* Reply composer — opens a thread to the agent. Same pipe Shelly
+            uses, so the message lands in Telegram with the right tag. */}
+        {replyOpen && (
+          <div className="border-t border-[var(--color-border-subtle)] pt-4">
+            <div className="text-[10px] uppercase tracking-widest text-[var(--color-foreground-faint)] mb-2">Reply to agent</div>
+            <textarea value={reply} onChange={e => setReply(e.target.value)} rows={3}
+              placeholder="What does the agent need to know?"
+              className="w-full px-2 py-1.5 text-[12px] rounded outline-none resize-none"
+              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-foreground)' }} />
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => { setReplyOpen(false); setReply(''); }} disabled={busy}
+                className="px-3 h-7 rounded text-[11px] cursor-pointer text-[var(--color-foreground-faint)]">Cancel</button>
+              <div className="flex-1" />
+              <button onClick={sendReply} disabled={busy || !reply.trim()}
+                className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50"
+                style={{ background: 'var(--color-foreground)', color: 'var(--color-background)' }}>
+                Send
+              </button>
+            </div>
+          </div>
+        )}
+
         {error && <div className="text-[11px] text-[var(--color-error)]">Error: {error}</div>}
       </div>
-      <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border-subtle)]">
-        <button onClick={cancel} disabled={busy || row.status === 'done' || row.status === 'cancelled'}
+
+      {/* Action footer — verbs are state-aware. Nothing dumber than seeing
+          only "Cancel" when the workflow is genuinely waiting on a human
+          decision, which is the bug Franck flagged in the screenshot. */}
+      <div className="flex items-center gap-1.5 px-3 py-2 border-t border-[var(--color-border-subtle)] flex-wrap">
+        {isWaiting && (
+          <button onClick={approve} disabled={busy}
+            className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50 font-medium"
+            style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}>
+            Approve & continue
+          </button>
+        )}
+        {isBlocked && (
+          <button onClick={retry} disabled={busy}
+            className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50 font-medium"
+            style={{ background: 'var(--color-warning-soft)', color: 'var(--color-warning)' }}>
+            Retry
+          </button>
+        )}
+        <button onClick={() => setReplyOpen(o => !o)} disabled={busy || isTerminal}
+          className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50"
+          style={{ background: 'var(--color-surface-2)', color: 'var(--color-foreground)' }}>
+          {replyOpen ? 'Close reply' : 'Reply'}
+        </button>
+        {row.plane_url && (
+          <a href={row.plane_url} target="_blank" rel="noopener"
+            className="px-3 h-7 rounded text-[11px] cursor-pointer flex items-center"
+            style={{ background: 'var(--color-surface-2)', color: 'var(--color-foreground-muted)' }}>
+            Plane ↗
+          </a>
+        )}
+        <div className="flex-1" />
+        <button onClick={cancel} disabled={busy || isTerminal}
           className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50"
           style={{ background: 'var(--color-error-soft)', color: 'var(--color-error)' }}>
           Cancel
         </button>
-        <div className="flex-1" />
       </div>
     </div>
   );
@@ -252,6 +342,11 @@ export function FleetView({ apiUrl, apiKey }) {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* min-w-0 lets flex-1 shrink the list when the rail opens; min-width
+          on the inner scroll container holds the dense grid (~700px) and
+          enables horizontal scroll inside the list rather than letting
+          column headers clip. Less ideal at very narrow widths but
+          honest — Bloomberg-density columns can't truthfully fit in 290px. */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-[var(--color-border-subtle)]">
         <div className="flex items-center gap-3 h-12 px-4 border-b border-[var(--color-border-subtle)] shrink-0">
           <h1 className="text-[14px] font-semibold tracking-tight">Fleet</h1>
@@ -277,6 +372,7 @@ export function FleetView({ apiUrl, apiKey }) {
         </div>
 
         <div className="flex-1 overflow-auto">
+          <div style={{ minWidth: 720 }}>
           <FleetHeader />
           {error && <div className="px-4 py-3 text-[12px] text-[var(--color-error)]">Error: {error}</div>}
           {loading && agents.length === 0 && (
@@ -293,6 +389,7 @@ export function FleetView({ apiUrl, apiKey }) {
               active={activeIdx === i}
               onClick={() => { setActiveIdx(i); setDetailOpen(true); }} />
           ))}
+          </div>
         </div>
       </div>
 

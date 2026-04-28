@@ -161,9 +161,14 @@ function App() {
 
   useEffect(() => {
     if (!apiKey) return;
-    fetch(`${apiUrl}/api/captures?status=new`, { headers: { "X-API-Key": apiKey } })
-      .then((r) => (r.ok ? r.json() : { captures: [] }))
-      .then((d) => setCapturesCount(d.captures?.length || 0))
+    // Sidebar badge must match what the Inbox view actually shows. Earlier
+    // versions counted /api/captures?status=new which double-counted captures
+    // already dismissed/snoozed in inbox_state — leading to "Inbox 13" in
+    // the badge while the view rendered 1 row. Use /api/inbox so badge and
+    // view share one source of truth.
+    fetch(`${apiUrl}/api/inbox`, { headers: { "X-API-Key": apiKey } })
+      .then((r) => (r.ok ? r.json() : { counts: { total: 0 } }))
+      .then((d) => setCapturesCount(d.counts?.total || 0))
       .catch(() => {});
   }, [apiKey, apiUrl, refreshKey, projectVersion]);
 

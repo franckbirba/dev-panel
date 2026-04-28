@@ -124,10 +124,95 @@ export function defineFleetRoutes(router, authenticateProject) {
     if (!id) return res.status(400).json({ error: 'instance_id required' });
     try {
       await pgPool.query(
-        `UPDATE workflow_instances SET status='cancelled', last_event_at=now() WHERE id = $1`,
-        [id]
+        `UPDATE workflow_instances SET status='cancelled', last_event_at=$2 WHERE id = $1`,
+        [id, Date.now()]
       );
       res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/fleet/:instance_id/approve — flips an awaiting_approval
+  // instance back to running and re-enqueues the next step. This is the
+  // canonical "yes, continue" action for blocked workflows that paused
+  // because autonomy=low/med required a human decision before advancing.
+  router.post('/fleet/:instance_id/approve', authenticateProject, async (req, res) => {
+    const id = parseInt(req.params.instance_id, 10);
+    if (!id) return res.status(400).json({ error: 'instance_id required' });
+    try {
+      const cur = await pgPool.query(
+        `SELECT id, work_item_id, workflow_name, current_step, status, metadata
+           FROM workflow_instances WHERE id = $1`,
+        [id]
+      );
+      if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
+      const inst = cur.rows[0];
+      if (!['awaiting_approval', 'blocked', 'exhausted'].includes(inst.status)) {
+        return res.status(409).json({ error: `cannot approve from status=${inst.status}` });
+      }
+      // Flip status and re-enqueue the same step. enqueueWorkflowStart
+      // accepts a scheduled_for for delays — we want immediate.
+      await pgPool.query(
+        `UPDATE workflow_instances SET status='running', last_event_at=$2 WHERE id = $1`,
+        [id, Date.now()]
+      );
+      // Best-effort enqueue. enqueueWorkflowStart() lives in the worker
+      // module — if we're running inside the API process, it still works
+      // because BullMQ writes go to the same Redis. We import lazily so
+      // tests that stub bullmq can avoid pulling the worker module.
+      try {
+        const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
+        const result = await enqueueWorkflowStart({
+          workflow: inst.workflow_name,
+          plane: { work_item_id: inst.work_item_id },
+          context: { resume: true, from_status: inst.status },
+        });
+        if (!result?.ok && result?.error !== 'already_running') {
+          console.warn('[fleet/approve] re-enqueue:', result);
+        }
+      } catch (e) {
+        console.warn('[fleet/approve] re-enqueue failed (non-fatal):', e.message);
+      }
+      res.json({ ok: true, instance_id: id });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/fleet/:instance_id/retry — same as approve but explicitly for
+  // failed/exhausted instances. Distinct verb so the UI can be honest about
+  // what's happening (Approve = "I read it and it's fine", Retry = "this
+  // crashed, do it again").
+  router.post('/fleet/:instance_id/retry', authenticateProject, async (req, res) => {
+    const id = parseInt(req.params.instance_id, 10);
+    if (!id) return res.status(400).json({ error: 'instance_id required' });
+    try {
+      const cur = await pgPool.query(
+        `SELECT id, work_item_id, workflow_name, current_step, status
+           FROM workflow_instances WHERE id = $1`,
+        [id]
+      );
+      if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
+      const inst = cur.rows[0];
+      await pgPool.query(
+        `UPDATE workflow_instances SET status='running', last_event_at=$2 WHERE id = $1`,
+        [id, Date.now()]
+      );
+      try {
+        const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
+        const result = await enqueueWorkflowStart({
+          workflow: inst.workflow_name,
+          plane: { work_item_id: inst.work_item_id },
+          context: { resume: true, retry: true, from_status: inst.status },
+        });
+        if (!result?.ok && result?.error !== 'already_running') {
+          console.warn('[fleet/retry] re-enqueue:', result);
+        }
+      } catch (e) {
+        console.warn('[fleet/retry] re-enqueue failed (non-fatal):', e.message);
+      }
+      res.json({ ok: true, instance_id: id });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
