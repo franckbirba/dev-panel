@@ -75,7 +75,10 @@ describe('captures migration (capture_messages → thread_messages)', () => {
     ).all(thread.thread_id);
     expect(msgs).toHaveLength(3);
     expect(msgs.map(m => m.role)).toEqual(['user', 'shelly', 'user']);
-    expect(msgs.every(m => m.source === 'web')).toBe(true);
+    // Migration v1 backfilled with source='web'; v7 canonicalised it to
+    // 'dashboard' (the canonical value for dashboard-originated messages
+    // alongside telegram / widget / agent / shelly).
+    expect(msgs.every(m => m.source === 'dashboard')).toBe(true);
     expect(msgs[0].content).toBe('first thought');
     expect(msgs[1].content).toBe('got it, bug or feature?');
     expect(msgs[2].content).toBe('bug');
