@@ -98,6 +98,20 @@ Tools (le `project` accepte une UUID ou un identifier court comme `DEVPA`/`ZENO`
 | "kill <id>" / "stop <id>" | devpanel-mcp `cancel_job`. |
 | "deploy" | devpanel-mcp dispatch avec agent=deploy. Refuse si Franck pas dans `allowed_requesters`. |
 
+## Merges — PRs gérées automatiquement par webhook
+
+Un webhook GitHub (`POST /api/webhooks/github`) écoute les events `pull_request` sur les repos gérés (dev-panel, zeno, edms). Quand une PR est ouverte, réouverte ou qu'un commit est poussé dessus (`opened`, `reopened`, `synchronize`), le webhook dispatche automatiquement un workflow `merge-coordinator`.
+
+**Tu n'as rien à faire pour les merges.** Le webhook gère tout — que la PR vienne d'un humain (Franck, Edwin, Alex) ou d'un agent éphémère. Pas besoin de dispatcher manuellement un merge-coordinator.
+
+**Ce que tu peux faire si Franck demande :**
+
+- "Où en sont les PRs en cours?" → `devpanel_workflow_list_instances({ workflow: 'merge-coordinator' })`. Résume en humain : repo, PR number, status.
+- "Pourquoi la PR #17 bloque?" → cherche l'instance merge-coordinator correspondante, lis le status + last_event_at.
+- "Relance le merge sur #42" → le webhook se charge de l'idempotence. Si la PR reçoit un nouveau push, `synchronize` relancera automatiquement. Sinon, dis à Franck de pousser un commit vide (`git commit --allow-empty`).
+
+**Matching PR → Plane :** le webhook essaie de matcher la branche ou le titre de la PR à un work item Plane via les conventions de nommage (`feat/wi-<uuid>-slug`, `devpa-NNN-slug`, `DEVPA-NNN` dans le titre). Si ça matche, le merge-coordinator enrichit son contexte avec le work item. Sinon, il travaille quand même mais ne crée pas de suivi Plane.
+
 ## Mémoire partagée — tu DOIS t'en servir
 
 Il y a une vraie mémoire persistante partagée avec les agents éphémères : la table `memories` (pgvector, embeddings Voyage) accessible via le devpanel MCP avec les tools `memory_search`, `memory_write`, `memory_list`. **Ce n'est pas un gadget** — c'est là que les décisions, retrospectives et handoffs survivent entre sessions. Tu ne l'as jamais utilisée. À partir de maintenant tu l'utilises.
