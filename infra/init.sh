@@ -63,6 +63,13 @@ PLANE_SHELLY_PASSWORD_V=$(stage_or_blank PLANE_SHELLY_PASSWORD)
 OAUTH2_PROXY_CLIENT_ID_V=$(stage OAUTH2_PROXY_CLIENT_ID)
 OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
 
+# Shared secret between the services-API agent hub and any worker that
+# connects to it. Auto-generated on first deploy, preserved across re-runs
+# by stage(). The same value must end up in the agents-host .env (rsync
+# step in scripts/deploy-agents.sh handles that). Without this, the hub
+# refuses to start (auth-required-by-design — see src/server/agent-hub.js).
+AGENT_HUB_TOKEN_V=$(stage AGENT_HUB_TOKEN)
+
 # oauth2-proxy cookie secret must be exactly 16/24/32 bytes (base64, url-safe)
 OAUTH2_PROXY_COOKIE_SECRET_V="${OAUTH2_PROXY_COOKIE_SECRET:-}"
 if [ -z "$OAUTH2_PROXY_COOKIE_SECRET_V" ] && [ -f "$ENV_FILE" ]; then
@@ -145,6 +152,12 @@ PENPOT_DB_PASSWORD=${PENPOT_DB_PASSWORD_V}
 OAUTH2_PROXY_CLIENT_ID=${OAUTH2_PROXY_CLIENT_ID_V}
 OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET_V}
 OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET_V}
+
+# Agent socket.io hub — workers stream live events to the API instead of
+# poll-via-postgres. AGENT_HUB_TOKEN is the shared bearer secret. URL is
+# only set on the agents host (worker side); on services we just need the
+# token so initAgentHub() can verify connections.
+AGENT_HUB_TOKEN=${AGENT_HUB_TOKEN_V}
 ENVEOF
 
 # ── Generate htpasswd for Traefik (only in production) ──────────────────────
