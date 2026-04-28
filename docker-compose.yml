@@ -184,6 +184,16 @@ services:
       - "traefik.http.routers.devpanel-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.devpanel-api.service=devpanel"
       - "traefik.http.routers.devpanel-api.priority=200"
+      # ── Agent socket.io hub: /agents/socket.io — worker WebSocket only.
+      # Bearer-token auth (AGENT_HUB_TOKEN) — never exposed to browsers.
+      # Separate router so we can pin priority above the SPA's catch-all
+      # without sending a Google-OAuth challenge to a non-browser client.
+      - "traefik.http.routers.devpanel-agents.rule=Host(`devpanl.dev`) && PathPrefix(`/agents`)"
+      - "traefik.http.routers.devpanel-agents.entrypoints=websecure"
+      - "traefik.http.routers.devpanel-agents.tls=true"
+      - "traefik.http.routers.devpanel-agents.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.devpanel-agents.service=devpanel"
+      - "traefik.http.routers.devpanel-agents.priority=250"
       # ── SPA router: everything else (/, /dashboard/*, static assets).
       # Gated by oauth-google@docker — Traefik bounces unauthenticated
       # browsers through auth.devpanl.dev → Google → back with cookie.

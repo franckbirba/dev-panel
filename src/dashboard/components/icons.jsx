@@ -148,6 +148,21 @@ export const IconSidebar = I(<>
   <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
 </>);
 
+// Memory surface — a brain/notes glyph for the pgvector memories view.
+export const IconBrain = I(<>
+  <path d="M12 5a3 3 0 00-3-3 3 3 0 00-3 3v.5A2.5 2.5 0 003.5 8 2.5 2.5 0 005 10.5v1A2.5 2.5 0 003.5 14 2.5 2.5 0 006 16.5V17a3 3 0 003 3 3 3 0 003-3" />
+  <path d="M12 5a3 3 0 013-3 3 3 0 013 3v.5A2.5 2.5 0 0120.5 8 2.5 2.5 0 0119 10.5v1A2.5 2.5 0 0120.5 14 2.5 2.5 0 0118 16.5V17a3 3 0 01-3 3 3 3 0 01-3-3" />
+  <path d="M12 5v15" />
+</>);
+
+// Fleet — a grid/cluster glyph for the running-agents grid.
+export const IconFleet = I(<>
+  <rect x="3" y="3" width="7" height="7" rx="1" />
+  <rect x="14" y="3" width="7" height="7" rx="1" />
+  <rect x="3" y="14" width="7" height="7" rx="1" />
+  <rect x="14" y="14" width="7" height="7" rx="1" />
+</>);
+
 // ── Priority dots (filled circles) ─────────────────────
 
 export const IconPriorityNow = (props) => (
