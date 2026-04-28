@@ -6,7 +6,7 @@
 import { getMasterDatabase } from './db.js';
 
 const VALID_PRIORITIES = new Set(['now', 'today', 'later', null]);
-const VALID_SUBJECT_TYPES = new Set(['work_item', 'capture', 'ticket', 'pr', 'deploy', 'job']);
+const VALID_SUBJECT_TYPES = new Set(['work_item', 'capture', 'ticket', 'pr', 'deploy', 'job', 'widget_session']);
 
 export function upsertSubject({ subject_type, subject_id, project_id, title }) {
   if (!VALID_SUBJECT_TYPES.has(subject_type)) {
