@@ -2,6 +2,7 @@
 // Triggered by webhooks-github.js on pull_request.closed + merged=true.
 
 import { pool } from './pg.js';
+import { listActive } from './dev-bots.js';
 
 export async function recordBroadcast(syntheticId) {
   const { rows } = await pool.query(
@@ -136,4 +137,29 @@ export async function fetchCommits(repo, prNumber) {
     console.warn(`[release-notes] commits fetch failed for ${repo}#${prNumber}: ${err.message}`);
     return null;
   }
+}
+
+async function sendTelegram(token, chatId, text) {
+  if (!chatId) return;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text })
+    });
+    if (!r.ok) console.warn(`[release-notes] sendMessage ${r.status} for chat=${chatId}`);
+  } catch (err) {
+    console.warn(`[release-notes] sendMessage failed for chat=${chatId}: ${err.message}`);
+  }
+}
+
+export async function fanOut(text) {
+  const bots = await listActive();
+  if (!bots || bots.length === 0) {
+    console.log('[release-notes] no active bots, skipping fan-out');
+    return;
+  }
+  await Promise.allSettled(bots.map(b =>
+    sendTelegram(b.bot_token, b.owner_tg_user_id, text)
+  ));
 }

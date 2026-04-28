@@ -118,6 +118,11 @@ describe('fetchCommits', () => {
   });
 });
 
+const listActiveMock = vi.fn();
+vi.mock('../../src/server/dev-bots.js', () => ({
+  listActive: (...a) => listActiveMock(...a)
+}));
+
 import { resolveCycle } from '../../src/server/release-notes.js';
 
 describe('resolveCycle', () => {
@@ -170,5 +175,65 @@ describe('resolveCycle', () => {
     fetch.mockRejectedValueOnce(new Error('plane down'));
     const r = await resolveCycle({ type: 'sequence', project: 'DEVPA', number: 93 });
     expect(r).toBeNull();
+  });
+});
+
+import { fanOut } from '../../src/server/release-notes.js';
+
+describe('fanOut', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    listActiveMock.mockReset();
+  });
+
+  it('sends one Telegram message per bot with owner_tg_user_id', async () => {
+    listActiveMock.mockResolvedValueOnce([
+      { bot_token: 'tok-a', owner_tg_user_id: 111 },
+      { bot_token: 'tok-b', owner_tg_user_id: 222 }
+    ]);
+    fetch.mockResolvedValue({ ok: true });
+
+    await fanOut('hello team');
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const urls = fetch.mock.calls.map(c => c[0]);
+    expect(urls).toContain('https://api.telegram.org/bottok-a/sendMessage');
+    expect(urls).toContain('https://api.telegram.org/bottok-b/sendMessage');
+    const bodies = fetch.mock.calls.map(c => JSON.parse(c[1].body));
+    expect(bodies).toEqual(expect.arrayContaining([
+      { chat_id: 111, text: 'hello team' },
+      { chat_id: 222, text: 'hello team' }
+    ]));
+  });
+
+  it('skips bots without owner_tg_user_id', async () => {
+    listActiveMock.mockResolvedValueOnce([
+      { bot_token: 'tok-a', owner_tg_user_id: null },
+      { bot_token: 'tok-b', owner_tg_user_id: 222 }
+    ]);
+    fetch.mockResolvedValue({ ok: true });
+
+    await fanOut('hi');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('tok-b');
+  });
+
+  it('does not throw when one bot fails', async () => {
+    listActiveMock.mockResolvedValueOnce([
+      { bot_token: 'tok-a', owner_tg_user_id: 111 },
+      { bot_token: 'tok-b', owner_tg_user_id: 222 }
+    ]);
+    fetch
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ ok: true });
+
+    await expect(fanOut('hi')).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns early when no active bots', async () => {
+    listActiveMock.mockResolvedValueOnce([]);
+    await fanOut('hi');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
