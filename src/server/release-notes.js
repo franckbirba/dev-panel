@@ -49,3 +49,30 @@ export function buildReleaseNote({ pr, repo, commits, cycle }) {
 
   return lines.join('\n');
 }
+
+export async function fetchCommits(repo, prNumber) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.warn('[release-notes] GITHUB_TOKEN missing, cannot fetch commits');
+    return null;
+  }
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${repo}/pulls/${prNumber}/commits?per_page=100`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json'
+        }
+      }
+    );
+    if (!r.ok) {
+      console.warn(`[release-notes] commits HTTP ${r.status} for ${repo}#${prNumber}`);
+      return null;
+    }
+    return await r.json();
+  } catch (err) {
+    console.warn(`[release-notes] commits fetch failed for ${repo}#${prNumber}: ${err.message}`);
+    return null;
+  }
+}

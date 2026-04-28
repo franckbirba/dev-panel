@@ -85,3 +85,35 @@ describe('buildReleaseNote', () => {
     expect(note).not.toMatch(/Cycle:/);
   });
 });
+
+import { fetchCommits } from '../../src/server/release-notes.js';
+
+describe('fetchCommits', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    process.env.GITHUB_TOKEN = 'test-token';
+  });
+
+  it('returns the commits array on 2xx', async () => {
+    const fixture = [{ sha: 'aaa', commit: { message: 'a' } }];
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => fixture });
+    const r = await fetchCommits('owner/repo', 42);
+    expect(r).toEqual(fixture);
+    const call = fetch.mock.calls[0];
+    expect(call[0]).toBe('https://api.github.com/repos/owner/repo/pulls/42/commits?per_page=100');
+    expect(call[1].headers.Authorization).toBe('Bearer test-token');
+    expect(call[1].headers.Accept).toBe('application/vnd.github+json');
+  });
+
+  it('returns null on non-2xx', async () => {
+    fetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    const r = await fetchCommits('owner/repo', 42);
+    expect(r).toBeNull();
+  });
+
+  it('returns null on network failure', async () => {
+    fetch.mockRejectedValueOnce(new Error('boom'));
+    const r = await fetchCommits('owner/repo', 42);
+    expect(r).toBeNull();
+  });
+});
