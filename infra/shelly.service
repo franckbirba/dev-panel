@@ -53,7 +53,18 @@ ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly
 # with the warning still printed. Pass it ONLY to dev-channels.
 # Both flags are hidden (not in --help) and live in cli.js; verified empirically
 # 2026-04-28 against /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js.
-ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --dangerously-load-development-channels server:telegram --dangerously-skip-permissions"
+# `--settings <file>` is required to scope Shelly's hooks (deny Bash/Edit/
+# Write/Grep/Glob/Agent/WebFetch + Read-gated-to-Telegram-inbox) to ONLY her
+# session, not user-global. Claude `-p` reads ~/.claude/settings.json
+# unconditionally and merges it with --settings; if the deny lives in the
+# user-global file, every ephemeral `claude -p` spawned by the worker
+# inherits it and silently loses Bash/Edit/Read, which makes builders fail
+# in mysterious ToolSearch loops. The fix: keep ~/.claude/settings.json
+# minimal (just skipDangerousModePermissionPrompt) and pass Shelly's hooks
+# via this --settings flag. The file lives at infra/claude/settings-shelly.json
+# in the repo and is rsynced to ~/.claude/settings-shelly.json on the agents
+# host by scripts/deploy-agents.sh.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --dangerously-load-development-channels server:telegram --settings /home/deploy/.claude/shelly-settings.json --dangerously-skip-permissions"
 
 # 1) Dismiss claude's startup dialogs. Two are possible:
 #    a) "Trust this folder?" — first-run only (~/.claude state remembers it
