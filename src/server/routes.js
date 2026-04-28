@@ -56,6 +56,7 @@ import { defineMemoryRoutes } from './routes-memory.js';
 import { defineFleetRoutes } from './routes-fleet.js';
 import { defineCommandRoutes } from './routes-commands.js';
 import { defineWidgetRoutes } from './routes-widget.js';
+import { defineWidgetBridgeRoutes } from './routes-widget-bridge.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
 import { pool as pgPool } from './pg.js';
@@ -991,6 +992,7 @@ export function createRouter(config = {}) {
   defineFleetRoutes(router, authenticateProject);
   defineCommandRoutes(router, authenticateProject);
   defineWidgetRoutes(router);
+  defineWidgetBridgeRoutes(router, authenticateProject);
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
