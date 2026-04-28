@@ -255,6 +255,7 @@ function App() {
         onNavigate={(tab) => handleTabChange(tab)}
         onProjectSwitch={handleProjectSwitch}
         onAddProject={() => setShowAddProject(true)}
+        apiKey={apiKey}
       />
 
       {showAddProject && (

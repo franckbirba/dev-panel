@@ -52,6 +52,7 @@ import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
 import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
+import { defineCommandRoutes } from './routes-commands.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
 import { pool as pgPool } from './pg.js';
@@ -981,6 +982,7 @@ export function createRouter(config = {}) {
   // TEAM & ROUTING — manage project members and label→member routing rules.
   // ============================================================================
   defineTeamRoutes(router, authenticateProject);
+  defineCommandRoutes(router);
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
