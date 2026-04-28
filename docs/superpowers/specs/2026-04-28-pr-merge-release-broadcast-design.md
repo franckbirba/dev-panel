@@ -113,8 +113,7 @@ by @<author>  ·  <files_changed> files, +<additions>/-<deletions>
 • …
 (+N more)            ← only if commits.length > 8
 
-<plane_url>          ← only if planeRef matched (https://plane.devpanl.dev/devpanl/projects/<pid>/issues/<seq>/)
-<pr_html_url>
+Cycle: <cycle_name> — <cycle_url>   ← only if a Plane cycle was resolved
 ```
 
 Plain text. No Markdown parse_mode (Telegram strips/escapes
@@ -123,11 +122,35 @@ commit list at 8, append `(+N more)` if truncated. Body of the PR is
 ignored — too noisy, often boilerplate. The commit subjects already
 carry the "what shipped" signal.
 
-`planeRef` reuses `extractPlaneRef(branch, title)` already exported by
-`webhooks-github.js`. If it matches a sequence-style ref (DEVPA-93),
-we have enough to build the URL. UUID-style refs would need a Plane
-API roundtrip — for v1 we skip the link in that case rather than add a
-new dependency on Plane being reachable.
+**No PR link, no work-item link.** The single link in the message is
+the Plane cycle that this PR contributes to — that's the surface where
+the team checks "what's shipping in this iteration?", and it
+auto-aggregates everything else (work items, status, scope changes).
+The PR number in the header line is enough for someone who wants to
+dig into GitHub directly.
+
+### Cycle resolution
+
+`resolveCycle(planeRef)`:
+
+1. Use `extractPlaneRef(branch, title)` (already exported by
+   `webhooks-github.js`) to get a project hint.
+   - `sequence` ref (`DEVPA-93`) → look up the project UUID in the
+     existing `projects` table by the prefix (`DEVPA` →
+     `dev-panel-project_id`).
+   - `uuid` ref → fetch the work item from Plane API to get its
+     `project_id` (the work item id is its UUID).
+   - No ref → return `null`. No cycle line in the broadcast.
+2. With the project UUID, call Plane API
+   `GET /api/v1/workspaces/<ws>/projects/<pid>/cycles/active/`. Take
+   the first row. If empty (no active cycle), return `null`.
+3. Build `{ name, url }` where `url` is
+   `https://plane.devpanl.dev/<ws>/projects/<pid>/cycles/<cycle_id>/`.
+
+Both API calls are best-effort: any failure (Plane down, no active
+cycle, no project mapping) → broadcast without the cycle line. The
+core "this PR shipped" signal must reach the team even when Plane is
+unreachable.
 
 ### Fan-out
 
@@ -186,6 +209,7 @@ else.
 | HMAC verification fails | 401, no broadcast. Existing behavior. |
 | `release_broadcasts` insert returns no row (replay) | 204, no fan-out. |
 | `fetchCommits` GitHub API call fails | Build the note with an empty commit list and a `(commits unavailable)` line. Still broadcast — the "PR merged" signal is itself the value. |
+| `resolveCycle` (Plane API) fails or returns no active cycle | Omit the `Cycle:` line. Broadcast still goes out. |
 | One bot's `sendMessage` returns non-2xx | Log, continue with others. |
 | `dev_bots` empty (no team paired) | Log `[release] no active bots`, return 202. |
 
@@ -199,8 +223,11 @@ case (re-broadcast) more visible/annoying than a missed message.
 
 `tests/server/release-notes.test.js`:
 - `buildReleaseNote` formats title, author, stats, commits, truncation.
-- `buildReleaseNote` includes Plane URL when planeRef is sequence-style,
-  omits when UUID-style.
+- `buildReleaseNote` includes the `Cycle:` line when `resolveCycle`
+  returns a `{ name, url }`, omits it when `null`.
+- `resolveCycle` returns `null` when no planeRef is present, when the
+  project lookup fails, when Plane returns no active cycle, and when
+  the Plane API throws.
 - `recordBroadcast` returns `inserted` first time, `replay` second time.
 - `fanOut` calls `sendMessage` once per active bot, skips bots with
   `owner_tg_user_id IS NULL`, swallows individual failures.
@@ -224,6 +251,8 @@ Mocks:
 No new env vars. Reuses:
 - `GITHUB_WEBHOOK_SECRET` (HMAC, already present).
 - `GITHUB_TOKEN` (for `fetchCommits` — already present in deploy.yml).
+- `PLANE_API_TOKEN` + `PLANE_WORKSPACE_SLUG` (for `resolveCycle`,
+  already present and used by other Plane integrations in `src/`).
 - Per-bot tokens live in `dev_bots.bot_token`.
 
 ## Rollout
