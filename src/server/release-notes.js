@@ -13,3 +13,39 @@ export async function recordBroadcast(syntheticId) {
   );
   return { inserted: rows.length > 0 };
 }
+
+const COMMIT_CAP = 8;
+
+export function buildReleaseNote({ pr, repo, commits, cycle }) {
+  const author = pr.user?.login || 'unknown';
+  const filesChanged = pr.changed_files ?? 0;
+  const additions = pr.additions ?? 0;
+  const deletions = pr.deletions ?? 0;
+
+  const lines = [
+    `Merged — ${repo} #${pr.number}: ${pr.title || '(no title)'}`,
+    `by @${author}  ·  ${filesChanged} files, +${additions}/-${deletions}`,
+    ''
+  ];
+
+  if (commits === null || commits === undefined) {
+    lines.push('(commits unavailable)');
+  } else {
+    const shown = commits.slice(0, COMMIT_CAP);
+    for (const c of shown) {
+      const subject = (c.commit?.message || '').split('\n')[0];
+      const sha7 = String(c.sha || '').slice(0, 7);
+      lines.push(`• ${sha7} ${subject}`);
+    }
+    if (commits.length > COMMIT_CAP) {
+      lines.push(`(+${commits.length - COMMIT_CAP} more)`);
+    }
+  }
+
+  if (cycle) {
+    lines.push('');
+    lines.push(`Cycle: ${cycle.name} — ${cycle.url}`);
+  }
+
+  return lines.join('\n');
+}
