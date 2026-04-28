@@ -52,7 +52,12 @@ export function initMasterDatabase(storagePath = './storage') {
     ['plane_workspace_slug', 'TEXT'],
     ['default_branch',       'TEXT'],
     ['local_path',           'TEXT'],
-    ['description',          'TEXT']
+    ['description',          'TEXT'],
+    // widget_pii_patterns: JSON array of regex strings appended to the
+    // built-in PII filters (Bearer/sk- tokens, emails, credit cards, SSN).
+    // Stored on the project row so each project can opt into stricter rules
+    // without redeploying. Spec: DEVPA-166 (Sécurité widget).
+    ['widget_pii_patterns',  'TEXT']
   ]) {
     if (!cols.has(col)) {
       masterDb.exec(`ALTER TABLE projects ADD COLUMN ${col} ${def}`);
@@ -200,6 +205,26 @@ export function initMasterDatabase(storagePath = './storage') {
     );
     CREATE INDEX IF NOT EXISTS idx_widget_sessions_project   ON widget_sessions(project_id);
     CREATE INDEX IF NOT EXISTS idx_widget_sessions_last_seen ON widget_sessions(last_seen_at DESC);
+
+    -- widget_audit — append-only audit log for the widget surface.
+    -- Stores SHA-256 hashes of message content (never plaintext) so a
+    -- post-incident investigator can confirm a known message reached the
+    -- server without exposing PII at rest. Type ∈ {message_in, message_out,
+    -- capture_created, rate_limited, redacted}. Spec: DEVPA-166.
+    CREATE TABLE IF NOT EXISTS widget_audit (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id    TEXT,
+      session_id    TEXT,
+      type          TEXT NOT NULL,
+      content_hash  TEXT,
+      ts            DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS widget_audit_session_ts
+      ON widget_audit(session_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS widget_audit_project_session_ts
+      ON widget_audit(project_id, session_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS widget_audit_project_type_ts
+      ON widget_audit(project_id, type, ts DESC);
   `);
 
   // Bearer-auth columns added by DEVPA-161. The original v7 (DEVPA-160)
