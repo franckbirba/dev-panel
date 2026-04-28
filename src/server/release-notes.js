@@ -3,6 +3,7 @@
 
 import { pool } from './pg.js';
 import { listActive } from './dev-bots.js';
+import { extractPlaneRef } from './webhooks-github.js';
 
 export async function recordBroadcast(syntheticId) {
   const { rows } = await pool.query(
@@ -162,4 +163,30 @@ export async function fanOut(text) {
   await Promise.allSettled(bots.map(b =>
     sendTelegram(b.bot_token, b.owner_tg_user_id, text)
   ));
+}
+
+export function syntheticMergedId(repo, prNumber) {
+  return `github:${repo}#${prNumber}:merged`;
+}
+
+export async function broadcastRelease({ repo, pr }) {
+  const id = syntheticMergedId(repo, pr.number);
+  const { inserted } = await recordBroadcast(id);
+  if (!inserted) {
+    console.log(`[release-notes] replay skipped for ${id}`);
+    return { broadcast: false, reason: 'replay' };
+  }
+
+  const branch = pr.head?.ref;
+  const planeRef = extractPlaneRef(branch, pr.title);
+
+  const [commits, cycle] = await Promise.all([
+    fetchCommits(repo, pr.number),
+    resolveCycle(planeRef)
+  ]);
+
+  const text = buildReleaseNote({ pr, repo, commits, cycle });
+  await fanOut(text);
+
+  return { broadcast: true };
 }

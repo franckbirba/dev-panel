@@ -237,3 +237,51 @@ describe('fanOut', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+import { broadcastRelease } from '../../src/server/release-notes.js';
+
+describe('broadcastRelease', () => {
+  const pr = {
+    number: 42,
+    title: 'Test PR',
+    user: { login: 'me' },
+    changed_files: 1, additions: 1, deletions: 0,
+    head: { ref: 'feat/wi-7096cee4-foo-bar' }
+  };
+
+  beforeEach(() => {
+    queryMock.mockReset();
+    listActiveMock.mockReset();
+    vi.stubGlobal('fetch', vi.fn());
+    process.env.GITHUB_TOKEN = 'gh';
+    process.env.PLANE_API_TOKEN = 'p';
+  });
+
+  it('inserts the broadcast row, fetches commits, and fans out', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ synthetic_id: 'github:owner/repo#42:merged' }] });
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => [
+      { sha: 'abc1234', commit: { message: 'a' } }
+    ] });
+    // resolveCycle: projects fetch returns no match → null cycle
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ results: [] }) });
+    listActiveMock.mockResolvedValueOnce([{ bot_token: 't', owner_tg_user_id: 1 }]);
+    fetch.mockResolvedValueOnce({ ok: true });
+
+    const r = await broadcastRelease({ repo: 'owner/repo', pr });
+    expect(r).toEqual({ broadcast: true });
+
+    const tgCall = fetch.mock.calls.find(c => c[0].includes('api.telegram.org'));
+    expect(tgCall).toBeDefined();
+    const text = JSON.parse(tgCall[1].body).text;
+    expect(text).toContain('Merged — owner/repo #42: Test PR');
+    expect(text).toContain('• abc1234 a');
+  });
+
+  it('short-circuits when recordBroadcast says replay', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    const r = await broadcastRelease({ repo: 'owner/repo', pr });
+    expect(r).toEqual({ broadcast: false, reason: 'replay' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(listActiveMock).not.toHaveBeenCalled();
+  });
+});
