@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 import { CommandPalette } from "@/components/command-palette";
 import { CaptureComposer } from "@/components/capture-composer";
+import { DogfoodWidget } from "@/components/dogfood-widget";
 import { buildCommands } from "@/lib/commands";
 import { CommandDock } from "@/components/command-dock";
 import { ProjectRibbon } from "@/components/project-ribbon";
@@ -350,6 +351,12 @@ function App() {
         onClose={() => setGlobalCaptureOpen(false)}
         onCreated={() => { setGlobalCaptureOpen(false); setRefreshKey(k => k + 1); }}
       />
+
+      {/* DEVPA-167 — on dogfoode notre propre widget sur dev-panel.devpanl.dev.
+          Le FAB et le chat drawer s'ajoutent au-dessus du dashboard et envoient
+          captures + messages dans le projet courant (donc dans dev-panel quand
+          c'est dev-panel qui est sélectionné). */}
+      <DogfoodWidget apiUrl={apiUrl} apiKey={apiKey} />
     </div>
   );
 }
