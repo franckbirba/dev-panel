@@ -50,7 +50,6 @@ import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
-import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { defineInboxRoutes } from './routes-inbox.js';
 import { defineMemoryRoutes } from './routes-memory.js';
@@ -886,17 +885,14 @@ export function createRouter(config = {}) {
         content: capture.content
       }).catch(() => {}); // fire-and-forget, never fail the request
 
-      // Server-side autoroute — DM the resolved member directly via their
-      // paired bot. Tries (1) widget category, (2) URL pattern match against
-      // the capture's metadata.url. Shelly's plugin doesn't see
-      // notifyCaptureNew's outbound, so this is the only way to actually
-      // wake the right person.
-      autorouteCapture({
-        project: req.project,
-        capture
-      }).catch(err => {
-        console.error('[autoroute] capture', capture.id, 'failed:', err.message);
-      });
+      // Autoroute is NOT fired here. The widget posts content first (no
+      // metadata) then a follow-up `system` message carrying the screenshot
+      // and URL. Routing here would always DM the dev without an image and
+      // mark the capture routed, blocking the second pass that has the
+      // screenshot. The thread-message handler triggers autoroute once the
+      // screenshot is in. Captures created without a follow-up (e.g. from the
+      // dashboard composer) fall back to Shelly's [capture-new] reaction.
+
       // Tell the dashboard's Inbox view to refetch — capture_new is a NOTIFY/QUESTION
       // signal but we don't push the whole row over SSE; the client refetches
       // /api/inbox on this event.
