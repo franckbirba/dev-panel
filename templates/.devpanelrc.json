@@ -20,5 +20,9 @@
   "sync": {
     "enabled": true,
     "interval": "15m"
-  }
+  },
+  "widget_pii_patterns": [
+    "INTERNAL-[A-Z0-9]+",
+    "MY_SECRET_[A-Z0-9_]+"
+  ]
 }
