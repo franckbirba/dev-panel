@@ -1,0 +1,17 @@
+{
+  "name": "devpanl-widget-channel",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": "./server.js",
+  "description": "MCP channel for the DevPanel widget — pulls inbound widget messages from BullMQ and surfaces them to Claude as channel events; exposes the widget_reply outbound tool.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.3.0",
+    "zod": "^3.23.0"
+  }
+}
