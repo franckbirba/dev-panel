@@ -102,9 +102,9 @@ chmod 600 /home/deploy/.mcp.json
 #
 # CRITICAL — two-file split:
 #   ~/.claude/settings.json   = user-global, MUST stay minimal. Every
-#     `claude -p` reads this unconditionally and merges it. If we put
+#     'claude -p' reads this unconditionally and merges it. If we put
 #     Shelly's deny list here, every ephemeral builder spawned by the
-#     worker inherits the deny → loses Bash/Edit/Read → fails in
+#     worker inherits the deny -> loses Bash/Edit/Read -> fails in
 #     ToolSearch loops.
 #   ~/.claude/shelly-settings.json = Shelly-only. Loaded explicitly via
 #     --settings in shelly.service ExecStart. Contains the deny list and
@@ -118,7 +118,7 @@ install -o deploy -g deploy -m 0644 \
   /home/deploy/.claude/shelly-settings.json
 
 # Worker-specific MCP config — same pattern, isolation purpose. Strips the
-# `telegram` entry from the ambient ~/.mcp.json so ephemerals don't spawn
+# 'telegram' entry from the ambient ~/.mcp.json so ephemerals don't spawn
 # parasitic telegram-multi pollers and race Shelly. Source of truth: the
 # user-global ~/.mcp.json minus the telegram block.
 jq 'del(.mcpServers.telegram)' /home/deploy/.mcp.json \
