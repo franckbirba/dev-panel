@@ -1,0 +1,8 @@
+[Unit]
+Description=Shelly publique watchdog — restart shelly-public.service if claude is gone
+After=shelly-public.service
+Wants=shelly-public.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/deploy/bin/shelly-public-watchdog.sh

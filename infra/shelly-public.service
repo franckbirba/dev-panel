@@ -1,0 +1,63 @@
+[Unit]
+Description=Shelly publique — Claude Code, FAQ + bug/feature widget for end-users (tmux-backed)
+Documentation=file:///home/deploy/projects/dev-panel/.agents/shelly-public/SOUL.md
+After=network-online.target
+Wants=network-online.target
+# Intentionally not Wants=shelly.service — the public Shelly is independent
+# of the internal one. If shelly.service is down for maintenance, the widget
+# should still keep answering FAQ questions.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=deploy
+Group=deploy
+# Working dir = .agents/shelly-public/ so Claude Code loads the public SOUL
+# (via the local CLAUDE.md include) and NOT the parent repo's CLAUDE.md
+# which references orchestration tooling she must never see.
+WorkingDirectory=/home/deploy/projects/dev-panel/.agents/shelly-public
+Environment=HOME=/home/deploy
+Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+# Same private-LAN routing as shelly.service — public Shelly's MCP server
+# also needs to reach Redis/Postgres via the internal 10.0.0.0/24 network,
+# never the firewalled public IP.
+Environment=REDIS_HOST=10.0.0.2
+Environment=REDIS_PORT=6379
+Environment=PG_HOST=10.0.0.2
+Environment=PG_PORT=5432
+Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
+Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
+
+ExecStartPre=-/bin/mkdir -p /home/deploy/logs
+ExecStartPre=-/bin/chown -R deploy:deploy /home/deploy/logs
+
+# Always start from a clean tmux session.
+ExecStartPre=-/usr/bin/tmux -L deploy kill-session -t shelly-public
+
+# Boot Claude with the restricted MCP config (rendered from
+# infra/agents-mcp-public.json.template at deploy time → this absolute path).
+# No --dangerously-load-development-channels: public Shelly does not
+# subscribe to the internal Telegram channel. The widget bridge (DEVPA-163)
+# will deliver inbound messages via a dedicated transport when it lands.
+# Until then she sits idle in the tmux session, ready to be poked.
+#
+# --dangerously-skip-permissions matches shelly.service: the deny list
+# enforced by the MCP profile is the real boundary; per-tool permission
+# prompts inside an unattended tmux would just hang the session.
+ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly-public \
+  "/usr/bin/claude --mcp-config /home/deploy/.mcp-public.json --dangerously-skip-permissions"
+
+# 1) Dismiss the "trust this folder?" first-run dialog (one Enter is enough
+#    — no dev-channels dialog because we don't load any).
+# 2) Mirror the pane to journald under tag "shelly-public" so journalctl
+#    -t shelly-public survives a session kill.
+# 3) Tee to /home/deploy/logs/shelly-public.log for human-friendly tail.
+ExecStartPost=/bin/sh -c "sleep 4 && \
+  /usr/bin/tmux -L deploy send-keys -t shelly-public Enter && \
+  /usr/bin/tmux -L deploy pipe-pane -O -t shelly-public:0.0 'tee -a /home/deploy/logs/shelly-public.log | systemd-cat -t shelly-public -p info'"
+
+ExecStop=-/usr/bin/tmux -L deploy kill-session -t shelly-public
+
+[Install]
+WantedBy=multi-user.target

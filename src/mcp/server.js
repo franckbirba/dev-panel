@@ -38,6 +38,8 @@ import {
   deletePage as planeDeletePage,
   pagesHealthcheck as planePagesHealthcheck
 } from './plane-pages.js';
+import { createCapture } from '../server/captures.js';
+import { wrapServerWithProfile, getProfile } from './profile.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -126,6 +128,17 @@ const server = new McpServer({
   name: 'dev-panel',
   version: '2.0.0'
 });
+
+// Filter tool registrations by MCP_PROFILE. With MCP_PROFILE=public, the
+// public Shelly process boots with only the FAQ-safe whitelist (see
+// profile.js). Without the env var (or with anything other than "public"),
+// the legacy full surface is registered — internal Shelly + worker keep
+// every dispatch / write / memory tool they had before.
+wrapServerWithProfile(server);
+export { server };
+export function getRegisteredToolNames() {
+  return server.getRegisteredToolNames();
+}
 
 // ============================================================================
 // TOOLS
@@ -1103,6 +1116,128 @@ server.tool(
 );
 
 // ============================================================================
+// READ-ONLY PLANE work-item helpers — used by Shelly publique to look up
+// work items when answering FAQ questions, without exposing the upstream
+// plane-mcp-server (which ships create_work_item / update_work_item /
+// delete_work_item alongside the read tools we want).
+// ============================================================================
+
+server.tool(
+  'list_work_items',
+  'List work items for a Plane project. Read-only. Accepts a project UUID or a short identifier like "DEVPA"/"ZENO"/"EDMS". Returns id, sequence_id, name, state, priority for each item.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier (DEVPA, ZENO, EDMS)'),
+    limit: z.number().int().min(1).max(100).default(50).describe('Max items returned (default 50)')
+  },
+  async ({ project, limit }) => {
+    try {
+      if (!PLANE_KEY) throw new Error('PLANE_API_KEY missing');
+      const pid = await resolvePlaneProjectId(project);
+      const res = await fetch(
+        `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${pid}/issues/?per_page=${limit}`,
+        { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(8000) }
+      );
+      if (!res.ok) throw new Error(`Plane HTTP ${res.status}`);
+      const data = await res.json();
+      const rows = (data.results || data).slice(0, limit).map(w => ({
+        id: w.id,
+        sequence_id: w.sequence_id,
+        name: w.name,
+        state: w.state,
+        priority: w.priority
+      }));
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, work_items: rows }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'retrieve_work_item',
+  'Fetch a single Plane work item by UUID or sequence (e.g. "DEVPA-93"). Read-only. Returns name, description (text), state, priority, labels.',
+  {
+    work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93')
+  },
+  async ({ work_item_id }) => {
+    try {
+      if (!PLANE_KEY) throw new Error('PLANE_API_KEY missing');
+      let resolved;
+      if (UUID_RE.test(work_item_id)) {
+        // Need project_id to call retrieve. Cheapest path is the issues
+        // search endpoint by id, but Plane only exposes per-project endpoints
+        // — we have to look the item up workspace-wide first. The list_work_items
+        // path is for browsing; one-shot retrieve by UUID requires walking
+        // projects until we hit it. In practice callers pass DEVPA-NN which is
+        // fast, so the UUID branch is a graceful fallback.
+        const projects = await fetch(
+          `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/`,
+          { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(5000) }
+        ).then(r => r.ok ? r.json() : { results: [] });
+        for (const p of (projects.results || projects)) {
+          const r = await fetch(
+            `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${p.id}/issues/${work_item_id}/`,
+            { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(5000) }
+          );
+          if (r.ok) { resolved = await r.json(); resolved.project_id = p.id; break; }
+        }
+        if (!resolved) throw new Error(`work item ${work_item_id} not found in any project`);
+      } else {
+        resolved = await resolvePlaneWorkItem(work_item_id);
+        if (!resolved) throw new Error(`Could not resolve "${work_item_id}"`);
+      }
+      const out = {
+        id: resolved.id,
+        project_id: resolved.project_id,
+        sequence_id: resolved.sequence_id || null,
+        name: resolved.name || resolved.title,
+        description: resolved.description || null,
+        state: resolved.state,
+        priority: resolved.priority,
+        labels: resolved.label_ids || resolved.labels || []
+      };
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, work_item: out }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+// ============================================================================
+// CAPTURE — file a bug/feature from the widget chat. Public Shelly's only
+// write surface beyond thread_append. Always status='new' so the internal
+// triage pipeline (Shelly interne, dashboard inbox) catches it.
+// ============================================================================
+
+server.tool(
+  'capture_create',
+  'File a new bug or feature capture on behalf of a widget user. Always created with status=new so internal Shelly triages it the same way as any other inbox item. Pass kind="bug" or kind="idea" (default "idea"). Optional reporter object carries widget user identity.',
+  {
+    project_id: z.string().describe('DevPanel project id (UUID) — comes from the widget config'),
+    content: z.string().min(1).describe('Free-text description of the bug or feature'),
+    kind: z.enum(['idea', 'bug']).default('idea').describe('"bug" or "idea" (default "idea")'),
+    created_by: z.string().default('widget').describe('Author label (defaults to "widget")'),
+    reporter: z.record(z.string(), z.any()).optional().describe('Optional widget-user identity: { id, name, email, ... }'),
+    environment: z.string().optional().describe('Optional environment hint (e.g. "production", "staging")')
+  },
+  async ({ project_id, content, kind, created_by, reporter, environment }) => {
+    try {
+      const capture = createCapture({ project_id, content, kind, created_by, reporter, environment });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          ok: true,
+          capture_id: capture.id,
+          status: capture.status,
+          project_id: capture.project_id
+        }, null, 2) }]
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+// ============================================================================
 // START
 // ============================================================================
 
@@ -1111,4 +1246,9 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch(console.error);
+// MCP_NO_AUTOSTART lets tests import this module to introspect the tool
+// registry without binding stdio (which would race with the test harness).
+// Production launches always leave this unset.
+if (!process.env.MCP_NO_AUTOSTART) {
+  main().catch(console.error);
+}
