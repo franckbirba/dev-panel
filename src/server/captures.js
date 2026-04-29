@@ -21,24 +21,28 @@ import { getMasterDatabase } from './db.js';
 import { upsertSubject } from './subjects.js';
 import { getOrCreateThread, appendMessage, listMessages } from './threads.js';
 
-export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null }) {
+export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null, source = 'dashboard', widget_session_id = null }) {
   const db = getMasterDatabase();
   const id = randomUUID();
 
   const rep = normalizeReporter(reporter);
   const env = (typeof environment === 'string' && environment.length > 0) ? environment : null;
+  // Map source → thread_messages.source. 'widget' is the only non-default
+  // that exists today; 'dashboard' (default) keeps the legacy 'web' value
+  // until DEVPA-160 canonicalises the taxonomy.
+  const messageSource = source === 'widget' ? 'widget' : 'web';
 
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO captures
          (id, project_id, kind, content, status, created_by,
           reporter_id, reporter_name, reporter_email, reporter_extra,
-          environment)
-       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)`
+          environment, source, widget_session_id)
+       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, project_id, kind, content, created_by,
       rep.id, rep.name, rep.email, rep.extra,
-      env
+      env, source, widget_session_id
     );
 
     upsertSubject({
@@ -52,7 +56,7 @@ export function createCapture({ project_id, content, kind = 'idea', created_by =
     appendMessage({
       thread_id: thread.thread_id,
       role: 'user',
-      source: 'web',
+      source: messageSource,
       content
     });
   });

@@ -202,6 +202,23 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS idx_widget_sessions_last_seen ON widget_sessions(last_seen_at DESC);
   `);
 
+  // Bearer-auth columns added by DEVPA-161. The original v7 (DEVPA-160)
+  // shipped widget_sessions without `session_id` / `token_expires_at`; the
+  // widget API needs both for sliding 24h bearer auth, so back-fill them
+  // here with column-existence guards (idempotent on fresh DBs and on DBs
+  // already at v7 from DEVPA-160).
+  const widgetCols = new Set(
+    masterDb.prepare("PRAGMA table_info(widget_sessions)").all().map(c => c.name)
+  );
+  if (!widgetCols.has('session_id')) {
+    masterDb.exec(`ALTER TABLE widget_sessions ADD COLUMN session_id TEXT`);
+    masterDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_sessions_session ON widget_sessions(session_id)`);
+  }
+  if (!widgetCols.has('token_expires_at')) {
+    masterDb.exec(`ALTER TABLE widget_sessions ADD COLUMN token_expires_at DATETIME`);
+  }
+
+
   // Migration: move capture_messages into thread_messages + drop the old table.
   // Guarded by PRAGMA user_version — runs exactly once per database.
   // Spec: docs/superpowers/specs/2026-04-22-captures-on-threads-design.md
