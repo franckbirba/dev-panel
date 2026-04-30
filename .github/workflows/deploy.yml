@@ -116,9 +116,21 @@ jobs:
             docker compose up -d --no-deps devpanel
 
             # Health check
-            sleep 15
+            # The image has no curl — same reason the docker-compose healthcheck
+            # uses `node -e require('http').get(...)`. Poll up to 30s in case
+            # the agent hub / queue monitor take a beat to come online after
+            # `up -d` returns.
+            sleep 5
             docker compose ps devpanel
-            if docker exec devpanel-api curl -sf http://localhost:3030/api/health > /dev/null 2>&1; then
+            healthy=0
+            for i in 1 2 3 4 5 6; do
+              if docker exec devpanel-api node -e "require('http').get('http://localhost:3030/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))" 2>/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$healthy" = "1" ]; then
               curl -fsS --max-time 5 \
                 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
                 -d "chat_id=${TELEGRAM_CHAT_ID}" \
