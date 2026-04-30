@@ -22,43 +22,7 @@ import {
   classifyUrlForProject
 } from './team.js';
 import { getCapture } from './captures.js';
-
-const TG_API = 'https://api.telegram.org';
-// Telegram caps photo captions at 1024 chars. We slice well under so the
-// caller's `[thread:...]` tag + URL fit even when the bug content is long.
-const TG_CAPTION_MAX = 1000;
-
-async function sendDirect({ token, chat_id, text }) {
-  const r = await fetch(`${TG_API}/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id, text })
-  });
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error(`telegram sendMessage ${r.status}: ${body}`);
-  }
-}
-
-// sendPhoto — multipart upload of a base64 data URL. We can't pass the data:
-// URL directly (Telegram's `photo` field wants either a file_id, an http(s)
-// URL, or a multipart upload). So decode → Blob → FormData.
-async function sendPhoto({ token, chat_id, dataUrl, caption }) {
-  const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-  if (!m) throw new Error('screenshot is not a base64 data URL');
-  const mime = m[1];
-  const buf = Buffer.from(m[2], 'base64');
-  const ext = mime === 'image/jpeg' ? 'jpg' : (mime.split('/')[1] || 'png');
-  const fd = new FormData();
-  fd.append('chat_id', String(chat_id));
-  if (caption) fd.append('caption', caption.slice(0, TG_CAPTION_MAX));
-  fd.append('photo', new Blob([buf], { type: mime }), `capture.${ext}`);
-  const r = await fetch(`${TG_API}/bot${token}/sendPhoto`, { method: 'POST', body: fd });
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error(`telegram sendPhoto ${r.status}: ${body}`);
-  }
-}
+import { sendDirect, sendPhoto } from './telegram-send.js';
 
 // Pull the page URL out of the capture's system message metadata. The widget
 // posts a `Captured: screenshot · DOM snapshot` system message immediately
