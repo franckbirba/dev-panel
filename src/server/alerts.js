@@ -298,9 +298,25 @@ export function formatCaptureNewLine({ project, capture_id, category, content })
   return `[capture-new] project=${project} capture=${capture_id} category=${cat} content="${cleanContent}"`;
 }
 
-export async function notifyCaptureNew({ project, capture_id, category, content }) {
+export async function notifyCaptureNew({ project, capture_id, category, content, screenshot = null }) {
   if (!_hasDestination()) return;
   const line = formatCaptureNewLine({ project, capture_id, category, content });
+  // When the widget attached a base64 screenshot, push it to the legacy bot's
+  // chat as a photo with the [capture-new] line as caption — Franck wants the
+  // image inline in Telegram, not just the metadata header. Falls back to text
+  // if there's no screenshot, the data URL is malformed, or the photo upload
+  // is rejected (oversize, bad mime).
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat  = process.env.TELEGRAM_CHAT_ID;
+  if (screenshot && token && chat) {
+    try {
+      const { sendPhoto } = await import('./telegram-send.js');
+      await sendPhoto({ token, chat_id: chat, dataUrl: screenshot, caption: line });
+      return;
+    } catch (err) {
+      console.error('[Alerts] capture sendPhoto failed, falling back to text:', err.message);
+    }
+  }
   return _sendText(line);
 }
 

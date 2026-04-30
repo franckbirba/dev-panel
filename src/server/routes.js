@@ -878,25 +878,12 @@ export function createRouter(config = {}) {
       if (category && typeof category === 'string' && category.trim()) {
         setCaptureRouting(capture.id, { label: category.trim(), member_id: null });
       }
-      // Notify Shelly so she can triage when no category was provided.
-      notifyCaptureNew({
-        project: req.project.name,
-        capture_id: capture.id,
-        category: category || '',
-        content: capture.content
-      }).catch(() => {}); // fire-and-forget, never fail the request
-
-      // Server-side autoroute — DM the resolved member directly via their
-      // paired bot. Tries (1) widget category, (2) URL pattern match against
-      // the capture's metadata.url. Shelly's plugin doesn't see
-      // notifyCaptureNew's outbound, so this is the only way to actually
-      // wake the right person.
-      autorouteCapture({
-        project: req.project,
-        capture
-      }).catch(err => {
-        console.error('[autoroute] capture', capture.id, 'failed:', err.message);
-      });
+      // Note: notifyCaptureNew + autorouteCapture both fire from the
+      // capture's system-message handler (POST /threads/capture/:id/messages),
+      // not here. At this point the widget hasn't yet posted the system
+      // message that carries metadata.screenshot/url, so a notify here would
+      // be text-only and an autoroute couldn't classify by URL pattern.
+      // Routing + image broadcast happen the moment the system message lands.
       // Tell the dashboard's Inbox view to refetch — capture_new is a NOTIFY/QUESTION
       // signal but we don't push the whole row over SSE; the client refetches
       // /api/inbox on this event.
@@ -2056,12 +2043,15 @@ export function createRouter(config = {}) {
         }).catch(err => console.error('[threads] telegram forward failed:', err.message));
       }
 
-      // Capture autoroute trigger — the widget posts the user content to
-      // POST /captures (autoroute fires there but the URL/screenshot metadata
-      // hasn't arrived yet), then immediately posts a `system` message here
+      // Capture autoroute + Telegram broadcast trigger — the widget posts
+      // user content to POST /captures (where neither URL nor screenshot are
+      // available yet), then immediately posts a `system` message here
       // carrying metadata.url + metadata.screenshot. That's the moment we can
-      // actually classify by URL pattern and DM the resolved member with the
-      // screenshot. routeCapture is idempotent so a duplicate trigger is safe.
+      // (a) classify by URL pattern and DM the resolved member with the
+      // screenshot via their paired bot, and (b) push the [capture-new] line
+      // with the screenshot into the legacy observability chat so Franck
+      // sees the bug visually instead of just a metadata header.
+      // routeCapture is idempotent so a duplicate trigger is safe.
       if (subject_type === 'capture' && role === 'system' && req.project) {
         const { getCapture } = await import('./captures.js');
         const cap = getCapture(subject_id);
@@ -2069,6 +2059,19 @@ export function createRouter(config = {}) {
           const { autorouteCapture } = await import('./autoroute-capture.js');
           autorouteCapture({ project: req.project, capture: cap })
             .catch(err => console.error('[autoroute] capture', subject_id, 'failed:', err.message));
+        }
+        if (cap) {
+          const screenshot = (metadata && typeof metadata === 'object' && typeof metadata.screenshot === 'string'
+            && metadata.screenshot.startsWith('data:image/'))
+              ? metadata.screenshot
+              : null;
+          notifyCaptureNew({
+            project: req.project.name,
+            capture_id: cap.id,
+            category: cap.routed_label || '',
+            content: cap.content,
+            screenshot
+          }).catch(() => {}); // fire-and-forget, never fail the request
         }
       }
       res.json({ id, thread_id: thread.thread_id });
