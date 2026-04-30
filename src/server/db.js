@@ -398,6 +398,35 @@ export function initMasterDatabase(storagePath = './storage') {
     masterDb.pragma(`user_version = ${WIDGET_SESSIONS_VERSION}`);
   }
 
+  // Migration v8: GlitchTip bridge — auto-detected runtime errors land in the
+  // captures inbox alongside widget-reported bugs, so they pass through the
+  // same Shelly-triage → Plane-promotion pipeline. Spec: DEVPA-169 / Plane page
+  // "Observability — error tracking (GlitchTip)" §7.
+  // Three new columns: fingerprint (issue.fingerprint, used for dedup),
+  // occurrence_count (incremented on repeat), external_url (permalink to the
+  // GlitchTip issue). The partial unique index makes dedup atomic per project
+  // — same fingerprint in two different projects is fine.
+  const GLITCHTIP_VERSION = 8;
+  const currentVersion8 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion8 < GLITCHTIP_VERSION) {
+    const capCols8 = new Set(masterDb.prepare("PRAGMA table_info(captures)").all().map(c => c.name));
+    if (!capCols8.has('fingerprint')) {
+      masterDb.exec(`ALTER TABLE captures ADD COLUMN fingerprint TEXT`);
+    }
+    if (!capCols8.has('occurrence_count')) {
+      masterDb.exec(`ALTER TABLE captures ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+    }
+    if (!capCols8.has('external_url')) {
+      masterDb.exec(`ALTER TABLE captures ADD COLUMN external_url TEXT`);
+    }
+    masterDb.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_captures_fingerprint_project
+         ON captures(project_id, fingerprint)
+         WHERE fingerprint IS NOT NULL`
+    );
+    masterDb.pragma(`user_version = ${GLITCHTIP_VERSION}`);
+  }
+
   return masterDb;
 }
 
