@@ -28,6 +28,20 @@ const DEFAULT_SLUG = 'devpanl';
 const SESSION_TTL_MS = 6 * 24 * 60 * 60 * 1000; // re-login every 6 days; cookie lives 7
 const FETCH_TIMEOUT_MS = 10000;
 
+// Page-listing cache. Keyed by Plane project UUID, holds the most recent
+// listPages() result for `LIST_PAGES_CACHE_TTL_MS` (default 60s).
+//
+// The widget FAQ flow (Shelly publique) hits listPages on every user message
+// to discover candidate pages by title. Without a cache the second message in
+// the same conversation would re-fetch the index even if nothing changed.
+// 60s is conservative enough to surface a freshly published FAQ within one
+// minute while keeping ≤ 3 Plane calls per user query (DEVPA-164 AC):
+//   1× listPages (cached after first hit)
+//   1× getPage (or getPageHtml) on the best candidate
+//   1× optional retry on a different candidate
+const LIST_PAGES_CACHE_TTL_MS = parseInt(process.env.PLANE_PAGES_CACHE_TTL_MS || '60000', 10);
+const listPagesCache = new Map(); // projectId -> { value, expiresAt }
+
 function planeConfig() {
   const base = (process.env.PLANE_BASE_URL || DEFAULT_BASE).replace(/\/$/, '');
   const slug = process.env.PLANE_WORKSPACE_SLUG || DEFAULT_SLUG;
@@ -147,9 +161,19 @@ async function jsonOrThrow(res, label) {
   throw new Error(`${label} failed: HTTP ${res.status} ${body.slice(0, 500)}`);
 }
 
-export async function listPages(projectId) {
+export async function listPages(projectId, { bypassCache = false } = {}) {
+  if (!projectId) throw new Error('listPages: projectId is required');
+  const ttl = LIST_PAGES_CACHE_TTL_MS;
+  if (!bypassCache && ttl > 0) {
+    const hit = listPagesCache.get(projectId);
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+  }
   const res = await authedFetch(`${pagesBase(projectId)}/`);
-  return await jsonOrThrow(res, 'listPages');
+  const value = await jsonOrThrow(res, 'listPages');
+  if (ttl > 0) {
+    listPagesCache.set(projectId, { value, expiresAt: Date.now() + ttl });
+  }
+  return value;
 }
 
 export async function getPage(projectId, pageId) {
@@ -171,7 +195,9 @@ export async function createPage(projectId, { name, description_html = '', acces
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, description_html, access, parent })
   });
-  return await jsonOrThrow(res, 'createPage');
+  const out = await jsonOrThrow(res, 'createPage');
+  listPagesCache.delete(projectId);
+  return out;
 }
 
 export async function updatePage(projectId, pageId, fields) {
@@ -184,7 +210,9 @@ export async function updatePage(projectId, pageId, fields) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  return await jsonOrThrow(res, 'updatePage');
+  const out = await jsonOrThrow(res, 'updatePage');
+  listPagesCache.delete(projectId);
+  return out;
 }
 
 // Last-writer-wins. PATCH overwrites the HocusPocus collaborative state with
@@ -207,7 +235,9 @@ export async function updatePageContent(projectId, pageId, descriptionHtml) {
 
 export async function archivePage(projectId, pageId) {
   const res = await authedFetch(`${pagesBase(projectId)}/${pageId}/archive/`, { method: 'POST' });
-  return await jsonOrThrow(res, 'archivePage');
+  const out = await jsonOrThrow(res, 'archivePage');
+  listPagesCache.delete(projectId);
+  return out;
 }
 
 export async function unarchivePage(projectId, pageId) {
@@ -226,7 +256,10 @@ export async function deletePage(projectId, pageId, { force = false } = {}) {
     try { await archivePage(projectId, pageId); } catch (_) { /* idempotent */ }
   }
   const res = await authedFetch(`${pagesBase(projectId)}/${pageId}/`, { method: 'DELETE' });
-  if (res.status === 204) return { ok: true };
+  if (res.status === 204) {
+    listPagesCache.delete(projectId);
+    return { ok: true };
+  }
   const body = await res.text().catch(() => '');
   throw new Error(`deletePage failed: HTTP ${res.status} ${body.slice(0, 500)}`);
 }
@@ -244,5 +277,15 @@ export async function pagesHealthcheck(projectId) {
   }
 }
 
-// Test seam.
-export const __internal = { login, ensureSession, parseSetCookie, planeConfig, _resetSession: () => { session = null; } };
+// Test seam. _resetSession clears the listPages cache too so legacy tests
+// that expect a clean slate after _resetSession() keep working unchanged.
+export const __internal = {
+  login,
+  ensureSession,
+  parseSetCookie,
+  planeConfig,
+  _resetSession: () => { session = null; listPagesCache.clear(); },
+  _resetListPagesCache: () => { listPagesCache.clear(); },
+  _peekListPagesCache: (projectId) => listPagesCache.get(projectId) || null,
+  LIST_PAGES_CACHE_TTL_MS,
+};

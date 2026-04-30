@@ -64,7 +64,10 @@ describe('plane-pages — login', () => {
     expect(String(calls[1].body)).toContain('email=shelly%40test');
     expect(String(calls[1].body)).toContain('password=pw');
 
-    // Subsequent call uses the session cookie + no fresh login.
+    // Subsequent call uses the session cookie + no fresh login. Reset only
+    // the listPages cache so the assertion below observes a real fetch
+    // (the cookie session must persist across the reset).
+    __internal._resetListPagesCache();
     const calls2 = mockFetchSequence([
       () => new Response(JSON.stringify([]), { status: 200 })
     ]);

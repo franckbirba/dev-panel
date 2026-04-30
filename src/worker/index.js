@@ -143,8 +143,20 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
   return new Promise((resolve, reject) => {
+    // --strict-mcp-config + --mcp-config: pin the ephemeral's MCP set to
+    // the worker-specific config (no `telegram` entry), ignoring the
+    // ambient ~/.mcp.json. Without this, every ephemeral claude starts a
+    // bun telegram-multi/server.ts of its own → N pollers on the same bot
+    // tokens → 409 Conflict on getUpdates → Shelly goes deaf on Telegram.
+    // Workers push outbound notifs through notifyJob() (sendMessage, no
+    // poll), so they have no business loading the polling plugin.
+    const MCP_CONFIG = process.env.WORKER_MCP_CONFIG
+      || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
+
     const proc = spawn('claude', [
       '-p', prompt,
+      '--strict-mcp-config',
+      '--mcp-config', MCP_CONFIG,
       '--output-format', 'stream-json',
       '--verbose',
       '--dangerously-skip-permissions'

@@ -52,7 +52,12 @@ export function initMasterDatabase(storagePath = './storage') {
     ['plane_workspace_slug', 'TEXT'],
     ['default_branch',       'TEXT'],
     ['local_path',           'TEXT'],
-    ['description',          'TEXT']
+    ['description',          'TEXT'],
+    // widget_pii_patterns: JSON array of regex strings appended to the
+    // built-in PII filters (Bearer/sk- tokens, emails, credit cards, SSN).
+    // Stored on the project row so each project can opt into stricter rules
+    // without redeploying. Spec: DEVPA-166 (Sécurité widget).
+    ['widget_pii_patterns',  'TEXT']
   ]) {
     if (!cols.has(col)) {
       masterDb.exec(`ALTER TABLE projects ADD COLUMN ${col} ${def}`);
@@ -177,7 +182,67 @@ export function initMasterDatabase(storagePath = './storage') {
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS deploy_events_project_created ON deploy_events(project_id, created_at DESC);
+
+    -- Widget chat sessions — one row per browser-tab conversation surfaced
+    -- through the embedded DevPanel widget. session_token is the opaque
+    -- handle the widget passes back; thread_id binds the session to its
+    -- subject thread (FK left unenforced because thread_id is created
+    -- lazily by the widget API). Spec: DEVPA-157 § 5.1.
+    CREATE TABLE IF NOT EXISTS widget_sessions (
+      id             TEXT PRIMARY KEY,
+      project_id     TEXT NOT NULL,
+      session_token  TEXT NOT NULL UNIQUE,
+      thread_id      INTEGER,
+      user_agent     TEXT,
+      route          TEXT,
+      viewport_w     INTEGER,
+      viewport_h     INTEGER,
+      locale         TEXT,
+      started_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at   DATETIME,
+      closed_at      DATETIME,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_widget_sessions_project   ON widget_sessions(project_id);
+    CREATE INDEX IF NOT EXISTS idx_widget_sessions_last_seen ON widget_sessions(last_seen_at DESC);
+
+    -- widget_audit — append-only audit log for the widget surface.
+    -- Stores SHA-256 hashes of message content (never plaintext) so a
+    -- post-incident investigator can confirm a known message reached the
+    -- server without exposing PII at rest. Type ∈ {message_in, message_out,
+    -- capture_created, rate_limited, redacted}. Spec: DEVPA-166.
+    CREATE TABLE IF NOT EXISTS widget_audit (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id    TEXT,
+      session_id    TEXT,
+      type          TEXT NOT NULL,
+      content_hash  TEXT,
+      ts            DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS widget_audit_session_ts
+      ON widget_audit(session_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS widget_audit_project_session_ts
+      ON widget_audit(project_id, session_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS widget_audit_project_type_ts
+      ON widget_audit(project_id, type, ts DESC);
   `);
+
+  // Bearer-auth columns added by DEVPA-161. The original v7 (DEVPA-160)
+  // shipped widget_sessions without `session_id` / `token_expires_at`; the
+  // widget API needs both for sliding 24h bearer auth, so back-fill them
+  // here with column-existence guards (idempotent on fresh DBs and on DBs
+  // already at v7 from DEVPA-160).
+  const widgetCols = new Set(
+    masterDb.prepare("PRAGMA table_info(widget_sessions)").all().map(c => c.name)
+  );
+  if (!widgetCols.has('session_id')) {
+    masterDb.exec(`ALTER TABLE widget_sessions ADD COLUMN session_id TEXT`);
+    masterDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_widget_sessions_session ON widget_sessions(session_id)`);
+  }
+  if (!widgetCols.has('token_expires_at')) {
+    masterDb.exec(`ALTER TABLE widget_sessions ADD COLUMN token_expires_at DATETIME`);
+  }
+
 
   // Migration: move capture_messages into thread_messages + drop the old table.
   // Guarded by PRAGMA user_version — runs exactly once per database.
@@ -308,6 +373,29 @@ export function initMasterDatabase(storagePath = './storage') {
         ON inbox_state(dismissed_at, snoozed_until);
     `);
     masterDb.pragma(`user_version = ${INBOX_STATE_VERSION}`);
+  }
+
+  // Migration v7: widget chat surface — widget_sessions table (created above
+  // alongside the other signal-inbox tables) plus two new columns on captures
+  // (source, widget_session_id) and a normalisation of thread_messages.source
+  // from the legacy 'web' value to the new canonical 'dashboard'.
+  // Spec: DEVPA-157 § 5.1 / 5.2 (cycle "Shelly in the Widget", DEVPA-160).
+  const WIDGET_SESSIONS_VERSION = 7;
+  const currentVersion7 = masterDb.pragma('user_version', { simple: true });
+  if (currentVersion7 < WIDGET_SESSIONS_VERSION) {
+    const capCols7 = new Set(masterDb.prepare("PRAGMA table_info(captures)").all().map(c => c.name));
+    if (!capCols7.has('source')) {
+      masterDb.exec(`ALTER TABLE captures ADD COLUMN source TEXT NOT NULL DEFAULT 'dashboard'`);
+    }
+    if (!capCols7.has('widget_session_id')) {
+      masterDb.exec(
+        `ALTER TABLE captures ADD COLUMN widget_session_id TEXT REFERENCES widget_sessions(id)`
+      );
+    }
+    // Rename legacy 'web' source on thread_messages to the canonical 'dashboard'.
+    // Other values ('telegram', etc.) are left untouched.
+    masterDb.exec(`UPDATE thread_messages SET source = 'dashboard' WHERE source = 'web'`);
+    masterDb.pragma(`user_version = ${WIDGET_SESSIONS_VERSION}`);
   }
 
   return masterDb;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, captureViaDisplayMedia, takeDOMSnapshot } from './captureUtils.js';
 import { SessionRecorder } from './sessionRecorder.js';
 import { InspectOverlay } from './InspectOverlay.jsx';
@@ -6,7 +6,9 @@ import { RegionSelect } from './RegionSelect.jsx';
 import { AnnotationCanvas } from './AnnotationCanvas.jsx';
 import { BugReportPanel } from './BugReportPanel.jsx';
 import { FeaturePanel } from './FeaturePanel.jsx';
-import { buildCaptureRequestPayload } from './reporterPayload.js';
+import { postCapture as postCaptureFlow } from './captureFlow.js';
+import { ChatDrawer } from './chat/ChatDrawer.jsx';
+import { getOrCreateSessionId } from './chat/sessionId.js';
 
 const ANIMATIONS = `
   @keyframes devpanel-fade-in {
@@ -25,7 +27,8 @@ export function DevPanel({
   position = 'bottom-right',
   getState = null,
   user = null,
-  environment = null
+  environment = null,
+  chat = false
 }) {
   if (!apiKey) {
     console.warn('DevPanel: apiKey is required. Component will not render.');
@@ -123,39 +126,13 @@ export function DevPanel({
     setMode('bug-report');
   }, []);
 
-  const postCapture = useCallback(async ({ kind, content, metadata, category: cat }) => {
-    const payload = buildCaptureRequestPayload(user, kind, content, environment);
-    if (cat) payload.category = cat;
-    const createRes = await fetch(`${apiUrl}/api/captures`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-      body: JSON.stringify(payload)
-    });
-    if (!createRes.ok) {
-      const errData = await createRes.json().catch(() => ({}));
-      throw new Error(errData.error || `HTTP ${createRes.status}`);
-    }
-    const capture = await createRes.json();
-    if (metadata) {
-      const summary = [
-        metadata.screenshot ? 'screenshot' : null,
-        metadata.dom ? 'DOM snapshot' : null,
-        metadata.appState ? 'app state' : null,
-        Array.isArray(metadata.console) && metadata.console.length > 0 ? `${metadata.console.length} console entries` : null,
-        Array.isArray(metadata.network) && metadata.network.length > 0 ? `${metadata.network.length} network events` : null,
-      ].filter(Boolean).join(' · ') || 'browser context';
-      await fetch(`${apiUrl}/api/threads/capture/${capture.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: JSON.stringify({
-          role: 'system',
-          content: `Captured: ${summary}`,
-          metadata
-        })
-      }).catch(() => { /* context is best-effort */ });
-    }
-    return capture;
-  }, [apiUrl, apiKey, user, environment]);
+  const postCapture = useCallback(
+    ({ kind, content, metadata, category: cat }) =>
+      postCaptureFlow({ apiUrl, apiKey, user, environment, kind, content, metadata, category: cat }),
+    [apiUrl, apiKey, user, environment],
+  );
+
+  const chatSessionId = useMemo(() => (chat ? getOrCreateSessionId() : null), [chat]);
 
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);
@@ -428,6 +405,18 @@ export function DevPanel({
         <div data-devtool-ignore style={toastStyle}>
           {toast.kind === 'success' ? '✓' : '✗'} {toast.message}
         </div>
+      )}
+
+      {/* Persistent chat drawer (opt-in via `chat` prop) */}
+      {chat && chatSessionId && (
+        <ChatDrawer
+          apiUrl={apiUrl}
+          apiKey={apiKey}
+          sessionId={chatSessionId}
+          user={user}
+          environment={environment}
+          position={position}
+        />
       )}
     </>
   );

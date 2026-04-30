@@ -50,16 +50,20 @@ import { addClient, broadcast } from './sse.js';
 import { publishTicket, rejectTicket } from './services.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 import { notifyTicket, notifyTicketNew, notifyCaptureNew } from './alerts.js';
-import { autorouteCapture } from './autoroute-capture.js';
 import { defineTeamRoutes } from './routes-team.js';
 import { defineInboxRoutes } from './routes-inbox.js';
 import { defineMemoryRoutes } from './routes-memory.js';
 import { defineFleetRoutes } from './routes-fleet.js';
 import { defineCommandRoutes } from './routes-commands.js';
+import { defineWidgetRoutes } from './routes-widget.js';
+import { defineWidgetBridgeRoutes } from './routes-widget-bridge.js';
 import { routeTicket } from './ticket-routing.js';
 import { routeCapture } from './capture-routing.js';
 import { pool as pgPool } from './pg.js';
 import { enrichWorkItems } from './plane-enrich.js';
+import { redactForProject } from './widget-redaction.js';
+import { auditEvent, AUDIT_TYPES } from './widget-audit.js';
+import { checkRateLimit } from './widget-rate-limit.js';
 
 // Forward a dashboard->Telegram message with delivery tracking. Tries webhook
 // first (Shelly's tmux relay), then Bot API. Every attempt writes a
@@ -121,6 +125,70 @@ async function forwardToTelegram({ text, thread_message_id, subject_type, subjec
   db.prepare(`UPDATE telegram_outbound SET status='failed' WHERE id=?`).run(outboundId);
   const { broadcast: b } = await import('./sse.js');
   b('telegram:outbound_failed', { id: outboundId });
+}
+
+// ============================================================================
+// WIDGET SECURITY PIPELINE — rate-limit, PII redaction, audit logging.
+// Used by the three widget-facing routes (POST /captures, POST
+// /captures/:id/messages, POST /threads/capture/:id/messages). Returns
+// { ok: true, content, session_id } on success or { ok: false, response }
+// where response is { status, body, retryAfter? } and the caller forwards
+// it. Spec: DEVPA-166.
+// ============================================================================
+
+function extractSessionId(req) {
+  const fromHeader = req.headers['x-widget-session'];
+  const fromBody = req.body && typeof req.body.session_id === 'string' ? req.body.session_id : null;
+  const raw = fromHeader || fromBody;
+  if (!raw || typeof raw !== 'string') return null;
+  // Cap length so a malicious caller can't pump huge payloads through
+  // the audit table.
+  return raw.slice(0, 128);
+}
+
+function applyWidgetSecurity({ project_id, type, content, req }) {
+  const session_id = extractSessionId(req) || `anon:${req.ip || 'unknown'}`;
+
+  // 1. Rate-limit BEFORE we write any other audit row, so a flooding
+  // session doesn't get to inflate its own counters. We still write a
+  // single rate_limited row so post-incident analysis sees the burst.
+  const rl = checkRateLimit({ project_id, session_id });
+  if (!rl.allowed) {
+    try {
+      auditEvent({ project_id, session_id, type: AUDIT_TYPES.RATE_LIMITED });
+    } catch (e) {
+      console.error('[widget-security] audit rate_limited failed:', e.message);
+    }
+    return {
+      ok: false,
+      response: {
+        status: 429,
+        body: { error: 'Too many requests', reason: rl.reason },
+        retryAfter: rl.retryAfter
+      }
+    };
+  }
+
+  // 2. Redact PII from the content.
+  const { text: redacted, count, types } = redactForProject(project_id, content || '');
+  if (count > 0) {
+    console.log(`[widget-security] redaction applied project=${project_id} session=${session_id} types=${types.join(',')} count=${count}`);
+    try {
+      auditEvent({ project_id, session_id, type: AUDIT_TYPES.REDACTED, content: String(content) });
+    } catch (e) {
+      console.error('[widget-security] audit redacted failed:', e.message);
+    }
+  }
+
+  // 3. Audit the inbound event itself (post-redaction so the hash matches
+  // what's actually persisted downstream).
+  try {
+    auditEvent({ project_id, session_id, type, content: redacted });
+  } catch (e) {
+    console.error('[widget-security] audit message_in failed:', e.message);
+  }
+
+  return { ok: true, content: redacted, session_id };
 }
 
 // ============================================================================
@@ -866,24 +934,52 @@ export function createRouter(config = {}) {
         }
         env = trimmed;
       }
+      // Widget security pipeline: rate-limit, PII redaction, audit log.
+      const sec = applyWidgetSecurity({
+        project_id: req.project.id,
+        type: AUDIT_TYPES.MESSAGE_IN,
+        content: String(content).slice(0, 4000),
+        req
+      });
+      if (!sec.ok) {
+        if (sec.response.retryAfter) res.set('Retry-After', String(sec.response.retryAfter));
+        return res.status(sec.response.status).json(sec.response.body);
+      }
       const capture = createCapture({
         project_id: req.project.id,
-        content: String(content).slice(0, 4000),
+        content: sec.content.slice(0, 4000),
         kind: String(kind).slice(0, 32),
         reporter: reporter ?? null,
         environment: env
       });
+      // capture_created audit row — confirms the redacted content actually
+      // landed in the captures table. Hash matches sec.content.
+      try {
+        auditEvent({
+          project_id: req.project.id,
+          session_id: sec.session_id,
+          type: AUDIT_TYPES.CAPTURE_CREATED,
+          content: sec.content
+        });
+      } catch (e) {
+        console.error('[widget-security] audit capture_created failed:', e.message);
+      }
       // If the widget submitted a category, pre-write routed_label (no member
       // resolution yet — Shelly will call /captures/:id/route to do that).
       if (category && typeof category === 'string' && category.trim()) {
         setCaptureRouting(capture.id, { label: category.trim(), member_id: null });
       }
-      // Note: notifyCaptureNew + autorouteCapture both fire from the
-      // capture's system-message handler (POST /threads/capture/:id/messages),
-      // not here. At this point the widget hasn't yet posted the system
-      // message that carries metadata.screenshot/url, so a notify here would
-      // be text-only and an autoroute couldn't classify by URL pattern.
-      // Routing + image broadcast happen the moment the system message lands.
+      // Both notifyCaptureNew and autorouteCapture fire from the capture's
+      // system-message handler (POST /threads/capture/:id/messages), not
+      // here. At this point the widget hasn't yet posted the system message
+      // that carries metadata.screenshot/url — so a notify here would be
+      // text-only (Franck wants the screenshot inline) and autoroute couldn't
+      // classify by URL pattern. Routing + image broadcast happen the moment
+      // the system message lands.
+      // Captures created without a follow-up (e.g. from the dashboard
+      // composer) won't trigger a Telegram broadcast — that's fine, the
+      // dashboard Inbox already shows them.
+
       // Tell the dashboard's Inbox view to refetch — capture_new is a NOTIFY/QUESTION
       // signal but we don't push the whole row over SSE; the client refetches
       // /api/inbox on this event.
@@ -928,9 +1024,22 @@ export function createRouter(config = {}) {
       if (!ALLOWED_ROLES.has(role)) {
         return res.status(400).json({ error: `invalid role: ${role}` });
       }
+      // Widget security pipeline. The widget sends user replies + system
+      // metadata frames through this route, so it needs the same rate
+      // limit / redaction / audit treatment as POST /captures.
+      const sec = applyWidgetSecurity({
+        project_id: req.project.id,
+        type: AUDIT_TYPES.MESSAGE_IN,
+        content,
+        req
+      });
+      if (!sec.ok) {
+        if (sec.response.retryAfter) res.set('Retry-After', String(sec.response.retryAfter));
+        return res.status(sec.response.status).json(sec.response.body);
+      }
       const thread = getOrCreateThread('capture', c.id);
       const id = appendThreadMessage({
-        thread_id: thread.thread_id, role, source: 'web', content,
+        thread_id: thread.thread_id, role, source: 'web', content: sec.content,
         metadata: metadata ?? null
       });
       res.json({ id, thread_id: thread.thread_id });
@@ -980,6 +1089,8 @@ export function createRouter(config = {}) {
   defineMemoryRoutes(router, authenticateProject);
   defineFleetRoutes(router, authenticateProject);
   defineCommandRoutes(router, authenticateProject);
+  defineWidgetRoutes(router);
+  defineWidgetBridgeRoutes(router, authenticateProject);
 
   // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
@@ -2010,9 +2121,27 @@ export function createRouter(config = {}) {
       const source = req.isAdmin && reqSource && ALLOWED_SOURCES.has(reqSource) ? reqSource : 'web';
       const tgId = req.isAdmin && Number.isFinite(telegram_message_id) ? telegram_message_id : null;
 
+      // Widget security pipeline — applies only to capture threads coming
+      // from a project key (the widget surface). Admin-origin messages
+      // (Telegram/MCP inbound) and non-capture subjects are exempt.
+      let safeContent = content;
+      if (subject_type === 'capture' && !req.isAdmin && req.project) {
+        const sec = applyWidgetSecurity({
+          project_id: req.project.id,
+          type: AUDIT_TYPES.MESSAGE_IN,
+          content,
+          req
+        });
+        if (!sec.ok) {
+          if (sec.response.retryAfter) res.set('Retry-After', String(sec.response.retryAfter));
+          return res.status(sec.response.status).json(sec.response.body);
+        }
+        safeContent = sec.content;
+      }
+
       const thread = getOrCreateThread(subject_type, subject_id);
       const id = appendThreadMessage({
-        thread_id: thread.thread_id, role, source, content,
+        thread_id: thread.thread_id, role, source, content: safeContent,
         metadata: metadata ?? null, telegram_message_id: tgId
       });
       // Capture-specific: a shelly reply on a 'new' capture bumps it to 'triaging'
@@ -2030,14 +2159,14 @@ export function createRouter(config = {}) {
         thread_id: thread.thread_id,
         subject_type,
         subject_id,
-        message: { id, role, source, content, metadata: metadata ?? null, created_at: new Date().toISOString() }
+        message: { id, role, source, content: safeContent, metadata: metadata ?? null, created_at: new Date().toISOString() }
       });
       // Forward to Telegram with tag prefix — ONLY for web-source messages.
       // Admin-origin messages are already from Telegram (MCP inbound); re-forwarding
       // would create a loop. Delivery is tracked in telegram_outbound so failures
       // stop being silent.
       if (source === 'web') {
-        const text = prependTag(subject_type, subject_id, content);
+        const text = prependTag(subject_type, subject_id, safeContent);
         forwardToTelegram({
           text, thread_message_id: id, subject_type, subject_id
         }).catch(err => console.error('[threads] telegram forward failed:', err.message));

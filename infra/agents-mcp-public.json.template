@@ -1,0 +1,22 @@
+{
+  "_comment": "MCP config for shelly-public.service. Mounts ONLY the dev-panel server in MCP_PROFILE=public mode (FAQ-safe whitelist defined in src/mcp/profile.js). The upstream plane-mcp-server is intentionally NOT mounted — it ships create_work_item / update_work_item / delete_work_item that we cannot filter from the outside, so we re-export the read-only subset (list_work_items, retrieve_work_item) from our own server under the public profile. Future widget-bridge tool (widget_reply, DEVPA-163) will be added to the public whitelist when it lands.",
+  "mcpServers": {
+    "devpanel-public": {
+      "command": "node",
+      "args": ["/home/deploy/projects/dev-panel/src/mcp/server.js"],
+      "env": {
+        "MCP_PROFILE": "public",
+        "DEVPANEL_STORAGE": "/home/deploy/projects/dev-panel/storage",
+        "PG_HOST": "10.0.0.2",
+        "PG_PORT": "5432",
+        "PG_PASSWORD": "__PG_PASSWORD__",
+        "VOYAGE_API_KEY": "__VOYAGE_API_KEY__",
+        "ADMIN_API_KEY": "__ADMIN_API_KEY__",
+        "API_BASE": "https://devpanl.dev",
+        "PLANE_BASE_URL": "https://plane.devpanl.dev",
+        "PLANE_WORKSPACE_SLUG": "devpanl",
+        "PLANE_API_KEY": "__PLANE_API_KEY__"
+      }
+    }
+  }
+}

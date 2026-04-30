@@ -6,7 +6,7 @@ import { getMasterDatabase } from './db.js';
 import { getSubject } from './subjects.js';
 
 const VALID_ROLES   = new Set(['user', 'shelly', 'system', 'agent']);
-const VALID_SOURCES = new Set(['web', 'telegram', 'system']);
+const VALID_SOURCES = new Set(['web', 'telegram', 'system', 'widget']);
 
 export function getOrCreateThread(subject_type, subject_id) {
   const db = getMasterDatabase();
