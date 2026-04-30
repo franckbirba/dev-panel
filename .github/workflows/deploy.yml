@@ -55,7 +55,8 @@ jobs:
             PLANE_MINIO_ROOT_USER,PLANE_MINIO_ROOT_PASSWORD,
             PENPOT_SECRET_KEY,PENPOT_DB_PASSWORD,
             TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,AUTHORIZED_TELEGRAM_USER_ID,TRAEFIK_USER,TRAEFIK_PASS,
-            OAUTH2_PROXY_CLIENT_ID,OAUTH2_PROXY_CLIENT_SECRET
+            OAUTH2_PROXY_CLIENT_ID,OAUTH2_PROXY_CLIENT_SECRET,
+            DEPLOY_SHA,DEPLOY_ACTOR
           script: |
             cd ~/dev-panel
 
@@ -100,12 +101,37 @@ jobs:
             docker compose up -d --no-deps oauth2-proxy
 
             docker compose pull devpanel
+
+            # Tell Shelly (and Franck) the API is about to flap. devpanel-api
+            # backs Shelly's MCP tools and the /agents socket — its restart
+            # disconnects her for ~15s and Uptime Kuma sees a 502. Without
+            # this ping she sometimes interprets the MCP drop as a self-crash
+            # and announces a phantom restart.
+            curl -fsS --max-time 5 \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=🔄 Deploy ${DEPLOY_SHA:0:7} (${DEPLOY_ACTOR}) — devpanel-api redémarre, ~15s d'indispo. Je reviens." \
+              > /dev/null || true
+
             docker compose up -d --no-deps devpanel
 
             # Health check
             sleep 15
             docker compose ps devpanel
-            docker exec devpanel-api curl -sf http://localhost:3030/api/health || echo "⚠️ DevPanel health check failed"
+            if docker exec devpanel-api curl -sf http://localhost:3030/api/health > /dev/null 2>&1; then
+              curl -fsS --max-time 5 \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                -d "text=✅ Deploy ${DEPLOY_SHA:0:7} OK — devpanel-api up." \
+                > /dev/null || true
+            else
+              echo "⚠️ DevPanel health check failed"
+              curl -fsS --max-time 5 \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                -d "text=⚠️ Deploy ${DEPLOY_SHA:0:7} — healthcheck KO sur devpanel-api. Vérifie les logs." \
+                > /dev/null || true
+            fi
 
             # Cleanup dangling images only (do not prune the stopped plane-migrator etc.)
             docker image prune -f
@@ -127,6 +153,8 @@ jobs:
           TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}
           OAUTH2_PROXY_CLIENT_ID: ${{ secrets.OAUTH2_PROXY_CLIENT_ID }}
           OAUTH2_PROXY_CLIENT_SECRET: ${{ secrets.OAUTH2_PROXY_CLIENT_SECRET }}
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_ACTOR: ${{ github.actor }}
 
   # deploy-agents intentionally omitted from CI — the agents-node firewall
   # does not whitelist GitHub Actions runner IPs. Run scripts/deploy-agents.sh
