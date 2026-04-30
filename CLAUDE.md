@@ -79,6 +79,42 @@ docker exec plane-db psql -U plane -d plane -c "ALTER USER plane WITH PASSWORD '
 ```
 See memory `infra_plane_caveats.md` for the full symptom-to-fix decision tree.
 
+## GlitchTip — error tracking bootstrap (DEVPA-168)
+
+GlitchTip lives at `glitchtip.devpanl.dev` and feeds runtime errors into the captures inbox via the bridge endpoint at `POST /api/webhooks/glitchtip/:projectId` (DEVPA-169). Stack: `glitchtip-web` + `glitchtip-worker` + `glitchtip-migrate` + dedicated `glitchtip-db` (postgres) + dedicated `glitchtip-redis`. **Do not** reuse plane-db or devpanel's redis — Django migrations would interfere.
+
+The compose profile `glitchtip` is opted-out of CI deploys (deploy isolation rule above). Bootstrap is **always manual**:
+
+```bash
+ssh deploy@77.42.46.87
+cd ~/dev-panel
+# 1. Generate secrets and add to BOTH .env and .env.production:
+#    GLITCHTIP_SECRET_KEY=$(openssl rand -base64 50 | tr -d '\n')
+#    GLITCHTIP_DB_PASSWORD=$(openssl rand -hex 24)
+#    GLITCHTIP_BRIDGE_HMAC_SECRET=$(openssl rand -hex 32)
+# 2. Confirm DNS A record glitchtip.devpanl.dev → 77.42.46.87 resolves
+# 3. Bring the stack up
+docker compose --profile glitchtip up -d
+# 4. Wait for migrations to complete (one-shot container, exit 0)
+docker compose logs -f glitchtip-migrate
+# 5. Create the superuser
+docker exec -it glitchtip-web ./manage.py createsuperuser
+# 6. Browse to https://glitchtip.devpanl.dev (passes oauth2-proxy Google SSO),
+#    log in with the superuser account, then in the UI:
+#      - create Organization "devpanl-studio"
+#      - Profile → Auth Tokens → generate one with scopes
+#        org:admin + project:admin + project:write
+#      - put the token on the agents host as GLITCHTIP_API_TOKEN for the
+#        plugin auto-wiring (DEVPA-170)
+# 7. Smoke-test the public ingest path with an anonymous curl that
+#    targets a real test project's DSN; confirm the event appears in the UI
+# 8. Add glitchtip-pgdata to the nightly pg_dump backup runbook
+```
+
+Ingest paths (`/api/<num>/store/`, `/envelope/`, `/security/`, `/minidump/`) are **public** — auth lives in the DSN itself (Sentry-standard public-key model). Cross-domain client SDKs cannot share the oauth2-proxy cookie, so trying to gate ingest behind Google SSO would brick every client app. The Traefik split is two routers on the same service: `glitchtip-ingest` (priority 100, no middleware) for ingest paths, `glitchtip-ui` (priority 10, oauth-google middleware) for everything else.
+
+The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLITCHTIP_DB_PASSWORD` only takes effect on first volume write. Rotate with `ALTER USER glitchtip WITH PASSWORD '<new>'` inside the running container.
+
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
 
 Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the `telegram-multi` plugin (Apache-2.0 fork of `claude-plugins-official:telegram` with multi-bot support). You chat with her in Telegram; she dispatches work to other agents and reports back.
