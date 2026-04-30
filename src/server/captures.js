@@ -21,28 +21,30 @@ import { getMasterDatabase } from './db.js';
 import { upsertSubject } from './subjects.js';
 import { getOrCreateThread, appendMessage, listMessages } from './threads.js';
 
-export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null, source = 'dashboard', widget_session_id = null }) {
+export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null, source = 'dashboard', widget_session_id = null, fingerprint = null, external_url = null }) {
   const db = getMasterDatabase();
   const id = randomUUID();
 
   const rep = normalizeReporter(reporter);
   const env = (typeof environment === 'string' && environment.length > 0) ? environment : null;
-  // Map source → thread_messages.source. 'widget' is the only non-default
-  // that exists today; 'dashboard' (default) keeps the legacy 'web' value
+  // Map source → thread_messages.source. 'widget' / 'glitchtip' have their
+  // own canonical values; 'dashboard' (default) keeps the legacy 'web' value
   // until DEVPA-160 canonicalises the taxonomy.
-  const messageSource = source === 'widget' ? 'widget' : 'web';
+  const messageSource = source === 'widget' || source === 'glitchtip' ? source : 'web';
 
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO captures
          (id, project_id, kind, content, status, created_by,
           reporter_id, reporter_name, reporter_email, reporter_extra,
-          environment, source, widget_session_id)
-       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?)`
+          environment, source, widget_session_id,
+          fingerprint, external_url)
+       VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, project_id, kind, content, created_by,
       rep.id, rep.name, rep.email, rep.extra,
-      env, source, widget_session_id
+      env, source, widget_session_id,
+      fingerprint, external_url
     );
 
     upsertSubject({
@@ -63,6 +65,69 @@ export function createCapture({ project_id, content, kind = 'idea', created_by =
   tx();
 
   return getCapture(id);
+}
+
+// upsertGlitchTipCapture — dedup-aware insert for GlitchTip webhook events.
+// First occurrence of a (project_id, fingerprint) creates a new capture row
+// (status='new', source='glitchtip'). Subsequent occurrences increment
+// occurrence_count and bump updated_at without touching status — Shelly's
+// triage state stays intact even when the underlying error fires again.
+//
+// Returns { capture, deduped }. `deduped=true` means we incremented an
+// existing row; the caller can use that to skip notifyCaptureNew etc.
+export function upsertGlitchTipCapture({ project_id, fingerprint, content, external_url = null, environment = null }) {
+  if (!fingerprint) {
+    throw new Error('upsertGlitchTipCapture: fingerprint is required');
+  }
+  const db = getMasterDatabase();
+  const existing = db.prepare(
+    `SELECT id FROM captures WHERE project_id = ? AND fingerprint = ?`
+  ).get(project_id, fingerprint);
+
+  if (existing) {
+    db.prepare(
+      `UPDATE captures
+          SET occurrence_count = occurrence_count + 1,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`
+    ).run(existing.id);
+    return { capture: getCapture(existing.id), deduped: true };
+  }
+
+  const capture = createCapture({
+    project_id,
+    content,
+    kind: 'bug',
+    created_by: 'glitchtip',
+    source: 'glitchtip',
+    environment,
+    fingerprint,
+    external_url
+  });
+  return { capture, deduped: false };
+}
+
+// resolveGlitchTipCapture — set status='dropped' when GlitchTip flips an
+// issue to resolved. We don't delete (Shelly may have already promoted it
+// to a Plane work item, the history matters). Idempotent: silently
+// no-ops when no matching capture is found.
+export function resolveGlitchTipCapture({ project_id, fingerprint }) {
+  if (!fingerprint) return null;
+  const db = getMasterDatabase();
+  const row = db.prepare(
+    `SELECT id, status FROM captures WHERE project_id = ? AND fingerprint = ?`
+  ).get(project_id, fingerprint);
+  if (!row) return null;
+  // Only auto-close captures that haven't been promoted to a Plane work
+  // item — once promoted, Plane is the source of truth, not GlitchTip.
+  if (row.status === 'promoted') return getCapture(row.id);
+  db.prepare(
+    `UPDATE captures
+        SET status = 'dropped',
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`
+  ).run(row.id);
+  return getCapture(row.id);
 }
 
 // Split a host-provided reporter object into column values + a JSON extras
