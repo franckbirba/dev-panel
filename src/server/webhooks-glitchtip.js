@@ -63,6 +63,24 @@ export function verifySignature(payload, signature, secret = WEBHOOK_SECRET) {
   }
 }
 
+// Constant-time shared-secret comparison for the URL-querystring auth path.
+// GlitchTip's "Generic Webhook" alert recipient does NOT sign payloads
+// (we discovered this during DEVPA-168 bring-up — the original spec was
+// wrong). The capability-URL pattern is the simplest fix: the secret
+// rides in `?secret=<hex>` and we timing-safe-compare it against the
+// configured WEBHOOK_SECRET. The bridge URL itself is the bearer token.
+export function verifyQuerystringSecret(provided, secret = WEBHOOK_SECRET) {
+  if (!secret || !provided) return false;
+  try {
+    const a = Buffer.from(String(secret));
+    const b = Buffer.from(String(provided));
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 // Build the capture content body from a GlitchTip issue payload. The shape
 // matches Sentry's standard webhook envelope; GlitchTip mirrors it. We
 // truncate stack trace + breadcrumbs to keep the row small (the full data
@@ -154,15 +172,24 @@ export function mountGlitchTipWebhook(app) {
           return res.status(404).json({ error: 'unknown project' });
         }
 
-        // Verify HMAC signature when secret is configured. If the secret
-        // isn't set, the route refuses everything in production
-        // (NODE_ENV=production); otherwise (tests, local dev) it accepts
-        // for convenience.
+        // Auth — accept either of two paths, in this order:
+        //   1. HMAC header (x-glitchtip-signature / x-sentry-hook-signature
+        //      / x-hub-signature-256). Kept for any future signed source
+        //      and for the original Sentry-style enterprise webhooks.
+        //   2. Shared secret in `?secret=<hex>`. This is what GlitchTip's
+        //      "Generic Webhook" alert recipient uses today — it does NOT
+        //      sign bodies, so the URL itself carries the auth.
+        // If GLITCHTIP_BRIDGE_HMAC_SECRET is unset and we're in production,
+        // the route refuses everything. Outside production (tests, local
+        // dev) it accepts unauthenticated requests for convenience.
         if (WEBHOOK_SECRET) {
           const sig = req.headers['x-glitchtip-signature']
                    || req.headers['x-sentry-hook-signature']
                    || req.headers['x-hub-signature-256'];
-          if (!verifySignature(rawBody, sig)) {
+          const querySecret = req.query?.secret;
+          const ok = (sig && verifySignature(rawBody, sig))
+                  || (querySecret && verifyQuerystringSecret(querySecret));
+          if (!ok) {
             return res.status(401).json({ error: 'invalid signature' });
           }
         } else if (process.env.NODE_ENV === 'production') {
