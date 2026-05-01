@@ -90,10 +90,11 @@ describe('POST /api/webhooks/glitchtip/:projectId', () => {
   // Send the JSON as a raw string body. Supertest's `.send(string)` paired
   // with `Content-Type: application/json` skips its own re-serialization, so
   // the bytes the handler receives are exactly what we signed.
-  function post(projectId, body, headers = {}) {
+  function post(projectId, body, headers = {}, query = '') {
     const raw = JSON.stringify(body);
+    const url = `/api/webhooks/glitchtip/${projectId}${query ? `?${query}` : ''}`;
     const req = request(app)
-      .post(`/api/webhooks/glitchtip/${projectId}`)
+      .post(url)
       .type('application/json');
     for (const [k, v] of Object.entries(headers)) req.set(k, v);
     return req.send(raw);
@@ -241,4 +242,42 @@ describe('POST /api/webhooks/glitchtip/:projectId', () => {
     const res = await post(project.id, overflow, { 'x-glitchtip-signature': sig });
     expect(res.status).toBe(429);
   }, 20_000);
+
+  // Querystring auth path — required because GlitchTip's "Generic Webhook"
+  // alert recipient does NOT sign payloads. The shared secret rides in the
+  // URL instead, capability-style.
+  describe('querystring secret auth', () => {
+    it('accepts a request with ?secret=<configured> and creates a capture', async () => {
+      const body = makePayload({ fingerprint: ['qs-1'] });
+      const res = await post(project.id, body, {}, `secret=${SECRET}`);
+      expect(res.status).toBe(201);
+      expect(res.body.deduped).toBe(false);
+    });
+
+    it('rejects a request with the wrong querystring secret', async () => {
+      const body = makePayload({ fingerprint: ['qs-2'] });
+      const res = await post(project.id, body, {}, 'secret=not-the-real-secret');
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects a request with no secret and no signature header', async () => {
+      const body = makePayload({ fingerprint: ['qs-3'] });
+      const res = await post(project.id, body);
+      expect(res.status).toBe(401);
+    });
+
+    it('still accepts a valid HMAC even when no querystring secret is sent', async () => {
+      const body = makePayload({ fingerprint: ['qs-4'] });
+      const sig = sign(SECRET, JSON.stringify(body));
+      const res = await post(project.id, body, { 'x-glitchtip-signature': sig });
+      expect(res.status).toBe(201);
+    });
+
+    it('accepts when both querystring and HMAC are present and the QS secret is good', async () => {
+      const body = makePayload({ fingerprint: ['qs-5'] });
+      // bad HMAC, good QS — should pass because either-of-two-paths is OK
+      const res = await post(project.id, body, { 'x-glitchtip-signature': 'deadbeef' }, `secret=${SECRET}`);
+      expect(res.status).toBe(201);
+    });
+  });
 });

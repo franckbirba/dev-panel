@@ -115,6 +115,21 @@ No oauth2-proxy gate on this host — GlitchTip handles auth itself (Django logi
 
 Ingest paths (`/api/<num>/store/`, `/envelope/`, `/security/`, `/minidump/`) are public by design — auth lives in the DSN's public key, validated by GlitchTip itself.
 
+### Bridge alert webhook — querystring auth (NOT HMAC)
+
+The original spec assumed signed bridge webhooks. **GlitchTip's "Generic Webhook" alert recipient does NOT sign payloads** — confirmed live during DEVPA-168 bring-up. The bridge endpoint at `POST /api/webhooks/glitchtip/:projectId` therefore accepts auth via either:
+
+1. **`x-glitchtip-signature` HMAC header** (kept for any future signed source / Sentry-style enterprise webhooks), or
+2. **`?secret=<GLITCHTIP_BRIDGE_HMAC_SECRET>` querystring** — the path GlitchTip alerts actually use today.
+
+When configuring an alert in the GlitchTip UI for any client project, set the webhook URL to:
+
+```
+https://devpanl.dev/api/webhooks/glitchtip/<devpanl-project-id>?secret=<GLITCHTIP_BRIDGE_HMAC_SECRET>
+```
+
+The URL itself is the bearer token — treat it like a capability URL (Google Docs share link, S3 presigned URL). To rotate, regenerate `GLITCHTIP_BRIDGE_HMAC_SECRET` and edit the alert URL on every wired project.
+
 The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLITCHTIP_DB_PASSWORD` only takes effect on first volume write. Rotate with `ALTER USER glitchtip WITH PASSWORD '<new>'` inside the running container.
 
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import crypto from 'crypto';
 import {
   verifySignature,
+  verifyQuerystringSecret,
   deriveFingerprint,
   buildContent
 } from '../../src/server/webhooks-glitchtip.js';
@@ -47,6 +48,24 @@ describe('webhooks-glitchtip', () => {
     it('returns false for mismatched length signatures', () => {
       const body = Buffer.from('{}');
       expect(verifySignature(body, 'short', 'k')).toBe(false);
+    });
+  });
+
+  describe('verifyQuerystringSecret', () => {
+    it('returns true when the provided secret matches', () => {
+      expect(verifyQuerystringSecret('abc123', 'abc123')).toBe(true);
+    });
+    it('returns false when secret differs', () => {
+      expect(verifyQuerystringSecret('abc123', 'xyz456')).toBe(false);
+    });
+    it('returns false on length mismatch (no timing oracle)', () => {
+      expect(verifyQuerystringSecret('short', 'much-longer-secret')).toBe(false);
+    });
+    it('returns false when either side is missing', () => {
+      expect(verifyQuerystringSecret('', 'abc')).toBe(false);
+      expect(verifyQuerystringSecret('abc', '')).toBe(false);
+      expect(verifyQuerystringSecret(undefined, 'abc')).toBe(false);
+      expect(verifyQuerystringSecret('abc', undefined)).toBe(false);
     });
   });
 
