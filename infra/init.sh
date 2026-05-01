@@ -63,6 +63,14 @@ PLANE_SHELLY_PASSWORD_V=$(stage_or_blank PLANE_SHELLY_PASSWORD)
 OAUTH2_PROXY_CLIENT_ID_V=$(stage OAUTH2_PROXY_CLIENT_ID)
 OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
 
+# GlitchTip secrets (DEVPA-168). All three are auto-generated on first
+# deploy and preserved across re-runs by stage(). The non-secret bits
+# (DEFAULT_FROM_EMAIL, EMAIL_URL, ENABLE_USER_REGISTRATION, DOMAIN) are
+# inlined as defaults in the heredoc below.
+GLITCHTIP_SECRET_KEY_V=$(stage GLITCHTIP_SECRET_KEY)
+GLITCHTIP_DB_PASSWORD_V=$(stage GLITCHTIP_DB_PASSWORD)
+GLITCHTIP_BRIDGE_HMAC_SECRET_V=$(stage GLITCHTIP_BRIDGE_HMAC_SECRET)
+
 # Shared secret between the services-API agent hub and any worker that
 # connects to it. Auto-generated on first deploy, preserved across re-runs
 # by stage(). The same value must end up in the agents-host .env (rsync
@@ -158,6 +166,18 @@ OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET_V}
 # only set on the agents host (worker side); on services we just need the
 # token so initAgentHub() can verify connections.
 AGENT_HUB_TOKEN=${AGENT_HUB_TOKEN_V}
+
+# GlitchTip — error tracking (DEVPA-168 + DEVPA-169)
+# Profile `glitchtip` is opted out of CI deploys; bootstrap is manual on
+# the VPS. See CLAUDE.md "GlitchTip — error tracking bootstrap" for the
+# full runbook.
+GLITCHTIP_DOMAIN=glitchtip.devpanl.dev
+GLITCHTIP_DEFAULT_FROM_EMAIL=glitchtip@devpanl.dev
+GLITCHTIP_EMAIL_URL=consolemail://
+GLITCHTIP_ENABLE_USER_REGISTRATION=False
+GLITCHTIP_SECRET_KEY=${GLITCHTIP_SECRET_KEY_V}
+GLITCHTIP_DB_PASSWORD=${GLITCHTIP_DB_PASSWORD_V}
+GLITCHTIP_BRIDGE_HMAC_SECRET=${GLITCHTIP_BRIDGE_HMAC_SECRET_V}
 ENVEOF
 
 # ── Generate htpasswd for Traefik (only in production) ──────────────────────
