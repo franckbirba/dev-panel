@@ -44,12 +44,33 @@ docker cp devpanel-redis:/data/dump.rdb "$BACKUP_DIR/redis-$TIMESTAMP.rdb"
 echo "[$(date)] ✓ Redis backup: redis-$TIMESTAMP.rdb"
 
 # ============================================================================
+# 2b. Backup GlitchTip Postgres (DEVPA-168)
+# Container is in profile `glitchtip` and may not be running on every host.
+# Soft-skip if it's down — backups must never fail the whole run because
+# one optional service is offline. NB: Plane / Affine / Penpot Postgres
+# volumes are NOT backed up here yet — tracked separately, out of scope
+# for DEVPA-168.
+# ============================================================================
+if docker ps --format '{{.Names}}' | grep -q '^glitchtip-db$'; then
+  echo "[$(date)] Starting GlitchTip Postgres backup..."
+  if docker exec glitchtip-db pg_dump -U glitchtip -d glitchtip 2>/dev/null \
+       | gzip > "$BACKUP_DIR/glitchtip-pg-$TIMESTAMP.sql.gz"; then
+    echo "[$(date)] ✓ GlitchTip PG backup: glitchtip-pg-$TIMESTAMP.sql.gz"
+  else
+    echo "[$(date)] ⚠️  GlitchTip pg_dump failed — leaving partial file"
+  fi
+else
+  echo "[$(date)] ℹ️  glitchtip-db not running, skipping pg_dump"
+fi
+
+# ============================================================================
 # 3. Clean old backups
 # ============================================================================
 echo "[$(date)] Cleaning backups older than $RETENTION_DAYS days..."
 
 find "$BACKUP_DIR" -name "devpanel-storage-*.tar.gz" -mtime +$RETENTION_DAYS -delete
 find "$BACKUP_DIR" -name "redis-*.rdb" -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -name "glitchtip-pg-*.sql.gz" -mtime +$RETENTION_DAYS -delete
 
 echo "[$(date)] ✓ Cleanup complete"
 
@@ -64,6 +85,11 @@ if [ -n "${AWS_S3_BACKUP_BUCKET:-}" ]; then
 
   aws s3 cp "$BACKUP_DIR/redis-$TIMESTAMP.rdb" \
     "s3://$AWS_S3_BACKUP_BUCKET/devpanel/redis-$TIMESTAMP.rdb"
+
+  if [ -f "$BACKUP_DIR/glitchtip-pg-$TIMESTAMP.sql.gz" ]; then
+    aws s3 cp "$BACKUP_DIR/glitchtip-pg-$TIMESTAMP.sql.gz" \
+      "s3://$AWS_S3_BACKUP_BUCKET/devpanel/glitchtip-pg-$TIMESTAMP.sql.gz"
+  fi
 
   echo "[$(date)] ✓ S3 upload complete"
 fi
