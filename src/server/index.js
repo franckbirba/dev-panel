@@ -7,6 +7,7 @@ import { initMasterDatabase, getMasterDatabase } from './db.js';
 import { createRouter } from './routes.js';
 import { mountDevBotsRoutes } from './routes-dev-bots.js';
 import { mountGitHubWebhook } from './webhooks-github.js';
+import { mountGlitchTipWebhook } from './webhooks-glitchtip.js';
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
@@ -51,6 +52,8 @@ export function createServer(storagePath = './storage') {
   // body is available for HMAC signature verification. The route uses its
   // own express.raw() parser internally.
   mountGitHubWebhook(app);
+  // Same constraint for GlitchTip — HMAC needs the unparsed bytes.
+  mountGlitchTipWebhook(app);
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));

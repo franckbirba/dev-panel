@@ -581,6 +581,117 @@ services:
       - "traefik.http.routers.bullboard.middlewares=oauth-google@docker"
 
   # ──────────────────────────────────────────────────────────────────────
+  # GlitchTip — Sentry-API-compatible error tracking, multi-project
+  # Spec: DEVPA-168 / Plane page "Observability — error tracking (GlitchTip)"
+  # Bridge: src/server/webhooks-glitchtip.js (DEVPA-169) receives webhooks
+  # from this stack and lands errors in the captures inbox.
+  #
+  # ISOLATION: own postgres + own redis (do not reuse plane-db or devpanel-
+  # redis). Profile glitchtip is opted-out of CI deploys per CLAUDE.md
+  # "Deploy isolation rule" — bootstrap manually with:
+  #   docker compose --profile glitchtip up -d
+  # ──────────────────────────────────────────────────────────────────────
+  glitchtip-db:
+    image: postgres:15-alpine
+    container_name: glitchtip-db
+    profiles: [glitchtip, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD}
+      POSTGRES_DB: glitchtip
+    volumes:
+      - glitchtip-pgdata:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glitchtip"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  glitchtip-redis:
+    image: redis:7-alpine
+    container_name: glitchtip-redis
+    profiles: [glitchtip, all]
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - devpanel_net
+
+  glitchtip-migrate:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip-migrate
+    profiles: [glitchtip, all]
+    restart: "no"
+    command: ./bin/run-migrate.sh
+    environment:
+      DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+    networks:
+      - devpanel_net
+
+  glitchtip-web:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip-web
+    profiles: [glitchtip, all]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/glitchtip
+      REDIS_URL: redis://glitchtip-redis:6379/0
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      GLITCHTIP_DOMAIN: https://${GLITCHTIP_DOMAIN:-glitchtip.devpanl.dev}
+      DEFAULT_FROM_EMAIL: ${GLITCHTIP_DEFAULT_FROM_EMAIL:-glitchtip@devpanl.dev}
+      EMAIL_URL: ${GLITCHTIP_EMAIL_URL:-consolemail://}
+      ENABLE_USER_REGISTRATION: ${GLITCHTIP_ENABLE_USER_REGISTRATION:-False}
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+      glitchtip-migrate:
+        condition: service_completed_successfully
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+
+      # Single router on the GlitchTip domain. No oauth-google middleware
+      # here — GlitchTip handles auth itself (Django login, invite-only
+      # via ENABLE_USER_REGISTRATION=False), matching the Plane and Affine
+      # convention on this stack. Wrapping it in oauth2-proxy would also
+      # break SDK ingest pushes from cross-domain client apps that can't
+      # share the SSO cookie.
+      #
+      # NB: Sentry's ingest paths (/api/<num>/store|envelope|security|
+      # minidump) are public by design — auth lives in the DSN's public
+      # key, validated by GlitchTip itself.
+      - "traefik.http.routers.glitchtip.rule=Host(`${GLITCHTIP_DOMAIN:-glitchtip.devpanl.dev}`)"
+      - "traefik.http.routers.glitchtip.entrypoints=websecure"
+      - "traefik.http.routers.glitchtip.tls=true"
+      - "traefik.http.routers.glitchtip.tls.certresolver=letsencrypt"
+      - "traefik.http.services.glitchtip.loadbalancer.server.port=8000"
+
+  glitchtip-worker:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip-worker
+    profiles: [glitchtip, all]
+    restart: unless-stopped
+    command: ./bin/run-celery-with-beat.sh
+    environment:
+      DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/glitchtip
+      REDIS_URL: redis://glitchtip-redis:6379/0
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+      glitchtip-migrate:
+        condition: service_completed_successfully
+    networks:
+      - devpanel_net
+
+  # ──────────────────────────────────────────────────────────────────────
   # Storybook — shared UI catalogue for every studio project
   # Stories arrive via rsync from each project's repo on every push to main
   # ──────────────────────────────────────────────────────────────────────
@@ -618,6 +729,7 @@ volumes:
   penpot-assets:
   penpot-plugins:
   penpot-pgdata:
+  glitchtip-pgdata:
   uptime-kuma-data:
 
 networks:

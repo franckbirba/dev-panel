@@ -49,19 +49,18 @@ describe('plane-attachments — inboxPathFor', () => {
 });
 
 describe('plane-attachments — listAttachments', () => {
-  it('resolves DEVPA-93 via the search endpoint and lists attachments', async () => {
+  it('resolves DEVPA-93 via workspace-level identifier endpoint and lists attachments', async () => {
     const calls = [];
     globalThis.fetch = vi.fn(async (url) => {
       calls.push(url);
-      if (url.includes('/work-items/search/')) {
-        return new Response(JSON.stringify({
-          issues: [{ id: 'wi-uuid', name: 'hello', sequence_id: 93, project_id: 'proj-uuid', project__identifier: 'DEVPA' }]
-        }), { status: 200 });
+      if (url.endsWith('/workspaces/devpanl/work-items/DEVPA-93/')) {
+        return new Response(JSON.stringify({ id: 'wi-uuid', name: 'hello', project: 'proj-uuid', sequence_id: 93 }), { status: 200 });
       }
       if (url.endsWith('/attachments/')) {
-        return new Response(JSON.stringify({ results: [
+        // Plane v1.3 returns a bare array, not {results: [...]}.
+        return new Response(JSON.stringify([
           { id: 'att-1', attributes: { name: 'a.pdf', type: 'application/pdf', size: 1234 }, is_uploaded: true, created_at: '2026-04-24T00:00:00Z' }
-        ] }), { status: 200 });
+        ]), { status: 200 });
       }
       throw new Error('unexpected url ' + url);
     });
@@ -70,23 +69,47 @@ describe('plane-attachments — listAttachments', () => {
     expect(rows).toEqual([
       expect.objectContaining({ id: 'att-1', name: 'a.pdf', type: 'application/pdf', size: 1234, work_item_id: 'wi-uuid', project_id: 'proj-uuid' })
     ]);
-    expect(calls.some(u => u.includes('/projects/proj-uuid/work-items/wi-uuid/attachments/'))).toBe(true);
+    expect(calls.some(u => u.endsWith('/projects/proj-uuid/work-items/wi-uuid/attachments/'))).toBe(true);
+    // Must NOT iterate the projects index — workspace-level identifier
+    // lookup is one round-trip.
+    expect(calls.some(u => u.endsWith('/workspaces/devpanl/projects/'))).toBe(false);
   });
 
-  it('fails when the sequence has no match in the workspace', async () => {
-    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ issues: [] }), { status: 200 }));
+  it('does not trust the legacy ?sequence= filter (Plane v1.3 ignores it)', async () => {
+    // Regression for the original bug: plane v1.3 silently ignores the
+    // ?sequence=N filter and returns the entire project listing. The old
+    // resolver picked items[0] and downstream tools called the wrong work
+    // item, returning []. The fix sidesteps the listing entirely by hitting
+    // the workspace-level identifier endpoint.
+    const calls = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(url);
+      if (url.endsWith('/workspaces/devpanl/work-items/EDMS-29/')) {
+        return new Response(JSON.stringify({ id: 'wi-29-uuid', name: 'EDMS-29 title', project: 'edms-uuid', sequence_id: 29 }), { status: 200 });
+      }
+      if (url.endsWith('/projects/edms-uuid/work-items/wi-29-uuid/attachments/')) {
+        return new Response(JSON.stringify([
+          { id: 'att-9', attributes: { name: 'screenshot.png', type: 'image/png', size: 66202 }, is_uploaded: true }
+        ]), { status: 200 });
+      }
+      throw new Error('unexpected url ' + url);
+    });
     const { listAttachments } = await import('../../src/mcp/plane-attachments.js');
-    await expect(listAttachments('DEVPA-99')).rejects.toThrow(/Work item DEVPA-99 not found/);
+    const rows = await listAttachments('EDMS-29');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'att-9', name: 'screenshot.png', work_item_id: 'wi-29-uuid', project_id: 'edms-uuid' });
+    expect(calls.some(u => u.includes('?sequence='))).toBe(false);
   });
 
-  it('rejects search results that match the sequence number but not the project identifier', async () => {
-    // Plane's search is fuzzy — make sure we do not accept a hit from a
-    // different project that happens to share the sequence_id.
-    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
-      issues: [{ id: 'wi-other', name: 'oops', sequence_id: 93, project_id: 'other', project__identifier: 'ZENO' }]
-    }), { status: 200 }));
+  it('surfaces a 404 when the identifier does not exist', async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url.endsWith('/workspaces/devpanl/work-items/DEVPA-99/')) {
+        return new Response('{"error":"Page not found."}', { status: 404 });
+      }
+      throw new Error('unexpected ' + url);
+    });
     const { listAttachments } = await import('../../src/mcp/plane-attachments.js');
-    await expect(listAttachments('DEVPA-93')).rejects.toThrow(/Work item DEVPA-93 not found/);
+    await expect(listAttachments('DEVPA-99')).rejects.toThrow(/HTTP 404/);
   });
 
   it('fails when PLANE_API_KEY is missing', async () => {
@@ -94,6 +117,33 @@ describe('plane-attachments — listAttachments', () => {
     delete process.env.PLANE_API_TOKEN;
     const { listAttachments } = await import('../../src/mcp/plane-attachments.js');
     await expect(listAttachments('DEVPA-1')).rejects.toThrow(/PLANE_API_KEY/);
+  });
+
+  it('resolves a bare UUID by probing each project', async () => {
+    const calls = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(url);
+      if (url.endsWith('/workspaces/devpanl/projects/')) {
+        return new Response(JSON.stringify({ results: [
+          { id: 'p1', identifier: 'OTHER' },
+          { id: 'p2', identifier: 'EDMS' }
+        ] }), { status: 200 });
+      }
+      if (url.endsWith('/projects/p1/issues/00000000-0000-0000-0000-0000000000aa/')) {
+        return new Response('{"detail":"Not found."}', { status: 404 });
+      }
+      if (url.endsWith('/projects/p2/issues/00000000-0000-0000-0000-0000000000aa/')) {
+        return new Response(JSON.stringify({ id: '00000000-0000-0000-0000-0000000000aa', name: 'by uuid', project: 'p2' }), { status: 200 });
+      }
+      if (url.endsWith('/projects/p2/work-items/00000000-0000-0000-0000-0000000000aa/attachments/')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      throw new Error('unexpected ' + url);
+    });
+    const { listAttachments } = await import('../../src/mcp/plane-attachments.js');
+    const rows = await listAttachments('00000000-0000-0000-0000-0000000000aa');
+    expect(rows).toEqual([]);
+    expect(calls.some(u => u.endsWith('/workspaces/devpanl/projects/'))).toBe(true);
   });
 });
 
@@ -106,10 +156,8 @@ describe('plane-attachments — uploadAttachment', () => {
     let s3Hit = false;
     let patchBody;
     globalThis.fetch = vi.fn(async (url, opts = {}) => {
-      if (url.includes('/work-items/search/')) {
-        return new Response(JSON.stringify({
-          issues: [{ id: 'wi-uuid', name: 'hello', sequence_id: 93, project_id: 'proj-uuid', project__identifier: 'DEVPA' }]
-        }), { status: 200 });
+      if (url.endsWith('/workspaces/devpanl/work-items/DEVPA-93/')) {
+        return new Response(JSON.stringify({ id: 'wi-uuid', name: 'hello', project: 'proj-uuid' }), { status: 200 });
       }
       if (url.endsWith('/attachments/') && opts.method === 'POST') {
         createBody = JSON.parse(opts.body);
@@ -143,10 +191,8 @@ describe('plane-attachments — uploadAttachment', () => {
     await fs.writeFile(tmpFile, Buffer.from('hello'));
     let createBody;
     globalThis.fetch = vi.fn(async (url, opts = {}) => {
-      if (url.includes('/work-items/search/')) {
-        return new Response(JSON.stringify({
-          issues: [{ id: 'w', name: 't', sequence_id: 1, project_id: 'p', project__identifier: 'DEVPA' }]
-        }), { status: 200 });
+      if (url.endsWith('/workspaces/devpanl/work-items/DEVPA-1/')) {
+        return new Response(JSON.stringify({ id: 'w', name: 't', project: 'p' }), { status: 200 });
       }
       if (url.endsWith('/attachments/') && opts.method === 'POST') {
         createBody = JSON.parse(opts.body);
@@ -165,10 +211,8 @@ describe('plane-attachments — uploadAttachment', () => {
 describe('plane-attachments — downloadAttachment', () => {
   it('writes file to inbox with safe name and returns metadata', async () => {
     globalThis.fetch = vi.fn(async (url) => {
-      if (url.includes('/work-items/search/')) {
-        return new Response(JSON.stringify({
-          issues: [{ id: 'w', name: 't', sequence_id: 7, project_id: 'p', project__identifier: 'DEVPA' }]
-        }), { status: 200 });
+      if (url.endsWith('/workspaces/devpanl/work-items/DEVPA-7/')) {
+        return new Response(JSON.stringify({ id: 'w', name: 't', project: 'p' }), { status: 200 });
       }
       if (url.endsWith('/att-9/')) {
         return new Response(Buffer.from('file-bytes'), {
@@ -177,9 +221,10 @@ describe('plane-attachments — downloadAttachment', () => {
         });
       }
       if (url.endsWith('/attachments/')) {
-        return new Response(JSON.stringify({ results: [
+        // Plane v1.3 returns a bare array.
+        return new Response(JSON.stringify([
           { id: 'att-9', attributes: { name: 'weird name/ok.pdf', type: 'application/pdf', size: 10 } }
-        ] }), { status: 200 });
+        ]), { status: 200 });
       }
       throw new Error('unexpected ' + url);
     });
