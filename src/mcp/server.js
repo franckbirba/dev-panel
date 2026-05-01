@@ -71,25 +71,32 @@ async function resolvePlaneWorkItem(idOrSeq) {
   if (!PLANE_KEY) return null;
   const m = (idOrSeq || '').match(SEQ_RE);
   if (!m) return null;
-  const [, projectIdentifier, seq] = m;
+  const [, projectIdentifier, seqStr] = m;
+  const seq = Number(seqStr);
   const headers = { 'X-API-Key': PLANE_KEY };
   try {
-    const projRes = await fetch(
-      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/`,
+    // Plane's /issues/ endpoint silently ignores unknown filters (?sequence=
+    // matched nothing, so items[0] returned the project's first issue — see
+    // DEVPA-174). Use the workspace search endpoint instead: it matches on
+    // sequence_id, name, and identifier, and returns project_id+sequence_id
+    // so we can verify the hit before trusting it.
+    const searchRes = await fetch(
+      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/work-items/search/?search=${encodeURIComponent(idOrSeq)}&limit=20`,
       { headers, signal: AbortSignal.timeout(5000) }
     );
-    if (!projRes.ok) return null;
-    const projects = await projRes.json();
-    const proj = (projects.results || projects).find(p => p.identifier === projectIdentifier);
-    if (!proj) return null;
+    if (!searchRes.ok) return null;
+    const searchBody = await searchRes.json();
+    const hit = (searchBody.issues || []).find(
+      i => Number(i.sequence_id) === seq && i.project__identifier === projectIdentifier
+    );
+    if (!hit) return null;
+    // Now fetch the full work item to get description + priority.
     const wiRes = await fetch(
-      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${proj.id}/issues/?sequence=${seq}`,
+      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${hit.project_id}/issues/${hit.id}/`,
       { headers, signal: AbortSignal.timeout(5000) }
     );
     if (!wiRes.ok) return null;
-    const items = await wiRes.json();
-    const wi = (items.results || items)[0];
-    if (!wi) return null;
+    const wi = await wiRes.json();
     const desc = (wi.description_html || '')
       .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
       .replace(/<li[^>]*>/gi, '- ')
@@ -97,7 +104,7 @@ async function resolvePlaneWorkItem(idOrSeq) {
       .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
       .replace(/\n{3,}/g, '\n\n').trim();
-    return { id: wi.id, project_id: proj.id, title: wi.name, description: desc, priority: wi.priority };
+    return { id: wi.id, project_id: hit.project_id, title: wi.name, description: desc, priority: wi.priority, sequence_id: wi.sequence_id };
   } catch (err) {
     console.warn(`[resolvePlaneWorkItem] ${idOrSeq}: ${err.message}`);
     return null;

@@ -2054,6 +2054,35 @@ export function createRouter(config = {}) {
     res.json({ instance, steps });
   });
 
+  // Operator override — force a stuck workflow_instance to a terminal state so
+  // a new dispatch on the same (work_item, workflow) can proceed. Use when the
+  // engine left status=running but no agent is actually working (DEVPA-174:
+  // builder.completed → reviewer.enqueue silently dropped). Status MUST be one
+  // of failed|exhausted; we don't accept 'completed' because that would lie
+  // about the actual outcome.
+  router.post('/admin/workflows/instances/:id/unstick', authenticateAdmin, async (req, res) => {
+    const { loadInstanceById, updateInstance } = await import('./workflow-instances.js');
+    const id = parseInt(req.params.id, 10);
+    const instance = await loadInstanceById(id);
+    if (!instance) return res.status(404).json({ error: 'not found' });
+    const requested = (req.body?.status || 'failed').toString();
+    const ALLOWED = new Set(['failed', 'exhausted']);
+    if (!ALLOWED.has(requested)) {
+      return res.status(400).json({ error: `status must be one of ${[...ALLOWED].join(', ')}` });
+    }
+    if (instance.status !== 'running' && instance.status !== 'awaiting_approval') {
+      return res.status(409).json({
+        error: `instance is ${instance.status}, not stuck`,
+        instance
+      });
+    }
+    const updated = await updateInstance(
+      { work_item_id: instance.work_item_id, workflow_name: instance.workflow_name },
+      { status: requested }
+    );
+    res.json({ ok: true, instance: updated });
+  });
+
   // ============================================================================
   // SIGNAL INBOX — signals / threads / subjects / bootstrap
   // ============================================================================

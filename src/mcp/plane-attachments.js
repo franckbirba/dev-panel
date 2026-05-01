@@ -49,35 +49,39 @@ function headers(key) {
 }
 
 // Resolve a DEVPA-93 sequence OR a bare UUID to {id, project_id, title}.
-// When given a UUID we still need project_id, so we scan projects and probe.
+// For a UUID we still need project_id, so we scan projects and probe.
+// For a sequence, we use the workspace-wide search endpoint (Plane's
+// /issues/?sequence= filter is silently ignored — see DEVPA-174).
 export async function resolveWorkItem(idOrSeq, { base, slug, key }) {
   if (!idOrSeq) throw new Error('work_item_id is required');
+
+  const seq = String(idOrSeq).match(SEQ_RE);
+  if (seq) {
+    const [, identifier, numStr] = seq;
+    const num = Number(numStr);
+    const searchRes = await fetch(
+      `${base}/api/v1/workspaces/${slug}/work-items/search/?search=${encodeURIComponent(idOrSeq)}&limit=20`,
+      { headers: headers(key), signal: AbortSignal.timeout(5000) }
+    );
+    if (!searchRes.ok) throw new Error(`Work item search failed: HTTP ${searchRes.status}`);
+    const body = await searchRes.json();
+    const hit = (body.issues || []).find(
+      i => Number(i.sequence_id) === num && i.project__identifier === identifier
+    );
+    if (!hit) throw new Error(`Work item ${idOrSeq} not found`);
+    return { id: hit.id, project_id: hit.project_id, title: hit.name };
+  }
+
+  if (!UUID_RE.test(idOrSeq)) {
+    throw new Error(`"${idOrSeq}" is neither a UUID nor a sequence like DEVPA-93`);
+  }
+
   const projRes = await fetch(
     `${base}/api/v1/workspaces/${slug}/projects/`,
     { headers: headers(key), signal: AbortSignal.timeout(5000) }
   );
   if (!projRes.ok) throw new Error(`Plane projects lookup failed: HTTP ${projRes.status}`);
   const projects = (await projRes.json()).results || [];
-
-  const seq = String(idOrSeq).match(SEQ_RE);
-  if (seq) {
-    const [, identifier, num] = seq;
-    const proj = projects.find(p => p.identifier === identifier);
-    if (!proj) throw new Error(`No Plane project with identifier "${identifier}"`);
-    const wiRes = await fetch(
-      `${base}/api/v1/workspaces/${slug}/projects/${proj.id}/issues/?sequence=${num}`,
-      { headers: headers(key), signal: AbortSignal.timeout(5000) }
-    );
-    if (!wiRes.ok) throw new Error(`Work item lookup failed: HTTP ${wiRes.status}`);
-    const items = (await wiRes.json()).results || [];
-    const wi = items[0];
-    if (!wi) throw new Error(`Work item ${idOrSeq} not found`);
-    return { id: wi.id, project_id: proj.id, title: wi.name };
-  }
-
-  if (!UUID_RE.test(idOrSeq)) {
-    throw new Error(`"${idOrSeq}" is neither a UUID nor a sequence like DEVPA-93`);
-  }
   for (const proj of projects) {
     const wiRes = await fetch(
       `${base}/api/v1/workspaces/${slug}/projects/${proj.id}/issues/${idOrSeq}/`,

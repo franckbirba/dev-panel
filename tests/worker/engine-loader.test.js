@@ -6,9 +6,9 @@ import { join } from 'path';
 import { loadWorkflows } from '../../src/worker/engine.js';
 
 describe('loadWorkflows', () => {
-  it('loads the three shipped workflow YAMLs', () => {
+  it('loads the shipped workflow YAMLs', () => {
     const flows = loadWorkflows();
-    expect(Object.keys(flows).sort()).toEqual(['cycle-audit', 'replan', 'work-item']);
+    expect(Object.keys(flows).sort()).toEqual(['cycle-audit', 'merge-coordinator', 'replan', 'work-item']);
     expect(flows['work-item'].max_revisions).toBe(3);
     expect(flows['work-item'].steps.map(s => s.agent)).toEqual(['builder', 'reviewer', 'qa']);
   });
