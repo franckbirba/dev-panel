@@ -657,28 +657,20 @@ services:
     labels:
       - "traefik.enable=true"
 
-      # Router 1 — INGESTION (public). SDK pushes from any client domain
-      # land on /api/<project_num>/store|envelope|security|minidump. Auth is
-      # the DSN itself (Sentry standard public-key model). NO middleware
-      # here — adding oauth-google would block every SDK push.
-      # Priority must beat the catch-all UI router (10).
-      - "traefik.http.routers.glitchtip-ingest.rule=Host(`${GLITCHTIP_DOMAIN:-glitchtip.devpanl.dev}`) && (PathRegexp(`^/api/[0-9]+/store/?$`) || PathRegexp(`^/api/[0-9]+/envelope/?$`) || PathRegexp(`^/api/[0-9]+/security/?$`) || PathRegexp(`^/api/[0-9]+/minidump/?$`))"
-      - "traefik.http.routers.glitchtip-ingest.entrypoints=websecure"
-      - "traefik.http.routers.glitchtip-ingest.priority=100"
-      - "traefik.http.routers.glitchtip-ingest.tls=true"
-      - "traefik.http.routers.glitchtip-ingest.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.glitchtip-ingest.service=glitchtip"
-
-      # Router 2 — UI + admin API. Catch-all behind oauth2-proxy (same
-      # Google SSO middleware that gates bull-board, storybook, etc.).
-      - "traefik.http.routers.glitchtip-ui.rule=Host(`${GLITCHTIP_DOMAIN:-glitchtip.devpanl.dev}`)"
-      - "traefik.http.routers.glitchtip-ui.entrypoints=websecure"
-      - "traefik.http.routers.glitchtip-ui.priority=10"
-      - "traefik.http.routers.glitchtip-ui.tls=true"
-      - "traefik.http.routers.glitchtip-ui.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.glitchtip-ui.service=glitchtip"
-      - "traefik.http.routers.glitchtip-ui.middlewares=oauth-google@docker"
-
+      # Single router on the GlitchTip domain. No oauth-google middleware
+      # here — GlitchTip handles auth itself (Django login, invite-only
+      # via ENABLE_USER_REGISTRATION=False), matching the Plane and Affine
+      # convention on this stack. Wrapping it in oauth2-proxy would also
+      # break SDK ingest pushes from cross-domain client apps that can't
+      # share the SSO cookie.
+      #
+      # NB: Sentry's ingest paths (/api/<num>/store|envelope|security|
+      # minidump) are public by design — auth lives in the DSN's public
+      # key, validated by GlitchTip itself.
+      - "traefik.http.routers.glitchtip.rule=Host(`${GLITCHTIP_DOMAIN:-glitchtip.devpanl.dev}`)"
+      - "traefik.http.routers.glitchtip.entrypoints=websecure"
+      - "traefik.http.routers.glitchtip.tls=true"
+      - "traefik.http.routers.glitchtip.tls.certresolver=letsencrypt"
       - "traefik.http.services.glitchtip.loadbalancer.server.port=8000"
 
   glitchtip-worker:
