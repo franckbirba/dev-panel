@@ -50,4 +50,27 @@ d('runAutomation — workflow.trigger_next wiring', () => {
     const inst = await loadInstance({ work_item_id: 'wi-A', workflow_name: 'work-item' });
     expect(inst.current_step).toBe('reviewer');
   });
+
+  // DEVPA-174: runAutomation used to swallow every step error, including the
+  // workflow.trigger_next transition itself. That left workflow_instances
+  // stuck in `running` forever — prod symptom on ZENO-238 was pm+builder
+  // completed and reviewer/qa never enqueued. The fix marks the transition
+  // step critical so BullMQ retries the job instead of completing it with a
+  // silent drop.
+  it('workflow.trigger_next propagates the error so BullMQ can retry', async () => {
+    // No createInstance call → engine.triggerNext throws
+    // "no workflow_instance for (wi-orphan, work-item)".
+    const enqueue = vi.fn().mockResolvedValue({ id: 'never' });
+    __setEnqueueForTests(enqueue);
+    await expect(runAutomation({
+      jobData: {
+        job_id: 'j-orphan', agent: 'builder',
+        workflow: 'work-item', workflow_revision: 1,
+        plane: { work_item_id: 'wi-orphan' }, work_item: { title: 't' }
+      },
+      result: { status: 'done', summary: 'built', memory_writes_count: 0 },
+      startedAt: Date.now() - 10
+    })).rejects.toThrow(/no workflow_instance/);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 });

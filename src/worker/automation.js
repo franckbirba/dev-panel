@@ -66,7 +66,7 @@ function emitEvent(event, data) {
   publishEvent(event, data).catch(() => {}); // SSE is best-effort
 }
 
-async function runStep(job_id, agent, step, fn) {
+async function runStep(job_id, agent, step, fn, { critical = false } = {}) {
   const start = Date.now();
   try {
     await fn();
@@ -75,6 +75,11 @@ async function runStep(job_id, agent, step, fn) {
   } catch (err) {
     await logStep({ job_id, agent, step, status: 'error', error: err.message, duration_ms: Date.now() - start });
     publishEvent('job.step', { job_id, agent, step, status: 'error', error: err.message });
+    // Side-effects (Plane PATCH, GH sync, Telegram notify) are best-effort
+    // and must not block the workflow. But the workflow transition itself is
+    // load-bearing — silently swallowing it leaves the instance stuck in
+    // `running` with no follow-up agent enqueued (DEVPA-174).
+    if (critical) throw err;
   }
 }
 
@@ -364,7 +369,8 @@ export async function runAutomation({ jobData, result, startedAt }) {
       flows: getFlows(),
       enqueue: _enqueue,
       emit: emitEvent
-    }));
+    }),
+    { critical: true });
 
   // Terminal publisher: if this step is a `terminal: true` transition with
   // status `done`, ship the result (push branch, open PR, mark Plane Done).

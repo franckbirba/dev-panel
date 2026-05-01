@@ -71,25 +71,19 @@ async function resolvePlaneWorkItem(idOrSeq) {
   if (!PLANE_KEY) return null;
   const m = (idOrSeq || '').match(SEQ_RE);
   if (!m) return null;
-  const [, projectIdentifier, seq] = m;
   const headers = { 'X-API-Key': PLANE_KEY };
   try {
-    const projRes = await fetch(
-      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/`,
-      { headers, signal: AbortSignal.timeout(5000) }
-    );
-    if (!projRes.ok) return null;
-    const projects = await projRes.json();
-    const proj = (projects.results || projects).find(p => p.identifier === projectIdentifier);
-    if (!proj) return null;
+    // Same fix as plane-attachments.js#resolveWorkItem (PR #39): hit the
+    // workspace-level identifier endpoint instead of trying to filter by
+    // ?sequence= (Plane v1.3 silently ignores that filter and returns the
+    // project's first issue, which is how DEVPA-174 lost ZENO-238).
     const wiRes = await fetch(
-      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${proj.id}/issues/?sequence=${seq}`,
+      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/work-items/${idOrSeq}/`,
       { headers, signal: AbortSignal.timeout(5000) }
     );
     if (!wiRes.ok) return null;
-    const items = await wiRes.json();
-    const wi = (items.results || items)[0];
-    if (!wi) return null;
+    const wi = await wiRes.json();
+    if (!wi?.id || !wi?.project) return null;
     const desc = (wi.description_html || '')
       .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
       .replace(/<li[^>]*>/gi, '- ')
@@ -97,7 +91,14 @@ async function resolvePlaneWorkItem(idOrSeq) {
       .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
       .replace(/\n{3,}/g, '\n\n').trim();
-    return { id: wi.id, project_id: proj.id, title: wi.name, description: desc, priority: wi.priority };
+    return {
+      id: wi.id,
+      project_id: wi.project,
+      title: wi.name,
+      description: desc,
+      priority: wi.priority,
+      sequence_id: wi.sequence_id
+    };
   } catch (err) {
     console.warn(`[resolvePlaneWorkItem] ${idOrSeq}: ${err.message}`);
     return null;
