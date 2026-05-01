@@ -111,7 +111,9 @@ docker exec -it glitchtip-web ./manage.py createsuperuser
 # 8. Add glitchtip-pgdata to the nightly pg_dump backup runbook
 ```
 
-Ingest paths (`/api/<num>/store/`, `/envelope/`, `/security/`, `/minidump/`) are **public** — auth lives in the DSN itself (Sentry-standard public-key model). Cross-domain client SDKs cannot share the oauth2-proxy cookie, so trying to gate ingest behind Google SSO would brick every client app. The Traefik split is two routers on the same service: `glitchtip-ingest` (priority 100, no middleware) for ingest paths, `glitchtip-ui` (priority 10, oauth-google middleware) for everything else.
+No oauth2-proxy gate on this host — GlitchTip handles auth itself (Django login, invite-only via `ENABLE_USER_REGISTRATION=False`), same convention as Plane and Affine. Putting the Google SSO middleware in front would also brick SDK ingest, since cross-domain client apps can't share the oauth cookie. (We tried two-router PathRegexp split first, but `PathRegexp` is a Traefik v3 matcher and we're on v2.11 — the rule silently failed to register and the catch-all UI router swallowed every request.)
+
+Ingest paths (`/api/<num>/store/`, `/envelope/`, `/security/`, `/minidump/`) are public by design — auth lives in the DSN's public key, validated by GlitchTip itself.
 
 The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLITCHTIP_DB_PASSWORD` only takes effect on first volume write. Rotate with `ALTER USER glitchtip WITH PASSWORD '<new>'` inside the running container.
 
