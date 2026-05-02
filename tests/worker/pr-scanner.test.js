@@ -46,4 +46,43 @@ describe('handlePrScanner', () => {
     });
     expect(mocks.octokitListMock).not.toHaveBeenCalled();
   });
+
+  it('dispatches merge-coordinator for one open PR on one project', async () => {
+    mocks.listProjectsMock.mockReturnValue([
+      { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' }
+    ]);
+    mocks.octokitListMock.mockResolvedValue({
+      data: [{
+        number: 6,
+        title: 'feat: add upload retry',
+        body: 'fixes EDMS-17',
+        head: { ref: 'feat/upload-retry', sha: 'abc123' }
+      }]
+    });
+    mocks.hasActiveInstanceMock.mockResolvedValue(false);
+    mocks.enqueueWorkflowStartMock.mockResolvedValue({ ok: true, instance_id: 'i1', job_id: 'j1' });
+
+    const result = await handlePrScanner({});
+
+    expect(result.projects_scanned).toBe(1);
+    expect(result.prs_seen).toBe(1);
+    expect(result.dispatched).toBe(1);
+    expect(result.skipped_active).toBe(0);
+    expect(mocks.enqueueWorkflowStartMock).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueWorkflowStartMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow: 'merge-coordinator',
+        plane: { work_item_id: 'github:EpitechAfrik/EDMS#6' },
+        work_item: expect.objectContaining({ title: 'feat: add upload retry' }),
+        context: expect.objectContaining({
+          github: expect.objectContaining({
+            repo: 'EpitechAfrik/EDMS',
+            pr_number: 6,
+            head_sha: 'abc123',
+            branch: 'feat/upload-retry'
+          })
+        })
+      })
+    );
+  });
 });
