@@ -18,7 +18,7 @@ vi.mock('../../src/server/webhooks-github.js', async () => {
   const actual = await vi.importActual('../../src/server/webhooks-github.js');
   return { ...actual, hasActiveInstance: mocks.hasActiveInstanceMock };
 });
-vi.mock('@octokit/rest', () => ({
+vi.mock('octokit', () => ({
   Octokit: vi.fn(function () {
     return {
       pulls: { list: mocks.octokitListMock },

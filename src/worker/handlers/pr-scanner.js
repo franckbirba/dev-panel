@@ -2,7 +2,7 @@
 // Scheduled poller: lists managed projects, hits GitHub per repo, dispatches
 // one merge-coordinator workflow per open PR. Idempotence handled by
 // hasActiveInstance + the unique partial index on workflow_instances.
-import { Octokit } from '@octokit/rest';
+import { Octokit } from 'octokit';
 import { listProjects } from '../../server/db.js';
 import { enqueueWorkflowStart } from '../dispatch.js';
 import {
