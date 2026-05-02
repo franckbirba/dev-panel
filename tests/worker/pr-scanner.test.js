@@ -114,4 +114,29 @@ describe('handlePrScanner', () => {
     expect(mocks.enqueueWorkflowStartMock.mock.calls[0][0].plane.work_item_id)
       .toBe('github:EpitechAfrik/EDMS#7');
   });
+
+  it('continues to next repo when GitHub returns an error', async () => {
+    mocks.listProjectsMock.mockReturnValue([
+      { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' },
+      { id: 'p2', name: 'zeno', github_owner: 'franckbirba', github_repo: 'zeno' }
+    ]);
+    mocks.octokitListMock.mockImplementation(async ({ owner }) => {
+      if (owner === 'EpitechAfrik') {
+        const err = new Error('Not Found');
+        err.status = 404;
+        throw err;
+      }
+      return { data: [{ number: 1, title: 'z1', body: '', head: { ref: 'b', sha: 's' } }] };
+    });
+    mocks.hasActiveInstanceMock.mockResolvedValue(false);
+    mocks.enqueueWorkflowStartMock.mockResolvedValue({ ok: true, instance_id: 'i', job_id: 'j' });
+
+    const result = await handlePrScanner({});
+
+    expect(result.projects_scanned).toBe(2);
+    expect(result.prs_seen).toBe(1);
+    expect(result.dispatched).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({ repo: 'EpitechAfrik/EDMS' });
+  });
 });
