@@ -2,6 +2,7 @@
 import { loadWorkflows } from './engine.js';
 import { createInstance, updateInstance } from '../server/workflow-instances.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
+import { getProjectByPlaneId } from '../server/db.js';
 
 const WORKER_EVENTS_URL = process.env.WORKER_EVENTS_URL
   || 'http://localhost:3030/api/admin/events/publish';
@@ -45,6 +46,24 @@ export async function enqueueWorkflowStart({
   if (!flow) return { ok: false, error: `unknown workflow: ${workflow}` };
   if (!plane?.work_item_id) return { ok: false, error: 'missing plane.work_item_id' };
   const firstAgent = flow.steps[0].agent;
+
+  // Resolve the target repo checkout from the Plane project_id. Builders run
+  // in this directory; without it they'd push EDMS/Zeno commits onto
+  // dev-panel itself. project_root is propagated through context so every
+  // downstream step (engine.triggerNext copies context forward) inherits it.
+  if (!context.project_root && plane.project_id) {
+    try {
+      const proj = getProjectByPlaneId(plane.project_id);
+      if (proj?.local_path) {
+        context = { ...context, project_root: proj.local_path };
+      }
+    } catch (e) {
+      // Master DB unavailable in this process — log and fall back to
+      // PROJECT_ROOT. Coding agents will fail later in prepareWorktree if
+      // the wrong repo gets used; the failure mode is loud, not silent.
+      console.warn(`[dispatch] project_root lookup failed: ${e.message}`);
+    }
+  }
 
   let instance_id;
   try {

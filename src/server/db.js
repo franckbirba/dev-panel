@@ -658,6 +658,16 @@ export function getProjectByName(name) {
   return stmt.get(name);
 }
 
+// Used by the dispatcher to translate a Plane project_id (carried on every
+// work-item job) into the local checkout path on the agents host. Without
+// this, builders run in dev-panel's PROJECT_ROOT and push EDMS/Zeno commits
+// onto franckbirba/dev-panel.
+export function getProjectByPlaneId(plane_project_id) {
+  if (!plane_project_id) return null;
+  const stmt = masterDb.prepare('SELECT * FROM projects WHERE plane_project_id = ?');
+  return stmt.get(plane_project_id);
+}
+
 export function listProjects() {
   const stmt = masterDb.prepare(`
     SELECT id, name, description, github_owner, github_repo, api_key,

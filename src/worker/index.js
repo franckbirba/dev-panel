@@ -270,6 +270,12 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // because they don't touch the working tree. Reviewer/QA reuse the
   // builder's branch via context.branch, in their own worktree, so a
   // dirty checkout from a sibling job can't leak into their diff.
+  //
+  // context.project_root is set by enqueueWorkflowStart from the Plane
+  // project_id → projects.local_path lookup. Falls back to PROJECT_ROOT
+  // for jobs dispatched without a Plane project (legacy enqueue_job paths)
+  // — those still target the dev-panel repo by design.
+  const repoRoot = jobData.context?.project_root || PROJECT_ROOT;
   let worktree = null;
   try {
     worktree = await prepareWorktree(jobData.job_id, {
@@ -278,7 +284,8 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       sequenceId: jobData.work_item?.sequence_id,
       projectIdentifier: jobData.plane?.project_identifier,
       workItemId: jobData.plane?.work_item_id,
-      branch: jobData.context?.branch  // reuse if set (reviewer/qa retreat)
+      branch: jobData.context?.branch,  // reuse if set (reviewer/qa retreat)
+      repoRoot
     });
   } catch (err) {
     // Worktree setup failure is fatal for coding agents — running them in
@@ -310,8 +317,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   }
 
   try {
-    // Spawn agent in the worktree (or PROJECT_ROOT if isolation skipped/disabled)
-    const output = await spawnAgent(jobData.job_id, prompt, jobData.agent, worktree?.path);
+    // Spawn agent in the worktree if there is one. Otherwise spawn in the
+    // resolved repoRoot — non-coding agents (pm/architect/designer) on
+    // cross-project work still need to be IN the target repo so any tools
+    // that shell out (cat, grep) find the right files.
+    const output = await spawnAgent(jobData.job_id, prompt, jobData.agent, worktree?.path || repoRoot);
 
     // Parse result (strict: returns { ok, data } | { ok: false, error })
     const parsed = parseResult(output);

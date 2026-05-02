@@ -150,6 +150,25 @@ describe('worktree — prepareWorktree', () => {
     expect(wt.branch).toBe('feat/DEVPA-144-existing');
     expect(calls.some(c => c.cmd.includes('worktree add -b "feat/DEVPA-144-existing"'))).toBe(true);
   });
+
+  it('runs git in the supplied repoRoot, not PROJECT_ROOT', async () => {
+    const calls = captureExec();
+    const { prepareWorktree } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-cross', {
+      agent: 'builder',
+      sequenceId: 42,
+      projectIdentifier: 'ZENO',
+      workItem: { title: 'cross repo' },
+      repoRoot: '/home/deploy/projects/zeno'
+    });
+    expect(wt).not.toBeNull();
+    // Every git command must run with cwd set to the cross-repo path. If
+    // any execSync call lands in PROJECT_ROOT, builders would push commits
+    // onto the wrong repo (the bug this test guards).
+    for (const { opts } of calls) {
+      expect(opts?.cwd).toBe('/home/deploy/projects/zeno');
+    }
+  });
 });
 
 describe('worktree — cleanupWorktree', () => {

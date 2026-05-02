@@ -1,6 +1,9 @@
 // tests/worker/dispatch.test.js
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { spawnSync } from 'child_process';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { startPg, stopPg, truncateOrchestration } from '../_helpers/pg.js';
 
 const hasDocker = spawnSync('docker', ['version'], { stdio: 'ignore' }).status === 0;
@@ -8,11 +11,15 @@ const d = hasDocker ? describe : describe.skip;
 
 d('enqueueWorkflowStart', () => {
   let loadInstance, enqueueWorkflowStart, __setEnqueueForTests;
+  let initMasterDatabase, createProject;
 
   beforeAll(async () => {
     await startPg();
     ({ loadInstance } = await import('../../src/server/workflow-instances.js'));
     ({ enqueueWorkflowStart, __setEnqueueForTests } = await import('../../src/worker/dispatch.js'));
+    ({ initMasterDatabase, createProject } = await import('../../src/server/db.js'));
+    const tmp = mkdtempSync(join(tmpdir(), 'dispatch-'));
+    initMasterDatabase(tmp);
   }, 60000);
 
   afterAll(async () => {
@@ -60,6 +67,51 @@ d('enqueueWorkflowStart', () => {
     });
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/unknown workflow/);
+  });
+
+  it('resolves project_root from plane.project_id and puts it on context', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'j-pr' });
+    __setEnqueueForTests(enqueue);
+    const planeId = 'plane-zeno-uuid';
+    createProject({ name: `zeno-${Date.now()}`,
+                    plane_project_id: planeId,
+                    local_path: '/home/deploy/projects/zeno' });
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-pr1', project_id: planeId },
+      work_item: { title: 'cross-repo dispatch' }
+    });
+    expect(out.ok).toBe(true);
+    expect(enqueue.mock.calls[0][0].context.project_root).toBe('/home/deploy/projects/zeno');
+  });
+
+  it('caller-supplied context.project_root wins over the lookup', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'j-pr2' });
+    __setEnqueueForTests(enqueue);
+    const planeId = 'plane-edms-uuid';
+    createProject({ name: `edms-${Date.now()}`,
+                    plane_project_id: planeId,
+                    local_path: '/home/deploy/projects/edms' });
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-pr2', project_id: planeId },
+      work_item: { title: 'override' },
+      context: { project_root: '/tmp/override' }
+    });
+    expect(out.ok).toBe(true);
+    expect(enqueue.mock.calls[0][0].context.project_root).toBe('/tmp/override');
+  });
+
+  it('omits project_root when no project matches the plane.project_id', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'j-pr3' });
+    __setEnqueueForTests(enqueue);
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-pr3', project_id: 'unknown-plane-id' },
+      work_item: { title: 'no project' }
+    });
+    expect(out.ok).toBe(true);
+    expect(enqueue.mock.calls[0][0].context.project_root).toBeUndefined();
   });
 
   it('rolls back the instance to failed when enqueue throws', async () => {
