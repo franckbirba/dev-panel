@@ -19,9 +19,9 @@ vi.mock('../../src/server/webhooks-github.js', async () => {
   return { ...actual, hasActiveInstance: mocks.hasActiveInstanceMock };
 });
 vi.mock('@octokit/rest', () => ({
-  Octokit: vi.fn().mockImplementation(() => ({
-    pulls: { list: mocks.octokitListMock }
-  }))
+  Octokit: vi.fn(function () {
+    return { pulls: { list: mocks.octokitListMock } };
+  })
 }));
 
 import { handlePrScanner } from '../../src/worker/handlers/pr-scanner.js';
