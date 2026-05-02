@@ -91,4 +91,27 @@ describe('handlePrScanner', () => {
       })
     );
   });
+
+  it('skips PRs that already have an active merge-coordinator', async () => {
+    mocks.listProjectsMock.mockReturnValue([
+      { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' }
+    ]);
+    mocks.octokitListMock.mockResolvedValue({
+      data: [
+        { number: 6, title: 'PR 6', body: '', head: { ref: 'b1', sha: 's1' } },
+        { number: 7, title: 'PR 7', body: '', head: { ref: 'b2', sha: 's2' } }
+      ]
+    });
+    mocks.hasActiveInstanceMock.mockImplementation(async (_repo, n) => n === 6);
+    mocks.enqueueWorkflowStartMock.mockResolvedValue({ ok: true, instance_id: 'i', job_id: 'j' });
+
+    const result = await handlePrScanner({});
+
+    expect(result.prs_seen).toBe(2);
+    expect(result.dispatched).toBe(1);
+    expect(result.skipped_active).toBe(1);
+    expect(mocks.enqueueWorkflowStartMock).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueWorkflowStartMock.mock.calls[0][0].plane.work_item_id)
+      .toBe('github:EpitechAfrik/EDMS#7');
+  });
 });
