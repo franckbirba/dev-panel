@@ -139,4 +139,21 @@ describe('handlePrScanner', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toMatchObject({ repo: 'EpitechAfrik/EDMS' });
   });
+
+  it('ignores projects with missing github_owner or github_repo', async () => {
+    mocks.listProjectsMock.mockReturnValue([
+      { id: 'p1', name: 'no-gh', github_owner: null, github_repo: null },
+      { id: 'p2', name: 'half',  github_owner: 'foo', github_repo: null },
+      { id: 'p3', name: 'ok',    github_owner: 'foo', github_repo: 'bar' }
+    ]);
+    mocks.octokitListMock.mockResolvedValue({ data: [] });
+
+    const result = await handlePrScanner({});
+
+    expect(result.projects_scanned).toBe(1);
+    expect(mocks.octokitListMock).toHaveBeenCalledTimes(1);
+    expect(mocks.octokitListMock).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'foo', repo: 'bar', state: 'open' })
+    );
+  });
 });
