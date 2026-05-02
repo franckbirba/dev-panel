@@ -306,6 +306,21 @@ server.tool(
 );
 
 server.tool(
+  'pr_scan',
+  'Scan all managed projects for open GitHub PRs and dispatch a merge-coordinator workflow for any PR without one. Idempotent — safe to re-run. Returns a summary {projects_scanned, prs_seen, dispatched, skipped_active, errors}.',
+  {},
+  async () => {
+    try {
+      const { handlePrScanner } = await import('../worker/handlers/pr-scanner.js');
+      const summary = await handlePrScanner({});
+      return { content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `pr_scan failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   'route_capture',
   'Persist routing for a capture and return the resolved team member + dev_bot. Idempotent: if the capture is already routed, returns the existing routing with already_routed=true and ignores the new label.',
   {
