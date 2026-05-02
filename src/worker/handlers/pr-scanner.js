@@ -12,6 +12,9 @@ import {
 } from '../../server/webhooks-github.js';
 
 function buildOctokit() {
+  if (!process.env.GITHUB_TOKEN) {
+    console.warn('[pr-scanner] GITHUB_TOKEN not set — anonymous mode, private repos will 404');
+  }
   return new Octokit({ auth: process.env.GITHUB_TOKEN });
 }
 
@@ -37,14 +40,14 @@ export async function handlePrScanner(_jobData = {}) {
 
     let prs;
     try {
-      const { data } = await octokit.pulls.list({
+      prs = await octokit.paginate(octokit.pulls.list, {
         owner: project.github_owner,
         repo: project.github_repo,
         state: 'open',
-        per_page: 50
+        per_page: 100
       });
-      prs = data;
     } catch (err) {
+      console.error(`[pr-scanner] octokit list failed for ${repo}: ${err.message}`);
       summary.errors.push({ repo, error: err.message });
       continue;
     }
@@ -84,6 +87,7 @@ export async function handlePrScanner(_jobData = {}) {
       } else if (result.error === 'already_running') {
         summary.skipped_active += 1;
       } else {
+        console.error(`[pr-scanner] dispatch failed for ${repo}#${pr.number}: ${result.error}`);
         summary.errors.push({ repo, pr: pr.number, error: result.error });
       }
     }

@@ -20,7 +20,13 @@ vi.mock('../../src/server/webhooks-github.js', async () => {
 });
 vi.mock('@octokit/rest', () => ({
   Octokit: vi.fn(function () {
-    return { pulls: { list: mocks.octokitListMock } };
+    return {
+      pulls: { list: mocks.octokitListMock },
+      paginate: async (endpoint, params) => {
+        const { data } = await endpoint(params);
+        return data;
+      }
+    };
   })
 }));
 
