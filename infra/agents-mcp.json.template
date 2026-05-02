@@ -28,7 +28,7 @@
         "PG_PASSWORD": "__PG_PASSWORD__",
         "VOYAGE_API_KEY": "__VOYAGE_API_KEY__",
         "ADMIN_API_KEY": "__ADMIN_API_KEY__",
-        "API_BASE": "https://devpanl.dev",
+        "API_BASE": "http://10.0.0.2:3030",
         "WORKER_API": "http://localhost:3099",
         "PLANE_BASE_URL": "https://plane.devpanl.dev",
         "PLANE_WORKSPACE_SLUG": "devpanl",

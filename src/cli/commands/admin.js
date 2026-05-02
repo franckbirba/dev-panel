@@ -7,6 +7,7 @@ import {
   listProjects,
   getProjectByName,
   getProjectById,
+  updateProject,
   deleteProject as dbDeleteProject
 } from '../../server/db.js';
 
@@ -129,6 +130,94 @@ adminCommand
 
     } catch (error) {
       console.error('❌ Error showing project:', error.message);
+      process.exit(1);
+    }
+  });
+
+// Backfill missing fields on a legacy project record (created before
+// /api/projects/bootstrap existed) and optionally enqueue the
+// bootstrap_project job that does `git clone` on the agents host.
+//
+// Idempotent: every field is only written when --force or when currently
+// null. Re-running with the same args leaves the row untouched once it's
+// fully populated.
+adminCommand
+  .command('link-project <name>')
+  .description('Backfill plane_project_id / local_path / default_branch on a legacy project, then optionally enqueue bootstrap_project to clone it on the agents host')
+  .option('--plane-id <uuid>', 'Plane project UUID (required if not already set)')
+  .option('--plane-slug <slug>', 'Plane workspace slug', 'devpanl')
+  .option('--local-path <path>', 'Local checkout path on the agents host (defaults to /home/deploy/projects/<github_repo>)')
+  .option('--default-branch <name>', 'Default branch (defaults to "main")', 'main')
+  .option('--enqueue-bootstrap', 'After backfill, enqueue bootstrap_project so the worker clones the repo')
+  .option('--force', 'Overwrite fields that are already set')
+  .option('-s, --storage <path>', 'Storage path', './storage')
+  .action(async (name, options) => {
+    try {
+      initMasterDatabase(options.storage);
+
+      const project = getProjectByName(name);
+      if (!project) {
+        console.error(`❌ Project "${name}" not found.`);
+        process.exit(1);
+      }
+
+      // Decide each field — keep existing value unless --force, fall back
+      // to a sensible default if the user didn't pass an override.
+      const pick = (current, override, fallback) => {
+        if (options.force) return override ?? fallback ?? current;
+        return current ?? override ?? fallback;
+      };
+
+      const updates = {};
+      const planeId = pick(project.plane_project_id, options.planeId, null);
+      if (planeId !== project.plane_project_id) updates.plane_project_id = planeId;
+
+      const planeSlug = pick(project.plane_workspace_slug, options.planeSlug, 'devpanl');
+      if (planeSlug !== project.plane_workspace_slug) updates.plane_workspace_slug = planeSlug;
+
+      const defaultBranch = pick(project.default_branch, options.defaultBranch, 'main');
+      if (defaultBranch !== project.default_branch) updates.default_branch = defaultBranch;
+
+      const reposBase = process.env.AGENTS_HOST_PROJECTS_PATH || '/home/deploy/projects';
+      const inferredPath = project.github_repo ? `${reposBase}/${project.github_repo}` : null;
+      const localPath = pick(project.local_path, options.localPath, inferredPath);
+      if (localPath !== project.local_path) updates.local_path = localPath;
+
+      if (Object.keys(updates).length > 0) {
+        updateProject(project.id, updates);
+        console.log(`✅ Updated ${name}:`);
+        for (const [k, v] of Object.entries(updates)) console.log(`   ${k}: ${v}`);
+      } else {
+        console.log(`ℹ️  ${name} already fully populated (use --force to overwrite).`);
+      }
+
+      // Sanity check before we enqueue: a clone needs both a github_url and
+      // a target_path. If either is missing we'd kick off a job that fails
+      // immediately with an unhelpful error.
+      if (options.enqueueBootstrap) {
+        const refreshed = getProjectByName(name);
+        if (!refreshed.github_owner || !refreshed.github_repo) {
+          console.error('❌ Cannot enqueue bootstrap_project — github_owner/github_repo missing.');
+          process.exit(1);
+        }
+        if (!refreshed.local_path) {
+          console.error('❌ Cannot enqueue bootstrap_project — local_path still null.');
+          process.exit(1);
+        }
+        const githubUrl = `https://github.com/${refreshed.github_owner}/${refreshed.github_repo}.git`;
+        const { getQueue, QUEUES } = await import('../../server/bullmq.js');
+        const queue = getQueue(QUEUES.agents);
+        const job = await queue.add('bootstrap_project', {
+          agent: 'bootstrap',
+          project_id: refreshed.id,
+          github_url: githubUrl,
+          target_path: refreshed.local_path
+        }, { attempts: 2, backoff: { type: 'exponential', delay: 30_000 } });
+        console.log(`📦 bootstrap_project job enqueued: ${job.id}`);
+        console.log(`   git clone ${githubUrl} → ${refreshed.local_path}`);
+      }
+    } catch (error) {
+      console.error('❌ Error linking project:', error.message);
       process.exit(1);
     }
   });

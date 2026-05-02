@@ -148,6 +148,14 @@ services:
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist
+    ports:
+      # Expose on private LAN only (10.0.0.2) so Shelly's MCP and the worker
+      # on the agents node (10.0.0.3) can reach /api/* without going through
+      # Traefik's oauth2-proxy (which would 307 → Google SSO and break MCP
+      # calls). Same pattern as redis (line 107) and postgres (line 220).
+      # LAN_HOST defaults to 127.0.0.1 so dev machines don't accidentally
+      # expose the API.
+      - "${LAN_HOST:-127.0.0.1}:3030:3030"
     networks:
       - devpanel_net
     depends_on:
