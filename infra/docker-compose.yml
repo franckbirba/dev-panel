@@ -154,6 +154,39 @@ services:
         condition: service_healthy
 
   # ============================================================================
+  # MAILPIT — SMTP catcher for dev mail (Affine invites, GlitchTip alerts, etc.)
+  # ============================================================================
+  # SMTP on :1025 (internal only, devpanel_net), web UI on :8025 (Traefik).
+  # No real outbound mail — all messages land in the UI inbox at mail.devpanl.dev.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: devpanel-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_DATABASE: "/data/mailpit.db"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    volumes:
+      - mailpit-data:/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/api/v1/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailpit.rule=Host(`mail.devpanl.dev`)"
+      - "traefik.http.routers.mailpit.entrypoints=websecure"
+      - "traefik.http.routers.mailpit.tls=true"
+      - "traefik.http.routers.mailpit.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mailpit.middlewares=mailpit-auth"
+      - "traefik.http.services.mailpit.loadbalancer.server.port=8025"
+      - "traefik.http.middlewares.mailpit-auth.basicauth.usersfile=/etc/traefik/.htpasswd"
+
+  # ============================================================================
   # AFFINE — Documentation & knowledge base
   # ============================================================================
   affine:
@@ -165,6 +198,10 @@ services:
       DATABASE_URL: postgresql://affine:${AFFINE_DB_PASSWORD}@postgres:5432/affine
       AFFINE_INDEXER_ENABLED: "false"
       AFFINE_SERVER_EXTERNAL_URL: "https://affine.devpanl.dev"
+      MAILER_HOST: mailpit
+      MAILER_PORT: "1025"
+      MAILER_SENDER: "noreply@devpanl.dev"
+      MAILER_IGNORE_TLS: "true"
     volumes:
       - affine-config:/root/.affine/config
       - affine-storage:/root/.affine/storage
@@ -177,6 +214,8 @@ services:
         condition: service_healthy
       affine-migration:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -202,6 +241,7 @@ volumes:
   postgres-data:
   affine-config:
   affine-storage:
+  mailpit-data:
 
 networks:
   devpanel_net:
