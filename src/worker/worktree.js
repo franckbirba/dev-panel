@@ -21,7 +21,7 @@ import { join } from 'path';
 
 const NON_CODING_AGENTS = new Set([
   'pm', 'architect', 'designer',
-  'deploy', 'bootstrap', 'shelly_digest'
+  'deploy', 'bootstrap', 'shelly_digest', 'pr_scanner'
 ]);
 
 const WORKTREES_BASE = process.env.DEVPANEL_WORKTREES

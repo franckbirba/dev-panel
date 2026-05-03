@@ -52,6 +52,19 @@ const CRON_JOBS = [
       tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
     },
     priority: PRIORITY_MAP.p2
+  },
+  {
+    // PR scanner — replaces the dead GitHub-webhook path. Lists open PRs on
+    // every project that has github_owner+github_repo set, dispatches one
+    // merge-coordinator per PR. Idempotent via syntheticWorkItemId +
+    // workflow_instances unique partial index, so re-runs are safe.
+    name: 'pr:scanner',
+    data: { agent: 'pr_scanner', source: 'cron', requested_by: 'cron:pr-scanner' },
+    repeat: {
+      pattern: process.env.PR_SCANNER_CRON || '*/5 * * * *',
+      tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
+    },
+    priority: PRIORITY_MAP.p2
   }
 ];
 
