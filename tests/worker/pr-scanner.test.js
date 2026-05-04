@@ -1,16 +1,13 @@
 // tests/worker/pr-scanner.test.js
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  listProjectsMock: vi.fn(),
+  fetchMock: vi.fn(),
   enqueueWorkflowStartMock: vi.fn(),
   hasActiveInstanceMock: vi.fn(),
   octokitListMock: vi.fn()
 }));
 
-vi.mock('../../src/server/db.js', () => ({
-  listProjects: mocks.listProjectsMock
-}));
 vi.mock('../../src/worker/dispatch.js', () => ({
   enqueueWorkflowStart: mocks.enqueueWorkflowStartMock
 }));
@@ -32,16 +29,35 @@ vi.mock('octokit', () => ({
 
 import { handlePrScanner } from '../../src/worker/handlers/pr-scanner.js';
 
+// Helper: mock the /api/projects/summary HTTP response.
+function mockProjects(projects) {
+  mocks.fetchMock.mockResolvedValue({
+    ok: true,
+    json: async () => ({ projects })
+  });
+}
+
+const ORIGINAL_FETCH = global.fetch;
+const ORIGINAL_ADMIN_KEY = process.env.ADMIN_API_KEY;
+
 describe('handlePrScanner', () => {
   beforeEach(() => {
-    mocks.listProjectsMock.mockReset();
+    mocks.fetchMock.mockReset();
     mocks.enqueueWorkflowStartMock.mockReset();
     mocks.hasActiveInstanceMock.mockReset();
     mocks.octokitListMock.mockReset();
+    global.fetch = mocks.fetchMock;
+    process.env.ADMIN_API_KEY = 'test-admin-key';
+  });
+
+  afterEach(() => {
+    global.fetch = ORIGINAL_FETCH;
+    if (ORIGINAL_ADMIN_KEY === undefined) delete process.env.ADMIN_API_KEY;
+    else process.env.ADMIN_API_KEY = ORIGINAL_ADMIN_KEY;
   });
 
   it('returns zeroed summary when no projects are registered', async () => {
-    mocks.listProjectsMock.mockReturnValue([]);
+    mockProjects([]);
     const result = await handlePrScanner({});
     expect(result).toEqual({
       projects_scanned: 0,
@@ -54,7 +70,7 @@ describe('handlePrScanner', () => {
   });
 
   it('dispatches merge-coordinator for one open PR on one project', async () => {
-    mocks.listProjectsMock.mockReturnValue([
+    mockProjects([
       { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' }
     ]);
     mocks.octokitListMock.mockResolvedValue({
@@ -93,7 +109,7 @@ describe('handlePrScanner', () => {
   });
 
   it('skips PRs that already have an active merge-coordinator', async () => {
-    mocks.listProjectsMock.mockReturnValue([
+    mockProjects([
       { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' }
     ]);
     mocks.octokitListMock.mockResolvedValue({
@@ -116,7 +132,7 @@ describe('handlePrScanner', () => {
   });
 
   it('continues to next repo when GitHub returns an error', async () => {
-    mocks.listProjectsMock.mockReturnValue([
+    mockProjects([
       { id: 'p1', name: 'edms', github_owner: 'EpitechAfrik', github_repo: 'EDMS' },
       { id: 'p2', name: 'zeno', github_owner: 'franckbirba', github_repo: 'zeno' }
     ]);
@@ -141,7 +157,7 @@ describe('handlePrScanner', () => {
   });
 
   it('ignores projects with missing github_owner or github_repo', async () => {
-    mocks.listProjectsMock.mockReturnValue([
+    mockProjects([
       { id: 'p1', name: 'no-gh', github_owner: null, github_repo: null },
       { id: 'p2', name: 'half',  github_owner: 'foo', github_repo: null },
       { id: 'p3', name: 'ok',    github_owner: 'foo', github_repo: 'bar' }
@@ -155,5 +171,14 @@ describe('handlePrScanner', () => {
     expect(mocks.octokitListMock).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'foo', repo: 'bar', state: 'open' })
     );
+  });
+
+  it('records an error and returns empty when fetching projects fails', async () => {
+    mocks.fetchMock.mockResolvedValue({ ok: false, status: 500 });
+    const result = await handlePrScanner({});
+    expect(result.projects_scanned).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({ scope: 'projects' });
+    expect(mocks.octokitListMock).not.toHaveBeenCalled();
   });
 });
