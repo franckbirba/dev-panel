@@ -34,7 +34,9 @@ async function fetchProjects() {
   if (!adminKey) {
     throw new Error('ADMIN_API_KEY not set — cannot fetch projects from API');
   }
-  const url = `${apiBaseUrl()}/api/projects/summary`;
+  // Use /api/admin/projects (M2M router, no SSO) rather than /api/projects/summary
+  // (SPA router, gated by traefik-forward-auth → returns the Google login HTML).
+  const url = `${apiBaseUrl()}/api/admin/projects`;
   const r = await fetch(url, { headers: { 'X-Admin-Key': adminKey } });
   if (!r.ok) {
     throw new Error(`GET /api/projects/summary → ${r.status}`);

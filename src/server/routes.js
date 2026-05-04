@@ -750,6 +750,24 @@ export function createRouter(config = {}) {
     }
   });
 
+  // /admin/projects — slim list for M2M consumers (worker pr-scanner cron).
+  // Lives under /api/admin/* so it matches the M2M traefik router (catch-all
+  // /api/*, no oauth-google) instead of the higher-priority SPA router which
+  // captures /api/projects(/summary) and forces SSO.
+  router.get('/admin/projects', authenticateAdmin, (req, res) => {
+    try {
+      const projects = listProjects().map(p => ({
+        id: p.id,
+        name: p.name,
+        github_owner: p.github_owner,
+        github_repo: p.github_repo
+      }));
+      res.json({ projects });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ============================================================================
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
