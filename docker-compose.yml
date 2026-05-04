@@ -256,6 +256,42 @@ services:
       postgres:
         condition: service_healthy
 
+  # ──────────────────────────────────────────────────────────────────────
+  # MAILPIT — SMTP catcher for dev mail
+  # SMTP on :1025 (internal only via devpanel_net), web UI on :8025.
+  # Catches Affine workspace invites + magic links so we can onboard
+  # users without configuring a real outbound SMTP relay. Also useful
+  # for any future service that wants to email (GlitchTip alerts, etc.).
+  # UI gated by oauth-google@docker — only WHITELIST emails see the inbox.
+  # ──────────────────────────────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: devpanel-mailpit
+    profiles: [core, all]
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_DATABASE: "/data/mailpit.db"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    volumes:
+      - mailpit-data:/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/api/v1/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailpit.rule=Host(`mail.devpanl.dev`)"
+      - "traefik.http.routers.mailpit.entrypoints=websecure"
+      - "traefik.http.routers.mailpit.tls=true"
+      - "traefik.http.routers.mailpit.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mailpit.middlewares=oauth-google@docker"
+      - "traefik.http.services.mailpit.loadbalancer.server.port=8025"
+
   affine:
     image: ghcr.io/toeverything/affine:stable
     container_name: devpanel-affine
@@ -266,6 +302,13 @@ services:
       DATABASE_URL: postgresql://affine:${AFFINE_DB_PASSWORD}@postgres:5432/affine
       AFFINE_INDEXER_ENABLED: "false"
       AFFINE_SERVER_EXTERNAL_URL: "https://affine.devpanl.dev"
+      # Outbound mail goes to Mailpit (internal SMTP catcher).
+      # Affine sends invites + magic links here; a human catches them
+      # at https://mail.devpanl.dev (gated by oauth-google).
+      MAILER_HOST: mailpit
+      MAILER_PORT: "1025"
+      MAILER_SENDER: "noreply@devpanl.dev"
+      MAILER_IGNORE_TLS: "true"
     volumes:
       - affine-config:/root/.affine/config
       - affine-storage:/root/.affine/storage
@@ -278,6 +321,8 @@ services:
         condition: service_healthy
       affine-migration:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.affine.rule=Host(`affine.devpanl.dev`)"
@@ -731,6 +776,7 @@ volumes:
   postgres-data:
   affine-config:
   affine-storage:
+  mailpit-data:
   plane-pgdata:
   plane-redisdata:
   plane-minio-data:
