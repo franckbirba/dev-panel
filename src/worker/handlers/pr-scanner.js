@@ -2,8 +2,12 @@
 // Scheduled poller: lists managed projects, hits GitHub per repo, dispatches
 // one merge-coordinator workflow per open PR. Idempotence handled by
 // hasActiveInstance + the unique partial index on workflow_instances.
+//
+// Note: the master `projects` table lives in the API container's SQLite on
+// services VPS. The worker runs on a different host (agents node) with its
+// own stale local SQLite, so we MUST fetch the project list over HTTP from
+// the API instead of using the local listProjects() — they don't share data.
 import { Octokit } from 'octokit';
-import { listProjects } from '../../server/db.js';
 import { enqueueWorkflowStart } from '../dispatch.js';
 import {
   hasActiveInstance,
@@ -18,6 +22,27 @@ function buildOctokit() {
   return new Octokit({ auth: process.env.GITHUB_TOKEN });
 }
 
+function apiBaseUrl() {
+  // WORKER_EVENTS_URL is "<base>/api/admin/events/publish" — strip the path
+  // to recover the base. Falls back to localhost for dev.
+  const url = process.env.WORKER_EVENTS_URL || 'http://localhost:3030/api/admin/events/publish';
+  return url.replace(/\/api\/admin\/events\/publish\/?$/, '');
+}
+
+async function fetchProjects() {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    throw new Error('ADMIN_API_KEY not set — cannot fetch projects from API');
+  }
+  const url = `${apiBaseUrl()}/api/projects/summary`;
+  const r = await fetch(url, { headers: { 'X-Admin-Key': adminKey } });
+  if (!r.ok) {
+    throw new Error(`GET /api/projects/summary → ${r.status}`);
+  }
+  const body = await r.json();
+  return body.projects || [];
+}
+
 export async function handlePrScanner(_jobData = {}) {
   const summary = {
     projects_scanned: 0,
@@ -27,9 +52,17 @@ export async function handlePrScanner(_jobData = {}) {
     errors: []
   };
 
-  const projects = listProjects().filter(
-    p => p.github_owner && p.github_repo
-  );
+  let projects;
+  try {
+    projects = (await fetchProjects()).filter(
+      p => p.github_owner && p.github_repo
+    );
+  } catch (err) {
+    console.error(`[pr-scanner] fetch projects failed: ${err.message}`);
+    summary.errors.push({ scope: 'projects', error: err.message });
+    return summary;
+  }
+
   if (projects.length === 0) return summary;
 
   const octokit = buildOctokit();
