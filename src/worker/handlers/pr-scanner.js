@@ -75,7 +75,7 @@ export async function handlePrScanner(_jobData = {}) {
 
     let prs;
     try {
-      prs = await octokit.paginate(octokit.pulls.list, {
+      prs = await octokit.paginate(octokit.rest.pulls.list, {
         owner: project.github_owner,
         repo: project.github_repo,
         state: 'open',
