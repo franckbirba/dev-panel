@@ -60,6 +60,12 @@ stage_or_blank() {
 }
 PLANE_SHELLY_EMAIL_V=$(stage_or_blank PLANE_SHELLY_EMAIL)
 PLANE_SHELLY_PASSWORD_V=$(stage_or_blank PLANE_SHELLY_PASSWORD)
+# Shelly's AFFiNE personal access token (`ut_*`). Affine 0.26.6 has no UI to
+# manage these — to (re)generate, log into affine.devpanl.dev as shelly and
+# call the GraphQL mutation `generateUserAccessToken(input:{name:"shelly-mcp"})`,
+# then paste the `token` value into .env.production manually. stage_or_blank
+# preserves it across re-runs.
+AFFINE_API_TOKEN_V=$(stage_or_blank AFFINE_API_TOKEN)
 OAUTH2_PROXY_CLIENT_ID_V=$(stage OAUTH2_PROXY_CLIENT_ID)
 OAUTH2_PROXY_CLIENT_SECRET_V=$(stage OAUTH2_PROXY_CLIENT_SECRET)
 
@@ -126,6 +132,10 @@ AUTHORIZED_TELEGRAM_USER_ID=${AUTHORIZED_TELEGRAM_USER_ID:-${TELEGRAM_CHAT_ID:-}
 # AFFiNE
 AFFINE_DB_PASSWORD=${AFFINE_DB_PASSWORD_V}
 AFFINE_URL=http://affine:3010
+# Shelly's PAT for the affine-mcp-server (consumed by scripts/deploy-agents.sh
+# when rendering ~/.mcp.json on the agents host). See AFFINE_API_TOKEN_V comment
+# above for the manual rotation procedure.
+AFFINE_API_TOKEN=${AFFINE_API_TOKEN_V}
 
 # Agent memory (pgvector on the shared devpanel-postgres container)
 PG_HOST=devpanel-postgres

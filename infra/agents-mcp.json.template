@@ -51,6 +51,33 @@
         "PG_PASSWORD": "__PG_PASSWORD__",
         "PG_DATABASE": "agent_memory"
       }
+    },
+    "affine-zeno": {
+      "command": "npx",
+      "args": ["-y", "affine-mcp-server@1.13.0"],
+      "env": {
+        "AFFINE_BASE_URL": "https://affine.devpanl.dev",
+        "AFFINE_API_TOKEN": "__AFFINE_API_TOKEN__",
+        "AFFINE_WORKSPACE_ID": "493b099b-636a-4b5c-a445-9f7f50f8b5fe"
+      }
+    },
+    "affine-devpanl": {
+      "command": "npx",
+      "args": ["-y", "affine-mcp-server@1.13.0"],
+      "env": {
+        "AFFINE_BASE_URL": "https://affine.devpanl.dev",
+        "AFFINE_API_TOKEN": "__AFFINE_API_TOKEN__",
+        "AFFINE_WORKSPACE_ID": "5e5ba17d-aaab-44f0-9318-51a91f0583d4"
+      }
+    },
+    "affine-edms": {
+      "command": "npx",
+      "args": ["-y", "affine-mcp-server@1.13.0"],
+      "env": {
+        "AFFINE_BASE_URL": "https://affine.devpanl.dev",
+        "AFFINE_API_TOKEN": "__AFFINE_API_TOKEN__",
+        "AFFINE_WORKSPACE_ID": "0b917070-e240-4a29-8e12-a19c753af472"
+      }
     }
   }
 }

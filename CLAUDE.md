@@ -157,7 +157,7 @@ Both `.env` and `.env.production` on services VPS must carry `TELEGRAM_BOT_TOKEN
 
 ### Dispatch flow
 
-1. You → Telegram → Shelly (Claude with restricted MCP tools: devpanel, plane, affine, penpot, github, pgvector, bullmq).
+1. You → Telegram → Shelly (Claude with restricted MCP tools: devpanel, plane, github, affine-zeno, affine-devpanl, affine-edms, pgvector, bullmq, playwright).
 2. Shelly reads context via MCP, identifies work, calls `enqueue_job` on the devpanel MCP.
 3. BullMQ worker (same host) pops the job, spawns `claude -p "..."` in the target project cwd with full tools.
 4. Ephemeral Claude does the work and exits.

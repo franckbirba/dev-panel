@@ -24,6 +24,11 @@ PLANE_KEY=$(ssh "$SERVICES_HOST" 'grep ^PLANE_API_KEY= ~/dev-panel/.env.producti
 PLANE_SHELLY_EMAIL=$(ssh "$SERVICES_HOST" 'grep ^PLANE_SHELLY_EMAIL= ~/dev-panel/.env.production | cut -d= -f2')
 PLANE_SHELLY_PASS=$(ssh "$SERVICES_HOST" 'grep ^PLANE_SHELLY_PASSWORD= ~/dev-panel/.env.production | cut -d= -f2')
 AGENT_HUB_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^AGENT_HUB_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
+# AFFINE_API_TOKEN is shelly@devpanl.dev's personal access token (`ut_*`).
+# Generated once via the GraphQL `generateUserAccessToken` mutation as Shelly
+# (Affine 0.26.6 has no UI for this). To rotate: log into affine.devpanl.dev
+# as shelly, run the mutation again, paste the new token into .env.production.
+AFFINE_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^AFFINE_API_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
 
 # AGENT_HUB_URL is fixed to the public services VPS — workers connect over
 # the public Internet via Traefik (TLS, bearer-token auth) rather than over
@@ -34,7 +39,7 @@ AGENT_HUB_URL="${AGENT_HUB_URL:-https://devpanl.dev}"
 # Sanity check — all non-empty. AGENT_HUB_TOKEN is generated on first
 # services deploy, so on the very first agents deploy you'll need to
 # trigger a services deploy first (CI on push to main).
-for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY PLANE_SHELLY_EMAIL PLANE_SHELLY_PASS AGENT_HUB_TOKEN; do
+for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY PLANE_SHELLY_EMAIL PLANE_SHELLY_PASS AGENT_HUB_TOKEN AFFINE_TOKEN; do
   [ -n "${!v}" ] || { echo "missing secret: $v"; exit 1; }
 done
 
@@ -91,6 +96,7 @@ sed \
   -e "s|__PG_PASSWORD__|${PG_PASS}|" \
   -e "s|__VOYAGE_API_KEY__|${VOYAGE_KEY}|" \
   -e "s|__ADMIN_API_KEY__|${ADMIN_KEY}|" \
+  -e "s|__AFFINE_API_TOKEN__|${AFFINE_TOKEN}|" \
   /home/deploy/projects/dev-panel/infra/agents-mcp.json.template \
   > /home/deploy/.mcp.json
 chown deploy:deploy /home/deploy/.mcp.json
