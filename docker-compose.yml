@@ -272,8 +272,10 @@ services:
     environment:
       MP_MAX_MESSAGES: "5000"
       MP_DATABASE: "/data/mailpit.db"
-      MP_SMTP_AUTH_ACCEPT_ANY: "true"
-      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+      # Do NOT advertise SMTP auth in EHLO — clients (nodemailer used by
+      # Affine) refuse to send PLAIN auth with empty credentials. Without
+      # auth advertised, they skip it entirely. Mailpit accepts unauthenticated
+      # mail by default on a private network.
     volumes:
       - mailpit-data:/data
     networks:
