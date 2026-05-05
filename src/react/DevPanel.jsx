@@ -30,11 +30,6 @@ export function DevPanel({
   environment = null,
   chat = false
 }) {
-  if (!apiKey) {
-    console.warn('DevPanel: apiKey is required. Component will not render.');
-    return null;
-  }
-
   const [mode, setMode] = useState('idle');
   const [componentInfo, setComponentInfo] = useState(null);
   const [screenshot, setScreenshot] = useState(null);
@@ -206,6 +201,18 @@ export function DevPanel({
 
     reset();
   }, [postCapture, reset]);
+
+  // Gate AFTER every hook: when apiKey is missing the widget cannot post
+  // captures, so we render nothing. The check must run after every hook above
+  // so React's hook-call-order rule holds when consumer apps toggle apiKey
+  // on/off (e.g. during SSO hydration or a project switch). Pre-fix this
+  // returned early before any hook, which crashed the component on the
+  // toggle render with "Rendered more hooks than during the previous render"
+  // (GlitchTip issue #41).
+  useEffect(() => {
+    if (!apiKey) console.warn('DevPanel: apiKey is required. Component will not render.');
+  }, [apiKey]);
+  if (!apiKey) return null;
 
   const isRight = position === 'bottom-right';
   const sideKey = isRight ? 'right' : 'left';
