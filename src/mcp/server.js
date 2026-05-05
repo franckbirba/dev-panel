@@ -484,6 +484,27 @@ server.tool(
         isError: true
       };
     }
+    // Cross-repo guard: this legacy path never carried a Plane project_id, so
+    // the worker had no way to route the worktree away from dev-panel's
+    // PROJECT_ROOT. Result: ZENO/EDMS dispatches got a worktree under
+    // /home/deploy/projects/dev-panel/storage/worktrees/<id> and would have
+    // pushed onto franckbirba/dev-panel. Block non-DEVPA prefixes here and
+    // force the caller through plane_dispatch_work_item, which auto-resolves
+    // project_id and feeds the dispatcher's per-project local_path lookup.
+    const prefix = tid.split('-')[0];
+    if (prefix !== 'DEVPA') {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'use_plane_dispatch_work_item',
+            message: `enqueue_job is the legacy ad-hoc path with no cross-repo routing — it would land "${tid}" inside dev-panel's PROJECT_ROOT. Call plane_dispatch_work_item({work_item_id: "${tid}"}) instead — it resolves the Plane project_id and routes the worktree to the right repo on the agents host.`,
+            task_id: tid
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
     try {
       const queue = getAgentsQueue();
       const job = await queue.add(`${agent}:${task_id}`, {
@@ -919,18 +940,36 @@ function nextAuditTime() {
 
 server.tool(
   'devpanel_workflow_dispatch',
-  'Operator override: start any workflow on a work-item (admin).',
+  'Operator override: start any workflow on a work-item (admin). Resolves DEVPA-xx style ids and the Plane project_id so the worker routes the worktree to the right repo.',
   {
     work_item_id: z.string(),
     workflow: z.enum(['work-item', 'cycle-audit']).default('work-item'),
     module_id: z.string().optional(),
-    cycle_id: z.string().optional()
+    cycle_id: z.string().optional(),
+    project_id: z.string().optional().describe('Plane project UUID. Auto-resolved when work_item_id is a sequence like DEVPA-93; pass explicitly only if you already know it.')
   },
-  async ({ work_item_id, workflow, module_id, cycle_id }) => {
+  async ({ work_item_id, workflow, module_id, cycle_id, project_id }) => {
+    let resolved_id = work_item_id;
+    let resolved_project_id = project_id;
+    if (!UUID_RE.test(work_item_id)) {
+      const wi = await resolvePlaneWorkItem(work_item_id);
+      if (!wi) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ok: false,
+            error: 'plane_lookup_failed',
+            message: `Could not resolve "${work_item_id}" to a Plane work item.`
+          }, null, 2) }],
+          isError: true
+        };
+      }
+      resolved_id = wi.id;
+      resolved_project_id = resolved_project_id || wi.project_id;
+    }
     const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
     const out = await enqueueWorkflowStart({
       workflow,
-      plane: { work_item_id, module_id, cycle_id }
+      plane: { work_item_id: resolved_id, project_id: resolved_project_id, module_id, cycle_id }
     });
     return {
       content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],

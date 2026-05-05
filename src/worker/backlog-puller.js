@@ -160,6 +160,7 @@ async function tick() {
         workflow: 'work-item',
         plane: {
           work_item_id: issue.id,
+          project_id: issue.project || PLANE_PROJECT_ID || null,
           module_id: Array.isArray(issue.module) ? issue.module[0] : (issue.module || null),
           cycle_id: issue.cycle || null
         },

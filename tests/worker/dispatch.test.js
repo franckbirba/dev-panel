@@ -102,13 +102,27 @@ d('enqueueWorkflowStart', () => {
     expect(enqueue.mock.calls[0][0].context.project_root).toBe('/tmp/override');
   });
 
-  it('omits project_root when no project matches the plane.project_id', async () => {
+  it('refuses to enqueue when plane.project_id is set but no project matches', async () => {
     const enqueue = vi.fn().mockResolvedValue({ id: 'j-pr3' });
     __setEnqueueForTests(enqueue);
     const out = await enqueueWorkflowStart({
       workflow: 'work-item',
       plane: { work_item_id: 'wi-pr3', project_id: 'unknown-plane-id' },
       work_item: { title: 'no project' }
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('project_not_linked');
+    expect(out.message).toMatch(/unknown-plane-id/);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('still enqueues when plane.project_id is omitted entirely (legacy ad-hoc dispatches)', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ id: 'j-pr4' });
+    __setEnqueueForTests(enqueue);
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-pr4' },
+      work_item: { title: 'no project_id' }
     });
     expect(out.ok).toBe(true);
     expect(enqueue.mock.calls[0][0].context.project_root).toBeUndefined();
