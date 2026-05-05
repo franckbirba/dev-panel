@@ -132,6 +132,10 @@ The URL itself is the bearer token — treat it like a capability URL (Google Do
 
 The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLITCHTIP_DB_PASSWORD` only takes effect on first volume write. Rotate with `ALTER USER glitchtip WITH PASSWORD '<new>'` inside the running container.
 
+### Read/resolve from agents — `glitchtip_get_issue` / `glitchtip_resolve_issue`
+
+The bridge above goes one direction (GlitchTip → captures). For the other direction — Shelly triaging an issue by id, or an ephemeral agent closing an issue after a fix has merged — the devpanel-mcp exposes two tools backed by the Sentry-compatible API: `glitchtip_get_issue({ org_slug, issue_id })` returns `{ title, culprit, level, status, last_event: { message, exception, stack, breadcrumbs, tags } }`, and `glitchtip_resolve_issue({ org_slug, issue_id })` PUTs `status=resolved`. Auth is `Bearer $GLITCHTIP_API_TOKEN` (the same UI-generated token from bootstrap §6, with `org:admin + project:admin + project:write`); base URL is `$GLITCHTIP_BASE_URL` (defaults to `https://glitchtip.devpanl.dev`). Both env vars are wired through `infra/agents-mcp.json.template` → `~/.mcp.json` on the agents host. 401/403 surface explicitly so a rotated/revoked token never silently returns an empty payload.
+
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
 
 Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the `telegram-multi` plugin (Apache-2.0 fork of `claude-plugins-official:telegram` with multi-bot support). You chat with her in Telegram; she dispatches work to other agents and reports back.

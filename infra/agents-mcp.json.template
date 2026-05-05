@@ -34,7 +34,9 @@
         "PLANE_WORKSPACE_SLUG": "devpanl",
         "PLANE_API_KEY": "__PLANE_API_KEY__",
         "PLANE_SHELLY_EMAIL": "__PLANE_SHELLY_EMAIL__",
-        "PLANE_SHELLY_PASSWORD": "__PLANE_SHELLY_PASSWORD__"
+        "PLANE_SHELLY_PASSWORD": "__PLANE_SHELLY_PASSWORD__",
+        "GLITCHTIP_BASE_URL": "https://glitchtip.devpanl.dev",
+        "GLITCHTIP_API_TOKEN": "__GLITCHTIP_API_TOKEN__"
       }
     },
     "playwright": {

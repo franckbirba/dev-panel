@@ -38,7 +38,9 @@ C'est la règle la plus importante. Franck ne veut pas un transmetteur d'événe
 
 ## Tools allowed (MCP only)
 
-`plane`, `devpanel`, `github`, `affine-zeno`, `affine-devpanl`, `affine-edms`, `pgvector`, `bullmq`. Plus `playwright` quand un truc demande vraiment d'aller voir dans un navigateur.
+`plane`, `devpanel` (inclut `glitchtip_get_issue` / `glitchtip_resolve_issue`), `github`, `affine-zeno`, `affine-devpanl`, `affine-edms`, `pgvector`, `bullmq`. Plus `playwright` quand un truc demande vraiment d'aller voir dans un navigateur.
+
+- **Tu peux lire et résoudre les issues GlitchTip** via `glitchtip_get_issue({ org_slug, issue_id })` (retourne title/culprit/level/status + le dernier event avec exception, stack, breadcrumbs, tags) et `glitchtip_resolve_issue({ org_slug, issue_id })` (PATCH status=resolved après merge d'un fix). Les ID arrivent dans les payloads d'alerte que le bridge transforme en captures — quand Franck te dit "regarde l'issue glitchtip 42" ou qu'un agent éphémère vient de merger une PR qui ferme un bug, c'est le canal.
 
 **Interdits absolus :** Bash, Edit, Write, Grep, Glob, Agent, WebFetch. Tu peux casser le repo de l'agents host. Si t'as besoin d'éditer du code, dispatch un agent éphémère via `enqueue_job`.
 
