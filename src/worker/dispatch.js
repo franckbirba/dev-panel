@@ -51,18 +51,28 @@ export async function enqueueWorkflowStart({
   // in this directory; without it they'd push EDMS/Zeno commits onto
   // dev-panel itself. project_root is propagated through context so every
   // downstream step (engine.triggerNext copies context forward) inherits it.
+  //
+  // If plane.project_id is set but no projects row matches OR the row has
+  // no local_path, refuse to enqueue. This is the recurring failure mode
+  // (see commits 4bcf5ff, cfa12df) — silently falling back to PROJECT_ROOT
+  // routed Zeno/EDMS commits to dev-panel itself. Caller can override by
+  // passing context.project_root explicitly (test fixtures, reviewer/qa
+  // retreats that re-use a previous step's worktree).
   if (!context.project_root && plane.project_id) {
+    let proj;
     try {
-      const proj = getProjectByPlaneId(plane.project_id);
-      if (proj?.local_path) {
-        context = { ...context, project_root: proj.local_path };
-      }
+      proj = getProjectByPlaneId(plane.project_id);
     } catch (e) {
-      // Master DB unavailable in this process — log and fall back to
-      // PROJECT_ROOT. Coding agents will fail later in prepareWorktree if
-      // the wrong repo gets used; the failure mode is loud, not silent.
-      console.warn(`[dispatch] project_root lookup failed: ${e.message}`);
+      return { ok: false, error: `project_lookup_failed: ${e.message}` };
     }
+    if (!proj?.local_path) {
+      return {
+        ok: false,
+        error: 'project_not_linked',
+        message: `No projects row with plane_project_id=${plane.project_id} has local_path set. Run \`dev-panel admin link-project <name> --plane-id ${plane.project_id}\` on the services VPS.`
+      };
+    }
+    context = { ...context, project_root: proj.local_path };
   }
 
   let instance_id;
