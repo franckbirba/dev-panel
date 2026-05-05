@@ -29,6 +29,12 @@ AGENT_HUB_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^AGENT_HUB_TOKEN= ~/dev-panel/.env.
 # (Affine 0.26.6 has no UI for this). To rotate: log into affine.devpanl.dev
 # as shelly, run the mutation again, paste the new token into .env.production.
 AFFINE_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^AFFINE_API_TOKEN= ~/dev-panel/.env.production | cut -d= -f2')
+# GLITCHTIP_API_TOKEN is generated in the GlitchTip UI (Profile → Auth Tokens)
+# with org:admin + project:admin + project:write scopes. Used by the
+# devpanel-mcp glitchtip_get_issue / glitchtip_resolve_issue tools so Shelly
+# and ephemeral agents can triage and close issues. Bridge alerts (push)
+# stay on GLITCHTIP_BRIDGE_HMAC_SECRET — separate secret.
+GLITCHTIP_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^GLITCHTIP_API_TOKEN= ~/dev-panel/.env.production | cut -d= -f2 || true')
 
 # AGENT_HUB_URL is fixed to the public services VPS — workers connect over
 # the public Internet via Traefik (TLS, bearer-token auth) rather than over
@@ -97,6 +103,7 @@ sed \
   -e "s|__VOYAGE_API_KEY__|${VOYAGE_KEY}|" \
   -e "s|__ADMIN_API_KEY__|${ADMIN_KEY}|" \
   -e "s|__AFFINE_API_TOKEN__|${AFFINE_TOKEN}|" \
+  -e "s|__GLITCHTIP_API_TOKEN__|${GLITCHTIP_TOKEN}|" \
   /home/deploy/projects/dev-panel/infra/agents-mcp.json.template \
   > /home/deploy/.mcp.json
 chown deploy:deploy /home/deploy/.mcp.json

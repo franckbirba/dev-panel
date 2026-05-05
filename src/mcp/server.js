@@ -38,6 +38,10 @@ import {
   deletePage as planeDeletePage,
   pagesHealthcheck as planePagesHealthcheck
 } from './plane-pages.js';
+import {
+  getIssue as glitchtipGetIssue,
+  resolveIssue as glitchtipResolveIssue
+} from './glitchtip.js';
 import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
 import { Queue } from 'bullmq';
@@ -838,6 +842,47 @@ server.tool(
       const pid = await resolvePlaneProjectId(project);
       const out = await planeDeletePage(pid, page_id, { force });
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(out || {}) }) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+// ============================================================================
+// GLITCHTIP — read/resolve issues from the Sentry-compatible API.
+// Inbound bridge (push) lives in src/server/webhooks-glitchtip.js; these
+// tools are the matching pull/write surface so Shelly can triage by issue id
+// and ephemeral agents can close an issue after merge.
+// ============================================================================
+
+server.tool(
+  'glitchtip_get_issue',
+  'Fetch a GlitchTip (Sentry-compatible) issue by id, returning the metadata + the latest event payload (message, exception, stack, breadcrumbs, tags) needed to triage. Surfaces 401/403 explicitly so a rotated token is visible.',
+  {
+    org_slug: z.string().describe('GlitchTip organization slug (e.g. "devpanl-studio")'),
+    issue_id: z.string().describe('GlitchTip issue id (numeric, surfaces in the alert webhook payload as `id` or in the UI URL)')
+  },
+  async ({ org_slug, issue_id }) => {
+    try {
+      const issue = await glitchtipGetIssue(org_slug, issue_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, issue }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'glitchtip_resolve_issue',
+  'Mark a GlitchTip issue as resolved (PUT status=resolved). Use this after a fix has merged so the issue stops paging. Surfaces 401/403 explicitly.',
+  {
+    org_slug: z.string().describe('GlitchTip organization slug (e.g. "devpanl-studio")'),
+    issue_id: z.string().describe('GlitchTip issue id')
+  },
+  async ({ org_slug, issue_id }) => {
+    try {
+      const out = await glitchtipResolveIssue(org_slug, issue_id);
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...out }) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
     }
