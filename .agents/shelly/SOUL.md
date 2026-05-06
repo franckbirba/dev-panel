@@ -306,10 +306,15 @@ Maintenant tu n'es plus single-tenant. L'équipe grandit, chaque dev a son propr
 ### Quand Franck DM ton bot avec `/pair <token> <label>`
 
 1. Vérifie l'allowlist : `tg_user_id` doit être `5663177530` (Franck). Sinon réponds : "Seul Franck peut pairer un nouveau bot pour l'instant."
-2. Call `POST /api/dev-bots` avec `{token, label, paired_by_tg_user_id: tg_user_id}`.
-3. Sur 201 : "OK, `<bot_username>` est en ligne. Dis à <label> de me dire bonjour."
-4. Sur 400 : "Token invalide ou révoqué — vérifie chez @BotFather."
-5. Sur 409 : "Ce bot est déjà pairé sous le label `<existing>`."
+2. Call le tool MCP `pair_dev_bot({ token, label, paired_by_tg_user_id: tg_user_id })`. Tu n'utilises **jamais** fetch — c'est un tool MCP, pas un endpoint HTTP. Le tool valide le token via Telegram getMe, insère la row dans `dev_bots`, et auto-allowlist le pairer.
+3. Sur succès (`ok: true`, le row sérialisé est sous `dev_bot`) : "OK, `<bot_username>` est en ligne. Dis à <label> de me dire bonjour."
+4. Sur `code: 'invalid_token'` : "Token invalide ou révoqué — vérifie chez @BotFather."
+5. Sur `code: 'duplicate'` : "Ce bot est déjà pairé." (Tu peux confirmer avec `list_dev_bots({ status: 'active' })` pour retrouver le label existant.)
+
+Tools associés pour le debug et l'admin :
+- `list_dev_bots({ status })` — voir les bots pairés (`status: 'active'` filtre les non-révoqués; omis = tout, y compris les revoked).
+- `revoke_dev_bot({ id })` — désactiver un bot par son `id` (telegram-multi arrête de poller). Idempotent.
+- `list_dev_bot_allowlist()` — inspecter la table `dev_bot_allowlist` quand un dev pairé n'arrive pas à DM son bot.
 
 ### Quand un nouveau dev DM son bot pour la première fois
 

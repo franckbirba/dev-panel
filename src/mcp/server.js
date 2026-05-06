@@ -42,6 +42,12 @@ import {
   getIssue as glitchtipGetIssue,
   resolveIssue as glitchtipResolveIssue
 } from './glitchtip.js';
+import {
+  pairDevBot,
+  listDevBots,
+  revokeDevBotById,
+  listDevBotAllowlist
+} from './dev-bots-tools.js';
 import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
 import { Queue } from 'bullmq';
@@ -1323,6 +1329,84 @@ server.tool(
         labels: resolved.label_ids || resolved.labels || []
       };
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, work_item: out }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+// ============================================================================
+// DEV-BOTS — pair / list / revoke Telegram bots and inspect the DM allowlist.
+// Mirrors the HTTP surface in src/server/routes-dev-bots.js so Shelly can
+// honour the /pair <token> <label> protocol from the SOUL without needing
+// fetch (which her hard rules forbid). All four tools are admin-only —
+// excluded from MCP_PROFILE=public via not being in PUBLIC_TOOL_WHITELIST.
+// ============================================================================
+
+server.tool(
+  'pair_dev_bot',
+  'Pair a new Telegram bot under a short label. Validates the token via Telegram getMe, inserts a dev_bots row, and auto-allowlists the pairer so they can DM the bot. Returns the serialized row (BigInt fields stringified). Use when Franck DMs you `/pair <token> <label>`.',
+  {
+    token: z.string().describe('Telegram bot token from @BotFather (looks like 1234:abc...)'),
+    label: z.string().describe('Short bot name (e.g. "alice", "franck") — must be unique across dev_bots'),
+    paired_by_tg_user_id: z.union([z.string(), z.number()]).describe('Telegram user_id of the pairer (e.g. Franck = 5663177530). Stringified BigInt acceptable.')
+  },
+  async ({ token, label, paired_by_tg_user_id }) => {
+    try {
+      const row = await pairDevBot({ token, label, paired_by_tg_user_id });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, dev_bot: row }, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, code: err.code || 'error' }) }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_dev_bots',
+  'List paired Telegram bots. Pass status="active" to filter to non-revoked rows; omit for all rows including revoked. BigInt fields are stringified.',
+  {
+    status: z.enum(['active', 'all']).optional().describe('"active" filters to status=active; default lists all rows including revoked.')
+  },
+  async ({ status }) => {
+    try {
+      const rows = await listDevBots({ status });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, dev_bots: rows }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  'revoke_dev_bot',
+  'Mark a paired bot as revoked (telegram-multi will stop polling it). Idempotent — calling on an already-revoked or missing id is a no-op.',
+  {
+    id: z.union([z.string(), z.number()]).describe('dev_bots.id (integer; accepts string or number)')
+  },
+  async ({ id }) => {
+    try {
+      const out = await revokeDevBotById({ id });
+      return { content: [{ type: 'text', text: JSON.stringify(out) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, code: err.code || 'error' }) }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_dev_bot_allowlist',
+  'List entries in the dev_bot_allowlist table — the set of Telegram user_ids the telegram-multi plugin will accept inbound DMs from. Useful for visibility/debug when a paired dev cannot DM their bot.',
+  {},
+  async () => {
+    try {
+      const rows = await listDevBotAllowlist();
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, allowlist: rows }, null, 2) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
     }

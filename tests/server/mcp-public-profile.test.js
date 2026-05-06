@@ -71,7 +71,13 @@ describe('MCP profile filter — pure logic', () => {
       'enqueue_job',
       'devpanel_workflow_dispatch',
       'cancel_job',
-      'memory_write'
+      'memory_write',
+      // DEVPA-178: dev-bots admin tools are pairing/revoke surface — must
+      // never be reachable from the widget Shelly publique.
+      'pair_dev_bot',
+      'list_dev_bots',
+      'revoke_dev_bot',
+      'list_dev_bot_allowlist'
     ];
     for (const t of blocked) {
       expect(isToolAllowed(t, 'public')).toBe(false);
@@ -155,7 +161,11 @@ describe('src/mcp/server.js boot in MCP_PROFILE=public', () => {
       'enqueue_job',
       'devpanel_workflow_dispatch',
       'cancel_job',
-      'memory_write'
+      'memory_write',
+      'pair_dev_bot',
+      'list_dev_bots',
+      'revoke_dev_bot',
+      'list_dev_bot_allowlist'
     ];
     for (const t of blocked) {
       expect(names, `expected ${t} to be ABSENT in public profile`).not.toContain(t);
