@@ -81,6 +81,7 @@ import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
 import { initMasterDatabase } from '../server/db.js';
 import { prepareWorktree, shouldUseWorktree } from './worktree.js';
+import { updateInstance } from '../server/workflow-instances.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -296,7 +297,25 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // Worktree setup failure is fatal for coding agents — running them in
     // PROJECT_ROOT alongside other concurrent jobs is exactly the bug we're
     // fixing. Fail loudly so the job retries with a clean slate.
-    if (shouldUseWorktree(jobData.agent)) throw err;
+    if (shouldUseWorktree(jobData.agent)) {
+      // On the FINAL attempt, mark the workflow_instance as 'failed' so a
+      // fresh re-dispatch can land cleanly. Without this, the row stays in
+      // its previous status (typically 'running') and re-dispatch hits the
+      // unique-partial-index 'already_running' guard, requiring a manual
+      // SQL cancel. Best-effort — never let a DB hiccup mask the real error.
+      const isFinalAttempt = (job.attemptsMade + 1) >= (job.opts.attempts || 1);
+      if (isFinalAttempt && jobData.workflow && jobData.plane?.work_item_id) {
+        try {
+          await updateInstance(
+            { work_item_id: jobData.plane.work_item_id, workflow_name: jobData.workflow },
+            { status: 'failed', last_job_id: jobData.job_id }
+          );
+        } catch (e) {
+          console.warn(`[Worker] failed to mark instance failed after worktree error: ${e.message}`);
+        }
+      }
+      throw err;
+    }
   }
 
   if (worktree) {

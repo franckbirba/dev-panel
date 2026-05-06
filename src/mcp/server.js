@@ -539,16 +539,17 @@ server.tool(
 
 server.tool(
   'plane_dispatch_work_item',
-  'Start the work-item pipeline on a Plane work-item. Accepts a UUID or a human sequence like DEVPA-93 — sequence gets resolved to UUID and title/description are filled from Plane if omitted. This is the preferred entry point for Shelly.',
+  'Start the work-item pipeline on a Plane work-item. Accepts a UUID or a human sequence like DEVPA-93 — sequence gets resolved to UUID and title/description are filled from Plane if omitted. Pass force=true to cancel any stuck active instances (awaiting_approval/blocked/running) for this work item before re-dispatching. This is the preferred entry point for Shelly.',
   {
     work_item_id: z.string().describe('Plane UUID or sequence id like DEVPA-93'),
     module_id: z.string().optional(),
     cycle_id: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
-    workflow: z.enum(['work-item']).default('work-item')
+    workflow: z.enum(['work-item']).default('work-item'),
+    force: z.boolean().optional().default(false).describe('Cancel any active instances for this work_item_id before dispatching. Idempotent — no-op if nothing to cancel.')
   },
-  async ({ work_item_id, module_id, cycle_id, title, description, workflow }) => {
+  async ({ work_item_id, module_id, cycle_id, title, description, workflow, force }) => {
     let resolved_id = work_item_id;
     let plane_project_id;
     let fetched_title;
@@ -572,6 +573,30 @@ server.tool(
       fetched_description = wi.description;
     }
 
+    // force=true cancels all active instances for this work_item_id
+    // BEFORE the dispatch attempt. The unique partial index excludes
+    // 'cancelled' so a fresh enqueueWorkflowStart lands cleanly. This
+    // replaces the manual `UPDATE workflow_instances SET status=cancelled`
+    // dance that operators had to run when a previous attempt left rows
+    // stuck in awaiting_approval/blocked.
+    let force_cancelled;
+    if (force) {
+      const { cancelActiveInstances } = await import('../server/workflow-instances.js');
+      try {
+        const r = await cancelActiveInstances({ work_item_id: resolved_id });
+        force_cancelled = r.cancelled_ids;
+      } catch (e) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ok: false,
+            error: 'force_cancel_failed',
+            message: `Could not cancel active instances: ${e.message}`,
+          }, null, 2) }],
+          isError: true
+        };
+      }
+    }
+
     const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
     const out = await enqueueWorkflowStart({
       workflow,
@@ -584,6 +609,7 @@ server.tool(
     return {
       content: [{ type: 'text', text: JSON.stringify({
         ...out,
+        force_cancelled,
         resolved_from: work_item_id !== resolved_id ? work_item_id : undefined,
         work_item_id: resolved_id
       }, null, 2) }],

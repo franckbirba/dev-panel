@@ -128,6 +128,53 @@ d('enqueueWorkflowStart', () => {
     expect(enqueue.mock.calls[0][0].context.project_root).toBeUndefined();
   });
 
+  it('cancelActiveInstances flips active rows to cancelled and lets a fresh dispatch land', async () => {
+    const { cancelActiveInstances } = await import('../../src/server/workflow-instances.js');
+    const enqueue = vi.fn().mockResolvedValue({ id: 'j-cancel' });
+    __setEnqueueForTests(enqueue);
+    // First dispatch creates the instance in 'running'.
+    const first = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-cancel' }
+    });
+    expect(first.ok).toBe(true);
+    // Second dispatch (without force) is blocked by the unique partial index.
+    const blocked = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-cancel' }
+    });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.error).toBe('already_running');
+    // cancelActiveInstances clears the row.
+    const cancelled = await cancelActiveInstances({ work_item_id: 'wi-cancel' });
+    expect(cancelled.cancelled_count).toBe(1);
+    expect(cancelled.cancelled_ids).toHaveLength(1);
+    // Now a fresh dispatch lands.
+    const retry = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-cancel' }
+    });
+    expect(retry.ok).toBe(true);
+    expect(Number(retry.instance_id)).toBeGreaterThan(Number(first.instance_id));
+  });
+
+  it('cancelActiveInstances is a no-op when no rows are active', async () => {
+    const { cancelActiveInstances } = await import('../../src/server/workflow-instances.js');
+    const r = await cancelActiveInstances({ work_item_id: 'wi-never-existed' });
+    expect(r.cancelled_count).toBe(0);
+    expect(r.cancelled_ids).toEqual([]);
+  });
+
+  it('cancelActiveInstances cancels both work-item and replan rows for the same work_item_id', async () => {
+    const { cancelActiveInstances } = await import('../../src/server/workflow-instances.js');
+    const { createInstance } = await import('../../src/server/workflow-instances.js');
+    const wi = 'wi-cancel-multi';
+    await createInstance({ work_item_id: wi, workflow_name: 'work-item', current_step: 'builder' });
+    await createInstance({ work_item_id: wi, workflow_name: 'replan', current_step: 'pm' });
+    const r = await cancelActiveInstances({ work_item_id: wi });
+    expect(r.cancelled_count).toBe(2);
+  });
+
   it('rolls back the instance to failed when enqueue throws', async () => {
     __setEnqueueForTests(vi.fn().mockRejectedValue(new Error('redis down')));
     const out = await enqueueWorkflowStart({

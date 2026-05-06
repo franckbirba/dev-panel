@@ -136,6 +136,34 @@ export async function updateInstance({ work_item_id, workflow_name }, patch) {
   return updated;
 }
 
+// Force-cancel every active workflow_instance for a work_item_id. Used by
+// `plane_dispatch_work_item({ force: true })` so a re-dispatch can land
+// without a human cancelling stuck rows by hand. Active = anything not
+// already terminal; the unique partial index excludes 'cancelled' so a
+// fresh createInstance succeeds right after this returns.
+export async function cancelActiveInstances({ work_item_id }) {
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `UPDATE workflow_instances
+        SET status = 'cancelled', last_event_at = $2
+      WHERE work_item_id = $1
+        AND status NOT IN ('cancelled', 'failed', 'completed', 'done', 'exhausted')
+      RETURNING id, workflow_name, status`,
+    [work_item_id, now]
+  );
+  for (const r of rows) {
+    broadcast('workflow:changed', {
+      op: 'update',
+      id: r.id,
+      work_item_id,
+      workflow_name: r.workflow_name,
+      status: 'cancelled',
+      last_event_at: now,
+    });
+  }
+  return { cancelled_ids: rows.map(r => r.id), cancelled_count: rows.length };
+}
+
 export async function listActive() {
   const { rows } = await pool.query(
     `SELECT * FROM workflow_instances
