@@ -57,6 +57,11 @@ export async function buildSignalsFeed({
   // --- captures ---
   // Note: capture_messages was migrated into thread_messages (user_version=1).
   // Retrieve the last message role via the threads/thread_messages tables.
+  // Captures are stateful (new/triaging) — their visibility is governed by
+  // status + inbox_state (dismiss/snooze), NOT by since_min. A bug reported
+  // five days ago that nobody touched is still an open question. Apply the
+  // age window only to terminal-ish events (deploys, jobs, completed
+  // workflows) where age is the right TTL.
   const captureRows = db.prepare(`
     SELECT c.*, p.name AS project_name,
            (SELECT tm.role
@@ -67,9 +72,8 @@ export async function buildSignalsFeed({
       FROM captures c
       JOIN projects p ON p.id = c.project_id
      WHERE c.status IN ('new', 'triaging')
-       AND c.created_at >= ?
        ${project_id ? 'AND c.project_id = ?' : ''}
-  `).all(...(project_id ? [sinceIso, project_id] : [sinceIso]));
+  `).all(...(project_id ? [project_id] : []));
   for (const r of captureRows) {
     const signal_type = r.status === 'new' ? 'capture_new' : 'capture_triaging';
     out.push({
