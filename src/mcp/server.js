@@ -48,6 +48,7 @@ import {
   revokeDevBotById,
   listDevBotAllowlist
 } from './dev-bots-tools.js';
+import { resolveProjectByName, projectFetch } from './projects.js';
 import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
 import { Queue } from 'bullmq';
@@ -255,7 +256,7 @@ server.tool(
 server.tool(
   'get_team_labels',
   'List the routing labels defined on a project (used by Shelly to classify a new ticket).',
-  { project: z.string().describe('Project name') },
+  { project: z.string().describe('Project name or UUID') },
   async ({ project }) => {
     try {
       const proj = await resolveProjectByName(project);
@@ -273,7 +274,7 @@ server.tool(
   'get_team_member',
   'Get a team member by id, including their paired Telegram bot info.',
   {
-    project: z.string().describe('Project name'),
+    project: z.string().describe('Project name or UUID'),
     member_id: z.number().describe('team_members.id')
   },
   async ({ project, member_id }) => {
@@ -295,7 +296,7 @@ server.tool(
   'route_ticket',
   'Persist routing for a ticket and return the resolved team member + dev_bot. Idempotent: if the ticket is already routed, returns the existing routing with already_routed=true and ignores the new label.',
   {
-    project: z.string().describe('Project name'),
+    project: z.string().describe('Project name or UUID'),
     ticket_id: z.number().describe('Ticket numeric id'),
     label: z.string().describe('Routing label (e.g. "com", "pedago")')
   },
@@ -334,7 +335,7 @@ server.tool(
   'route_capture',
   'Persist routing for a capture and return the resolved team member + dev_bot. Idempotent: if the capture is already routed, returns the existing routing with already_routed=true and ignores the new label.',
   {
-    project: z.string().describe('Project name'),
+    project: z.string().describe('Project name or UUID'),
     capture_id: z.string().describe('Capture UUID'),
     label: z.string().describe('Routing label (e.g. "com", "pedago")')
   },

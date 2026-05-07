@@ -756,11 +756,15 @@ export function createRouter(config = {}) {
   // captures /api/projects(/summary) and forces SSO.
   router.get('/admin/projects', authenticateAdmin, (req, res) => {
     try {
+      // api_key is included so M2M consumers (MCP resolveProjectByName)
+      // can subsequently call per-project routes that gate on X-API-Key
+      // (e.g. /api/team/labels). Endpoint is admin-auth only.
       const projects = listProjects().map(p => ({
         id: p.id,
         name: p.name,
         github_owner: p.github_owner,
-        github_repo: p.github_repo
+        github_repo: p.github_repo,
+        api_key: p.api_key
       }));
       res.json({ projects });
     } catch (err) {
