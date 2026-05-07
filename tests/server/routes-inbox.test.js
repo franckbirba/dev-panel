@@ -123,4 +123,18 @@ describe('GET /api/inbox', () => {
     const r = await request(app).get('/api/inbox');
     expect(r.status).toBe(401);
   });
+
+  it('keeps untriaged captures visible past the since_min window', async () => {
+    const cap = createCapture({ project_id: project.id, content: 'old but unanswered', kind: 'idea' });
+    getMasterDatabase().prepare(
+      `UPDATE captures SET created_at = ? WHERE id = ?`
+    ).run('2026-01-01 00:00:00', cap.id);
+
+    const r = await request(app)
+      .get('/api/inbox?since_min=60')
+      .set('X-API-Key', project.api_key);
+    expect(r.status).toBe(200);
+    expect(r.body.items.length).toBe(1);
+    expect(r.body.items[0].subject_id).toBe(cap.id);
+  });
 });
