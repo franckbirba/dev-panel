@@ -1,0 +1,235 @@
+name: Deploy Agents (Shelly + Worker)
+
+# Refresh the agents host (hetzner-vps) when Shelly-relevant code changes.
+# Runs on a self-hosted runner installed ON the agents host itself —
+# GitHub Actions cloud runners can't reach the firewalled SSH port. See
+# the comment at the bottom of .github/workflows/deploy.yml.
+#
+# Runner setup expectations (one-time):
+#   - Installed as user `deploy` on hetzner-vps
+#   - Labels: self-hosted + hetzner-agents
+#   - sudoers entry granting deploy NOPASSWD on the systemctl restart calls
+#     used below (see the in-repo runbook for the exact line)
+#   - Already has the SSH key to deploy@77.42.46.87 (services-VPS) so the
+#     full-redeploy path can pull secrets via scripts/deploy-agents.sh
+#
+# Two paths:
+#   - quick-refresh (default): `git pull` + restart whichever services
+#     were affected. Cheap, runs on every relevant push.
+#   - full-redeploy (workflow_dispatch only, OR when infra/** changes):
+#     re-runs scripts/deploy-agents.sh end-to-end — refreshes secrets
+#     from services-VPS, re-renders ~/.mcp.json, restarts everything.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.agents/shelly/SOUL.md'
+      - 'src/mcp/**'
+      - 'src/worker/**'
+      - 'infra/agents-mcp.json.template'
+      - 'infra/agents-mcp-public.json.template'
+      - 'infra/claude/**'
+      - 'infra/shelly*.service'
+      - 'infra/shelly*.timer'
+      - 'infra/shelly*.sh'
+      - 'infra/shelly*.js'
+      - 'infra/devpanel-worker.service'
+      - 'plugins/telegram-multi/**'
+      - 'scripts/deploy-agents.sh'
+      - 'scripts/smoke-shelly.sh'
+      - '.github/workflows/deploy-agents.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Deploy mode'
+        required: true
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - full
+
+concurrency:
+  group: deploy-agents
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: [self-hosted, hetzner-agents]
+    outputs:
+      mode: ${{ steps.pick.outputs.mode }}
+      restart_shelly: ${{ steps.pick.outputs.restart_shelly }}
+      restart_worker: ${{ steps.pick.outputs.restart_worker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: pick
+        name: Pick mode + targets
+        run: |
+          set -e
+
+          # workflow_dispatch override
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+            echo "restart_shelly=true"     >> "$GITHUB_OUTPUT"
+            echo "restart_worker=true"     >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # On push: full mode only when infra/secrets/template files change.
+          # Otherwise quick.
+          changed=$(git diff --name-only HEAD^ HEAD || true)
+          echo "changed files:"
+          echo "$changed"
+
+          mode=quick
+          # Anything that requires re-rendering ~/.mcp.json or .env.agent
+          # forces a full redeploy.
+          if echo "$changed" | grep -qE '^infra/(agents-mcp.*\.template|claude/|devpanel-worker\.service|shelly.*)'; then
+            mode=full
+          fi
+          if echo "$changed" | grep -qE '^plugins/telegram-multi/'; then
+            mode=full
+          fi
+          if echo "$changed" | grep -qE '^scripts/deploy-agents\.sh$'; then
+            mode=full
+          fi
+
+          # Which services to restart in quick mode
+          shelly=false
+          worker=false
+          if echo "$changed" | grep -qE '^(\.agents/shelly/SOUL\.md|src/mcp/|infra/shelly)'; then
+            shelly=true
+          fi
+          if echo "$changed" | grep -qE '^(src/worker/|infra/devpanel-worker\.service)'; then
+            worker=true
+          fi
+          # If src/mcp changed, both shelly and worker MCPs need refresh
+          if echo "$changed" | grep -qE '^src/mcp/'; then
+            shelly=true
+            worker=true
+          fi
+          # Fallback — if neither matched but we're here, restart shelly.
+          if [ "$shelly" = "false" ] && [ "$worker" = "false" ]; then
+            shelly=true
+          fi
+
+          echo "mode=$mode"             >> "$GITHUB_OUTPUT"
+          echo "restart_shelly=$shelly" >> "$GITHUB_OUTPUT"
+          echo "restart_worker=$worker" >> "$GITHUB_OUTPUT"
+
+  quick-refresh:
+    needs: decide
+    if: needs.decide.outputs.mode == 'quick'
+    runs-on: [self-hosted, hetzner-agents]
+    steps:
+      - name: Pull latest on agents host
+        run: |
+          set -euo pipefail
+          cd /home/deploy/projects/dev-panel
+          git fetch --quiet origin main
+          git reset --hard origin/main
+
+      - name: Restart shelly.service
+        if: needs.decide.outputs.restart_shelly == 'true'
+        run: sudo systemctl restart shelly.service
+
+      - name: Restart devpanel-worker.service
+        if: needs.decide.outputs.restart_worker == 'true'
+        run: sudo systemctl restart devpanel-worker.service
+
+      - name: Smoke test (telegram-multi heartbeat)
+        if: needs.decide.outputs.restart_shelly == 'true'
+        run: |
+          # Wait for the supervisor to spin every Bot back up + the 15s
+          # heartbeat tick to land in health.json. Same wait as the smoke
+          # step inside scripts/deploy-agents.sh.
+          sleep 25
+          /home/deploy/projects/dev-panel/scripts/smoke-shelly.sh
+
+      - name: Notify Telegram (success)
+        if: success()
+        run: |
+          set -e
+          # Pull the bot token + chat id from the deploy user's channel env,
+          # the same place scripts/deploy-agents.sh's smoke step reads from.
+          if [ -f /home/deploy/.claude/channels/telegram/.env ]; then
+            set -a; . /home/deploy/.claude/channels/telegram/.env; set +a
+          fi
+          CHAT_ID="${TELEGRAM_CHAT_ID:-5663177530}"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT_ID" ]; then
+            curl -sS -o /dev/null --max-time 5 \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "text=✅ Agents quick refresh ${SHA_SHORT} — shelly=${{ needs.decide.outputs.restart_shelly }} worker=${{ needs.decide.outputs.restart_worker }}" || true
+          fi
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        run: |
+          set +e
+          if [ -f /home/deploy/.claude/channels/telegram/.env ]; then
+            set -a; . /home/deploy/.claude/channels/telegram/.env; set +a
+          fi
+          CHAT_ID="${TELEGRAM_CHAT_ID:-5663177530}"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT_ID" ]; then
+            curl -sS -o /dev/null --max-time 5 \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "text=⚠️ Agents quick refresh ${SHA_SHORT} FAILED — check Actions logs." || true
+          fi
+
+  full-redeploy:
+    needs: decide
+    if: needs.decide.outputs.mode == 'full'
+    runs-on: [self-hosted, hetzner-agents]
+    steps:
+      - name: Run scripts/deploy-agents.sh
+        run: |
+          set -euo pipefail
+          # The script is the source of truth for the full redeploy: it
+          # re-pulls secrets from services-VPS, re-renders ~/.mcp.json from
+          # infra/agents-mcp.json.template, refreshes ~/.claude settings and
+          # the telegram-multi plugin, and restarts every Shelly-related
+          # systemd unit. Smoke test runs at the end and fails the deploy
+          # if any bot is deaf.
+          cd /home/deploy/projects/dev-panel
+          git fetch --quiet origin main
+          git reset --hard origin/main
+          bash scripts/deploy-agents.sh
+
+      - name: Notify Telegram (success)
+        if: success()
+        run: |
+          set -e
+          if [ -f /home/deploy/.claude/channels/telegram/.env ]; then
+            set -a; . /home/deploy/.claude/channels/telegram/.env; set +a
+          fi
+          CHAT_ID="${TELEGRAM_CHAT_ID:-5663177530}"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT_ID" ]; then
+            curl -sS -o /dev/null --max-time 5 \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "text=✅ Agents FULL redeploy ${SHA_SHORT} OK." || true
+          fi
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        run: |
+          set +e
+          if [ -f /home/deploy/.claude/channels/telegram/.env ]; then
+            set -a; . /home/deploy/.claude/channels/telegram/.env; set +a
+          fi
+          CHAT_ID="${TELEGRAM_CHAT_ID:-5663177530}"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT_ID" ]; then
+            curl -sS -o /dev/null --max-time 5 \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "text=⚠️ Agents FULL redeploy ${SHA_SHORT} FAILED — check Actions logs." || true
+          fi
