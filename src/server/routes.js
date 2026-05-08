@@ -759,13 +759,22 @@ export function createRouter(config = {}) {
     try {
       // api_key is included so M2M consumers (MCP resolveProjectByName)
       // can subsequently call per-project routes that gate on X-API-Key
-      // (e.g. /api/team/labels). Endpoint is admin-auth only.
+      // (e.g. /api/team/labels).
+      // plane_project_id + plane_workspace_slug + local_path are included
+      // so the worker's UUID-fan-out resolver (DEVPA-180 follow-up) can
+      // discover which Plane project owns a UUID without an extra round-trip
+      // — and so pr-scanner enumerates only repos with a Plane mapping.
+      // Endpoint is admin-auth only.
       const projects = listProjects().map(p => ({
         id: p.id,
         name: p.name,
         github_owner: p.github_owner,
         github_repo: p.github_repo,
-        api_key: p.api_key
+        api_key: p.api_key,
+        plane_project_id: p.plane_project_id,
+        plane_workspace_slug: p.plane_workspace_slug,
+        local_path: p.local_path,
+        default_branch: p.default_branch
       }));
       res.json({ projects });
     } catch (err) {
