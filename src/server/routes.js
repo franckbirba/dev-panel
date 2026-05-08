@@ -8,6 +8,7 @@ import {
   listProjects,
   getProjectByName,
   getProjectById,
+  getProjectByPlaneId,
   getMasterDatabase,
   updateProject,
   deleteProject,
@@ -767,6 +768,33 @@ export function createRouter(config = {}) {
         api_key: p.api_key
       }));
       res.json({ projects });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // /admin/projects/by-plane-id/:plane_project_id — resolve a Plane project_id
+  // to the local checkout config used by the dispatcher. Lives services-side
+  // because the projects table is the single source of truth: agents-host MCP
+  // and worker can't trust their own SQLite (which is empty on agents). See
+  // DEVPA-180 for the bug this fixes — a Zeno dispatch was returning
+  // project_not_linked because the dispatcher was reading a stale local DB.
+  router.get('/admin/projects/by-plane-id/:plane_project_id', authenticateAdmin, (req, res) => {
+    try {
+      const proj = getProjectByPlaneId(req.params.plane_project_id);
+      if (!proj) {
+        return res.status(404).json({ error: 'project_not_linked' });
+      }
+      res.json({
+        id: proj.id,
+        name: proj.name,
+        github_owner: proj.github_owner,
+        github_repo: proj.github_repo,
+        plane_project_id: proj.plane_project_id,
+        plane_workspace_slug: proj.plane_workspace_slug,
+        local_path: proj.local_path,
+        default_branch: proj.default_branch
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
