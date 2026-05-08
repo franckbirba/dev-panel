@@ -23,6 +23,26 @@ describe('predicates', () => {
     })).toBe(false);
     expect(predicates.qa_infra_only({ blockers: [] })).toBe(false);
   });
+
+  it('merge_blocked_fixable — fixable gates route to builder, hard gates stay terminal', () => {
+    // Fixable — workflow dispatches a builder pass.
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=conflicts_complex: 4 fichiers' })).toBe(true);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=check_failed:test: 3 tests rouges' })).toBe(true);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=head_moved: race on push' })).toBe(true);
+    expect(predicates.merge_blocked_fixable({ summary: 'no gate at all' })).toBe(true); // unknown → try
+
+    // Hard human-decision gates — terminal.
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=state: PR closed' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=draft: marked draft' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=untrusted_author' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=changes_requested' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=fork_needs_rebase' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=label:do-not-merge' })).toBe(false);
+
+    // Wait-states — let the next webhook drive, don't burn a builder pass.
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=ci_pending: 2 actions running' })).toBe(false);
+    expect(predicates.merge_blocked_fixable({ summary: 'gate=rebase_pushed: waiting for sync' })).toBe(false);
+  });
 });
 
 describe('predicate-YAML consistency', () => {
