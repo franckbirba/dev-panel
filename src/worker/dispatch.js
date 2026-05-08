@@ -12,6 +12,59 @@ function workerEventsUrl() {
     || 'http://localhost:3030/api/admin/events/publish';
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// When a caller dispatches with only a UUID work_item_id and no project_id
+// (Shelly's plane_dispatch_work_item with a UUID, internal pipeline retreats
+// that propagate the resolved id, anything that ran resolvePlaneWorkItem
+// elsewhere and lost the project_id), fan out across managed projects to
+// find which one owns the work item. First Plane 200 wins. This was the bug
+// behind the DEVPA-7c/-31/-36/-44 EDMS cluster: builders ran in dev-panel
+// because project_id was empty, the worker fell back to PROJECT_ROOT.
+let _managedProjectsCache = { at: 0, value: [] };
+async function fetchManagedProjects() {
+  const now = Date.now();
+  if (now - _managedProjectsCache.at < 5 * 60 * 1000 && _managedProjectsCache.value.length) {
+    return _managedProjectsCache.value;
+  }
+  const apiBase = process.env.API_BASE;
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!apiBase || !adminKey) return [];
+  try {
+    const r = await fetch(`${apiBase.replace(/\/$/, '')}/api/admin/projects`, {
+      headers: { 'X-Admin-Key': adminKey },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!r.ok) return [];
+    const body = await r.json();
+    const list = body?.projects || [];
+    _managedProjectsCache = { at: now, value: list };
+    return list;
+  } catch { return []; }
+}
+
+async function resolveProjectIdFromWorkItemUuid(work_item_uuid) {
+  const planeBase = process.env.PLANE_BASE_URL || 'https://plane.devpanl.dev';
+  const planeSlug = process.env.PLANE_WORKSPACE_SLUG || 'devpanl';
+  const planeKey = process.env.PLANE_API_KEY;
+  if (!planeKey || !UUID_RE.test(work_item_uuid)) return null;
+  const projects = await fetchManagedProjects();
+  for (const p of projects) {
+    if (!p.plane_project_id) continue;
+    try {
+      const r = await fetch(
+        `${planeBase}/api/v1/workspaces/${planeSlug}/projects/${p.plane_project_id}/issues/${work_item_uuid}/`,
+        { headers: { 'X-API-Key': planeKey }, signal: AbortSignal.timeout(5000) }
+      );
+      if (r.ok) {
+        const wi = await r.json();
+        if (wi?.project) return wi.project;
+      }
+    } catch { /* try next project */ }
+  }
+  return null;
+}
+
 // DEVPA-180: when running on the agents host the local SQLite is empty (the
 // projects table is authoritative services-side, mounted on the devpanel-api
 // container's storage volume). Resolve via /api/admin/projects/by-plane-id/:id
@@ -95,10 +148,22 @@ export async function enqueueWorkflowStart({
   // routed Zeno/EDMS commits to dev-panel itself. Caller can override by
   // passing context.project_root explicitly (test fixtures, reviewer/qa
   // retreats that re-use a previous step's worktree).
-  if (!context.project_root && plane.project_id) {
+  // Caller may have only passed a UUID work_item_id (e.g. Shelly's
+  // plane_dispatch_work_item('a95997ef-...') for an EDMS item). Fan out to
+  // Plane to find the owning project so the projects-table lookup below
+  // can route the worktree to the right repo. Skip when project_id was
+  // already provided (callers that knew the project save us the round-trip).
+  let resolvedProjectId = plane.project_id;
+  if (!context.project_root && !resolvedProjectId && plane.work_item_id) {
+    try {
+      resolvedProjectId = await resolveProjectIdFromWorkItemUuid(plane.work_item_id);
+    } catch { /* best-effort */ }
+  }
+
+  if (!context.project_root && resolvedProjectId) {
     let proj;
     try {
-      proj = await lookupProjectByPlaneId(plane.project_id);
+      proj = await lookupProjectByPlaneId(resolvedProjectId);
     } catch (e) {
       return { ok: false, error: `project_lookup_failed: ${e.message}` };
     }
@@ -106,10 +171,13 @@ export async function enqueueWorkflowStart({
       return {
         ok: false,
         error: 'project_not_linked',
-        message: `No projects row with plane_project_id=${plane.project_id} has local_path set. Run \`dev-panel admin link-project <name> --plane-id ${plane.project_id}\` on the services VPS.`
+        message: `No projects row with plane_project_id=${resolvedProjectId} has local_path set. Run \`dev-panel admin link-project <name> --plane-id ${resolvedProjectId}\` on the services VPS.`
       };
     }
     context = { ...context, project_root: proj.local_path };
+    // Propagate the resolved project_id forward so downstream steps in
+    // engine.triggerNext don't have to re-resolve.
+    plane = { ...plane, project_id: resolvedProjectId };
   }
 
   let instance_id;
