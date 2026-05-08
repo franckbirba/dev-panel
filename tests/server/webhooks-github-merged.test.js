@@ -33,15 +33,17 @@ function makeApp() {
   return app;
 }
 
-function payload(action, merged) {
+function payload(action, merged, overrides = {}) {
   return {
     action,
     pull_request: {
       number: 42,
       title: 'Hello',
       merged,
-      head: { sha: 'sha', ref: 'feat/wi-7096cee4-x' },
-      body: ''
+      head: { sha: 'sha', ref: 'feat/wi-7096cee4-889b-403d-b924-2ad2dfbf371c-x' },
+      body: '',
+      labels: [],
+      ...overrides
     },
     repository: { full_name: 'owner/repo' }
   };
@@ -132,5 +134,44 @@ describe('webhook closed+merged', () => {
     expect(r.status).toBe(201);
     const call = dispatchMock.mock.calls[0][0];
     expect(call.plane.project_id).toBeUndefined();
+  });
+
+  // Phase A — agent-PR gate. Human PRs (no agent branch, no label) must NOT
+  // dispatch merge-coordinator. The workflow blocked 100% of the time on
+  // human PRs; Franck merges those manually. See plan
+  // 2026-05-08-agent-runtime-multi-harness.md.
+  it('skips dispatch when PR is from a human (non-agent branch, no label)', async () => {
+    const r = await request(makeApp())
+      .post('/api/webhooks/github')
+      .set('x-github-event', 'pull_request')
+      .send(payload('opened', false, {
+        head: { sha: 'sha', ref: 'fix/typo-in-readme' },
+        labels: [{ name: 'bug' }]
+      }));
+    expect(r.status).toBe(204);
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('dispatches when PR has the agent-merge label even on a human-shaped branch', async () => {
+    dispatchMock.mockResolvedValueOnce({ ok: true, instance_id: 'i4', job_id: 'j4' });
+    const r = await request(makeApp())
+      .post('/api/webhooks/github')
+      .set('x-github-event', 'pull_request')
+      .send(payload('opened', false, {
+        head: { sha: 'sha', ref: 'fix/typo-in-readme' },
+        labels: [{ name: 'agent-merge' }]
+      }));
+    expect(r.status).toBe(201);
+    expect(dispatchMock).toHaveBeenCalledOnce();
+  });
+
+  it('dispatches on agent worktree branch even without a label', async () => {
+    dispatchMock.mockResolvedValueOnce({ ok: true, instance_id: 'i5', job_id: 'j5' });
+    const r = await request(makeApp())
+      .post('/api/webhooks/github')
+      .set('x-github-event', 'pull_request')
+      .send(payload('opened', false));
+    expect(r.status).toBe(201);
+    expect(dispatchMock).toHaveBeenCalledOnce();
   });
 });

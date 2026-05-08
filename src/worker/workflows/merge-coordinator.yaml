@@ -1,18 +1,11 @@
 name: merge-coordinator
-description: Auto-review and merge PRs — triggered by GitHub webhook or internal pipeline. Loops merge-coordinator → builder → merge-coordinator on fixable blockers (conflicts_complex, check_failed) so a PR with merge conflicts or red CI is repaired in-flight instead of bailing.
-max_revisions: 6
+description: Auto-squash-merge for agent PRs only. Single-shot predicate. No retreats. Notify Shelly on any non-mergeable signal so a human can take over.
+max_revisions: 1
 on_exhaustion: block
 
 steps:
   - agent: merge-coordinator
     on:
-      done:     { terminal: true }
-      blocked:  { next: builder, when: merge_blocked_fixable }
-      failed:   { terminal: true }
-
-  - agent: builder
-    retreat_allowed: [merge-coordinator]
-    on:
-      done:     { next: merge-coordinator }
-      blocked:  { terminal: true }
-      failed:   { terminal: true }
+      done:    { terminal: true }
+      blocked: { terminal: true }
+      failed:  { terminal: true }

@@ -44,6 +44,10 @@ export const predicates = {
 };
 
 // Intentionally defined but not yet referenced by any shipped workflow.
-// Spec §10.3 reserves qa_infra_only for a retry path we'll add to
-// work-item.yaml the first time a real infra flake shows up.
-export const KNOWN_UNUSED = Object.freeze(['qa_infra_only']);
+// - qa_infra_only: spec §10.3, reserved for a retry path we'll add to
+//   work-item.yaml the first time a real infra flake shows up.
+// - merge_blocked_fixable: was used by the old loop-y merge-coordinator
+//   workflow that retreated to a builder. Phase A (2026-05-08) narrowed
+//   merge-coordinator to single-shot, so the predicate is orphaned —
+//   kept around because Phase B may reintroduce a builder retreat.
+export const KNOWN_UNUSED = Object.freeze(['qa_infra_only', 'merge_blocked_fixable']);

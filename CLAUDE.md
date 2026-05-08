@@ -260,6 +260,54 @@ Attach to observe: `ssh hetzner-vps 'su - deploy -c "tmux -L deploy attach -t sh
 - `.agents/shelly/SOUL.md` — Shelly's persona/tool restrictions (single source of truth, included into this CLAUDE.md via `@` below)
 - Memory: `shelly_bootstrap.md`, `shelly_job_decisions.md`, `infra_prod_network.md`
 
+## Cheap-tier harness — goose × Qwen3-Coder via DeepInfra (Phase A, 2026-05-08)
+
+Anthropic Max-20x is ~220k tokens / 5h; the agents fleet runs ~1M tokens / 5h. Routine work (builder, designer, pm, predicate-only merge-coordinator) routes to **goose** (Block, MCP-native CLI) driving **Qwen3-Coder-480B-A35B-Instruct** via DeepInfra's OpenAI-compat endpoint. Hard work (reviewer, qa, architect, deploy, anything that already retreated) stays on Claude. Plan: `docs/superpowers/plans/2026-05-08-agent-runtime-multi-harness.md`.
+
+The gate is `src/worker/goose-driver.js#shouldUseGoose(agentRole)`, called from `spawnAgent` in `src/worker/index.js`. Resolution order:
+
+1. `FORCE_TIER=opus` → always Claude (kill switch).
+2. `DRIVER_<AGENT>=goose` (e.g. `DRIVER_BUILDER=goose`) → goose.
+3. `DRIVER_<AGENT>=claude` → Claude (per-role override).
+4. `DRIVER_DEFAULT=goose` → goose for everything not explicitly pinned.
+5. Otherwise → Claude.
+
+Required env on the agents host (services-side `.env.production`, propagated to the worker):
+
+```
+DEEPINFRA_API_KEY=<key>
+GOOSE_PROVIDER=openai
+GOOSE_BASE_URL=https://api.deepinfra.com/v1/openai
+GOOSE_MODEL=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo
+OPENAI_API_KEY=${DEEPINFRA_API_KEY}    # goose's openai provider reads OPENAI_API_KEY
+GOOSE_MODE=auto                         # auto-approve tool calls; without this the worker hangs on prompts
+DRIVER_BUILDER=goose                    # canary role
+```
+
+**Kill switch:** to revert any role instantly, set `DRIVER_<AGENT>=claude` on the worker and bounce systemd. Or `FORCE_TIER=opus` for a global revert. Either takes effect on the next dispatched job — running jobs finish on their original harness.
+
+**Bootstrap (one-time, manual on agents host):**
+
+```bash
+ssh hetzner-vps
+sudo -u deploy -H bash <<'EOS'
+curl -fsSL https://github.com/block/goose/releases/latest/download/goose-installer.sh | bash
+~/.local/bin/goose --version
+
+# Smoke against DeepInfra (must emit a tool call and exit 0):
+GOOSE_PROVIDER=openai \
+  GOOSE_BASE_URL=https://api.deepinfra.com/v1/openai \
+  OPENAI_API_KEY=$DEEPINFRA_API_KEY \
+  GOOSE_MODEL=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo \
+  GOOSE_MODE=auto \
+  ~/.local/bin/goose run --no-session -t "list 3 files in this dir using a tool, no prose"
+EOS
+```
+
+If the smoke fails (missing `goose` binary, auth error, no tool call), do **not** flip `DRIVER_BUILDER=goose` — investigate first. Pass condition is the only signal Track A3 is green.
+
+**Cost ceiling:** track DeepInfra spend daily on the dashboard once Phase B B4 ships. Until then, monitor manually via DeepInfra's billing UI; pause the canary if daily spend exceeds $5.
+
 ## Shelly's persona
 
 Shelly's full persona, voice, tools, capture protocol and thread-tag protocol live in **`.agents/shelly/SOUL.md`** and are auto-loaded by Claude Code via the `@` include below. That file is the single source of truth — edit it, not this section.

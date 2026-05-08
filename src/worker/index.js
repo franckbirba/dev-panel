@@ -82,6 +82,7 @@ import { notifyJob } from '../server/alerts.js';
 import { initMasterDatabase } from '../server/db.js';
 import { prepareWorktree, shouldUseWorktree } from './worktree.js';
 import { updateInstance } from '../server/workflow-instances.js';
+import { spawnGoose, shouldUseGoose } from './goose-driver.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -143,6 +144,16 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
+  // Phase A — env-gated cheap-tier harness. When DRIVER_<AGENT>=goose (or
+  // DRIVER_DEFAULT=goose) and FORCE_TIER!=opus, route to goose driving
+  // Qwen3-Coder via DeepInfra. Same return contract as the Claude path
+  // below: resolve(finalText) on exit 0, reject on non-zero.
+  if (shouldUseGoose(agentRole)) {
+    return spawnGoose({
+      jobId, prompt, agentRole, cwd,
+      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    });
+  }
   return new Promise((resolve, reject) => {
     // --strict-mcp-config + --mcp-config: pin the ephemeral's MCP set to
     // the worker-specific config (no `telegram` entry), ignoring the

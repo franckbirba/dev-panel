@@ -17,6 +17,24 @@ const TITLE_SEQ_RE = /\b(DEVPA|ZENO|EDMS)-(\d+)\b/;
 
 const ALLOWED_ACTIONS = new Set(['opened', 'reopened', 'synchronize', 'closed']);
 
+// Agent-only gate: dispatch merge-coordinator only on PRs that are recognizably
+// from an ephemeral agent worktree, never on human PRs. Two signals — either
+// suffices:
+//   1. branch matches the worker's `feat/wi-<uuid>-*` convention (only the
+//      worker's prepareWorktree creates branches in that shape).
+//   2. PR carries the explicit `agent-merge` label.
+// Human PRs (Franck, Edwin, Alex) lack both. This kills the "every push fires
+// a merge-coordinator that always blocks" cost the webhook used to pay.
+const AGENT_BRANCH_RE = /^feat\/wi-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i;
+const AGENT_MERGE_LABEL = 'agent-merge';
+
+export function isAgentPR(pr) {
+  if (!pr) return false;
+  if (AGENT_BRANCH_RE.test(pr.head?.ref || '')) return true;
+  const labels = Array.isArray(pr.labels) ? pr.labels : [];
+  return labels.some(l => (l?.name || '') === AGENT_MERGE_LABEL);
+}
+
 export function verifySignature(payload, signature, secret = WEBHOOK_SECRET) {
   if (!secret || !signature) return false;
   const expected = 'sha256=' + crypto
@@ -127,6 +145,15 @@ export function mountGitHubWebhook(app) {
           const { broadcastRelease } = await import('./release-notes.js');
           const result = await broadcastRelease({ repo, pr });
           return res.status(result.broadcast ? 202 : 204).end();
+        }
+
+        // Agent-PR gate. Human PRs never trigger merge-coordinator — the
+        // workflow blocks 100% of the time on them and Franck merges manually
+        // anyway. Only fire for recognizable agent worktree branches or PRs
+        // explicitly labelled `agent-merge`.
+        if (!isAgentPR(pr)) {
+          console.log(`[webhook] merge-coordinator skipped for ${repo}#${prNumber}: not an agent PR`);
+          return res.status(204).end();
         }
 
         // Idempotence: skip if merge-coordinator already active for this PR
