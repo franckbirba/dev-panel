@@ -128,6 +128,30 @@ d('enqueueWorkflowStart', () => {
     expect(enqueue.mock.calls[0][0].context.project_root).toBeUndefined();
   });
 
+  it('refuses UUID work_item_id when project_id cannot be resolved (would otherwise route to PROJECT_ROOT)', async () => {
+    // Real-world failure: Shelly calls plane_dispatch_work_item with a UUID,
+    // managed-projects fan-out returns nothing (missing env, cache miss),
+    // resolveProjectIdFromWorkItemUuid → null. Old behaviour silently fell
+    // back to PROJECT_ROOT (= dev-panel) and ZENO/EDMS builders ran in the
+    // wrong checkout, exit 0, no PR. Now we refuse loudly.
+    const enqueue = vi.fn().mockResolvedValue({ id: 'should-not-fire' });
+    __setEnqueueForTests(enqueue);
+    const prev = process.env.PLANE_API_KEY;
+    delete process.env.PLANE_API_KEY; // force resolveProjectIdFromWorkItemUuid → null
+    try {
+      const out = await enqueueWorkflowStart({
+        workflow: 'work-item',
+        plane: { work_item_id: '11111111-2222-3333-4444-555555555555' },
+        work_item: { title: 'unrouted UUID' }
+      });
+      expect(out.ok).toBe(false);
+      expect(out.error).toBe('project_unresolved');
+      expect(enqueue).not.toHaveBeenCalled();
+    } finally {
+      if (prev !== undefined) process.env.PLANE_API_KEY = prev;
+    }
+  });
+
   it('cancelActiveInstances flips active rows to cancelled and lets a fresh dispatch land', async () => {
     const { cancelActiveInstances } = await import('../../src/server/workflow-instances.js');
     const enqueue = vi.fn().mockResolvedValue({ id: 'j-cancel' });
