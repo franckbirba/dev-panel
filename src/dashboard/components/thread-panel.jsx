@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeAdminEvents } from '@/lib/events';
 import { getAdminKey } from '@/lib/projects-store';
 import { IconClose, IconSend, IconArrowLeft } from './icons';
+import { CaptureMetaPanel, CaptureScreenshot, parseMessageMetadata } from './capture-meta-panel';
 
 function timeAgo(iso) {
   if (!iso) return '\u2014';
@@ -119,18 +120,23 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-        {messages.map((m, i) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
-            style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s` }}>
-            <div className={`max-w-[80%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${ROLE_STYLE[m.role] || ROLE_STYLE.system}`}>
-              {m.role !== 'user' && (
-                <div className="text-[10px] font-mono uppercase tracking-wider opacity-50 mb-1">{ROLE_LABEL[m.role] || m.role}</div>
-              )}
-              <div className="whitespace-pre-wrap">{m.content}</div>
-              <div className="text-[10px] opacity-40 mt-1.5 font-mono">{timeAgo(m.created_at)}</div>
+        {messages.map((m, i) => {
+          const meta = parseMessageMetadata(m.metadata);
+          return (
+            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
+              style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s` }}>
+              <div className={`max-w-[80%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${ROLE_STYLE[m.role] || ROLE_STYLE.system}`}>
+                {m.role !== 'user' && (
+                  <div className="text-[10px] font-mono uppercase tracking-wider opacity-50 mb-1">{ROLE_LABEL[m.role] || m.role}</div>
+                )}
+                <div className="whitespace-pre-wrap">{m.content}</div>
+                <CaptureScreenshot meta={meta} />
+                <CaptureMetaPanel meta={meta} />
+                <div className="text-[10px] opacity-40 mt-1.5 font-mono">{timeAgo(m.created_at)}</div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={endRef} />
       </div>
 
