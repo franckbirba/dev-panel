@@ -39,22 +39,28 @@ $TMUX new-session -d -s "$SESSION" -n api -c "$REPO_ROOT" \
 $TMUX new-window -t "$SESSION" -n dash -c "$REPO_ROOT" \
   "npm run dev:dashboard"
 
-# Window 3: worker — horizontal split, hint comments in shells.
+# Window 3: worker — horizontal split, hint commands pre-loaded in shells.
+# Hints use the `:` (no-op) builtin with a quoted argument so zsh never tries
+# to parse the contents (`#` comments and globs aren't safe in interactive
+# zsh by default — INTERACTIVE_COMMENTS is off, EXTENDED_GLOB rejects parens).
 $TMUX new-window -t "$SESSION" -n worker -c "$REPO_ROOT"
 $TMUX send-keys -t "$SESSION:worker" \
-  "# tail -F path/to/worker.log    # uncomment when worker is running locally" Enter
-$TMUX split-window -v -t "$SESSION:worker" -c "$REPO_ROOT" \
-  "redis-cli -h 127.0.0.1 monitor || exec \$SHELL"
+  ': "tail -F path/to/worker.log   # run when the worker is up locally"' Enter
+$TMUX split-window -v -t "$SESSION:worker" -c "$REPO_ROOT"
+$TMUX send-keys -t "$SESSION:worker.2" \
+  ': "redis-cli -h 127.0.0.1 monitor   # brew install redis first"' Enter
 
 # Window 4: mcp — horizontal split.
 $TMUX new-window -t "$SESSION" -n mcp -c "$REPO_ROOT/src/mcp"
 $TMUX split-window -v -t "$SESSION:mcp" -c "$REPO_ROOT"
 $TMUX send-keys -t "$SESSION:mcp.2" \
-  "# tail -F path/to/mcp.log       # uncomment when MCP server is running locally" Enter
+  ': "tail -F path/to/mcp.log   # run when the MCP server is up locally"' Enter
 
 # Window 5: shelly — read-only attach to the live Shelly tmux on hetzner-vps.
+# `ssh -tt` forces PTY allocation through both layers (outer ssh + `su -c`),
+# without which the inner `tmux attach` errors with "open terminal failed".
 $TMUX new-window -t "$SESSION" -n shelly \
-  "ssh hetzner-vps 'su - deploy -c \"tmux -L deploy attach -t shelly -r\"' || exec \$SHELL"
+  "ssh -tt hetzner-vps 'su - deploy -c \"tmux -L deploy attach -t shelly -r\"' || exec \$SHELL"
 
 # Window 6: git — plain shell.
 $TMUX new-window -t "$SESSION" -n git -c "$REPO_ROOT"
