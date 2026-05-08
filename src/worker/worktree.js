@@ -16,7 +16,7 @@
 // bootstrap/shelly_digest are pre-spawn shell handlers).
 
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 const NON_CODING_AGENTS = new Set([
@@ -69,6 +69,44 @@ function git(args, cwd) {
   return execSync(`git ${args}`, { cwd, stdio: 'pipe', encoding: 'utf8' });
 }
 
+// Parse `git worktree list --porcelain` into [{ path, branch }] pairs.
+// Returns [] on any failure — callers treat empty as "nothing to reclaim".
+function listWorktrees(repoRoot) {
+  let out;
+  try { out = git('worktree list --porcelain', repoRoot); }
+  catch { return []; }
+  const records = [];
+  let cur = {};
+  for (const line of out.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (cur.path) records.push(cur);
+      cur = { path: line.slice('worktree '.length).trim() };
+    } else if (line.startsWith('branch ')) {
+      // branch refs come as "branch refs/heads/<name>"; strip the prefix
+      const ref = line.slice('branch '.length).trim();
+      cur.branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
+    }
+  }
+  if (cur.path) records.push(cur);
+  return records;
+}
+
+// Reclaim a stale worktree before we try to claim its path or branch.
+// Safe under the worker's invariant: BullMQ never dispatches the same
+// jobId concurrently, and this fleet runs a single worker host — so any
+// worktree we conflict with is owned by a dead/finished job.
+//
+// Failures are non-fatal and logged; the subsequent `git worktree add`
+// will surface a clearer error if reclamation didn't work.
+function reclaimWorktree(wtPath, repoRoot, reason) {
+  console.warn(`[worktree] reclaiming stale worktree ${wtPath} (${reason})`);
+  try { git(`worktree remove --force "${wtPath}"`, repoRoot); }
+  catch (err) {
+    console.warn(`[worktree] reclaim remove failed: ${err.message?.slice(0, 200)}`);
+    try { git('worktree prune', repoRoot); } catch { /* ignore */ }
+  }
+}
+
 // Skip predicate — exposed for tests and for the worker's branch logic.
 export function shouldUseWorktree(agent) {
   if (!WORKTREES_ENABLED) return false;
@@ -101,14 +139,30 @@ export async function prepareWorktree(jobId, opts = {}) {
   mkdirSync(WORKTREES_BASE, { recursive: true });
   const path = join(WORKTREES_BASE, String(jobId));
 
-  // Refuse to clobber an existing path. If a previous job crashed before
-  // cleanup, the operator must remove it manually — silent reuse is the
-  // exact contamination this module exists to prevent.
+  // Drop git's record of any worktree whose on-disk path no longer exists.
+  // Cheap and idempotent — keeps the next list/add commands seeing a clean
+  // view without us having to grep for "missing" markers.
+  try { git('worktree prune', repoRoot); } catch { /* best effort */ }
+
+  // Reclaim a stale path at our exact slot. BullMQ won't dispatch the same
+  // jobId concurrently, so anything still sitting here is from a previous
+  // attempt of THIS job (worker SIGTERM, OOM, restart mid-run) and is by
+  // definition dead. Without this, every retry after a killed job died on
+  // "worktree path already exists" and required a 9pm SSH cleanup — see
+  // canary chain 2026-05-08.
   if (existsSync(path)) {
-    throw new Error(
-      `worktree path already exists: ${path}. ` +
-      `Run \`git worktree remove --force ${path}\` and retry.`
-    );
+    const known = listWorktrees(repoRoot).find(w => w.path === path);
+    if (known) {
+      reclaimWorktree(path, repoRoot, 'same-jobId slot left behind by previous attempt');
+    } else {
+      // Bare directory with no git record — leftover from a partially-failed
+      // `worktree add` or a manual `rm -rf .git/worktrees/<id>` without the
+      // matching `rm -rf <path>`. Safe to drop.
+      console.warn(`[worktree] removing orphan directory at ${path} (no git record)`);
+      try { rmSync(path, { recursive: true, force: true }); } catch (err) {
+        console.warn(`[worktree] orphan rm failed: ${err.message?.slice(0, 200)}`);
+      }
+    }
   }
 
   // Best-effort fetch so the new branch is based on the freshest origin.
@@ -140,6 +194,17 @@ export async function prepareWorktree(jobId, opts = {}) {
       // Materialize a tracking local branch from the remote.
       git(`branch --track "${branch}" "origin/${branch}"`, repoRoot);
     } catch { /* not on remote either */ }
+  }
+
+  // Reclaim a stale worktree that's still attached to the branch we want.
+  // Common after a SIGTERM/OOM kill — git keeps the branch pinned to the
+  // dead worktree's path, and the next `worktree add` fails with
+  // "'feat/wi-...' is already used by worktree at ...". Same invariant as
+  // the same-slot reclaim above: single-host worker, no concurrent same-job
+  // dispatch, so the holder is dead.
+  const conflicting = listWorktrees(repoRoot).find(w => w.branch === branch && w.path !== path);
+  if (conflicting) {
+    reclaimWorktree(conflicting.path, repoRoot, `branch ${branch} pinned to dead worktree`);
   }
 
   // Create the worktree. New branch off baseBranch; existing branch checked out.

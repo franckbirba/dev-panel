@@ -148,15 +148,115 @@ describe('worktree — prepareWorktree', () => {
     expect(cmds.some(c => c.includes('"origin/main"'))).toBe(true);
   });
 
-  it('throws if the worktree path already exists (no silent reuse)', async () => {
-    captureExec();
+  it('reclaims a stale same-jobId slot left behind by a prior attempt', async () => {
+    // Path exists AND git knows about it → previous attempt of this exact
+    // jobId got SIGTERM'd before cleanup. Single-worker invariant means the
+    // prior occupant is dead, safe to force-remove.
+    const calls = [];
+    vi.doMock('child_process', () => ({
+      execSync: vi.fn((cmd) => {
+        calls.push(cmd);
+        if (cmd.includes('worktree list --porcelain')) {
+          return [
+            'worktree /repo',
+            'HEAD abc123',
+            'branch refs/heads/main',
+            '',
+            // The slot we're about to claim, owned by a dead prior attempt
+            `worktree ${join(process.env.DEVPANEL_WORKTREES, 'job-77')}`,
+            'HEAD def456',
+            'branch refs/heads/feat/X-1-t',
+            ''
+          ].join('\n');
+        }
+        if (cmd.includes('rev-parse --verify')) {
+          const err = new Error('not found'); err.status = 128; throw err;
+        }
+        return '';
+      })
+    }));
     const { prepareWorktree, __internal } = await import('../../src/worker/worktree.js');
     const path = join(__internal.WORKTREES_BASE, 'job-77');
     await fs.mkdir(path, { recursive: true });
-    await expect(prepareWorktree('job-77', {
+    const wt = await prepareWorktree('job-77', {
       agent: 'builder',
       sequenceId: 1, projectIdentifier: 'X', workItem: { title: 't' }
-    })).rejects.toThrow(/worktree path already exists/);
+    });
+    expect(wt).not.toBeNull();
+    // Reclaim ran on the existing path before the new add.
+    const removeCall = calls.find(c => c.includes(`worktree remove --force "${path}"`));
+    expect(removeCall).toBeDefined();
+    expect(calls.indexOf(removeCall)).toBeLessThan(
+      calls.findIndex(c => c.includes('worktree add'))
+    );
+  });
+
+  it('removes an orphan directory with no git record before adding', async () => {
+    // Path exists on disk but git doesn't know about it (partial-failure
+    // leftover). Drop the bare dir and continue; rm via fs.rmSync, no
+    // `worktree remove` call (git would refuse — it's not a worktree).
+    const calls = [];
+    vi.doMock('child_process', () => ({
+      execSync: vi.fn((cmd) => {
+        calls.push(cmd);
+        if (cmd.includes('worktree list --porcelain')) {
+          return 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n';
+        }
+        if (cmd.includes('rev-parse --verify')) {
+          const err = new Error('not found'); err.status = 128; throw err;
+        }
+        return '';
+      })
+    }));
+    const { prepareWorktree, __internal } = await import('../../src/worker/worktree.js');
+    const path = join(__internal.WORKTREES_BASE, 'job-orphan');
+    await fs.mkdir(path, { recursive: true });
+    await fs.writeFile(join(path, 'leftover.txt'), 'stale');
+    const wt = await prepareWorktree('job-orphan', {
+      agent: 'builder',
+      sequenceId: 2, projectIdentifier: 'X', workItem: { title: 't' }
+    });
+    expect(wt).not.toBeNull();
+    // The dir was rm'd by fs (not by git) before the add.
+    await expect(fs.access(join(path, 'leftover.txt'))).rejects.toThrow();
+    expect(calls.some(c => c.includes(`worktree remove --force "${path}"`))).toBe(false);
+  });
+
+  it('reclaims a stale worktree pinned to the target branch', async () => {
+    // Path is fresh, but the branch is attached to a dead sibling worktree
+    // (canary 2080→2088 case). We should detect and force-remove the
+    // sibling before `worktree add`, otherwise git fails with
+    // "'feat/X-1-t' is already used by worktree at ...".
+    const calls = [];
+    const sibling = '/storage/worktrees/dead-sibling';
+    vi.doMock('child_process', () => ({
+      execSync: vi.fn((cmd) => {
+        calls.push(cmd);
+        if (cmd.includes('worktree list --porcelain')) {
+          return [
+            'worktree /repo', 'HEAD abc', 'branch refs/heads/main', '',
+            `worktree ${sibling}`,
+            'HEAD def',
+            'branch refs/heads/feat/X-1-t',
+            ''
+          ].join('\n');
+        }
+        if (cmd.includes('rev-parse --verify')) {
+          const err = new Error('not found'); err.status = 128; throw err;
+        }
+        return '';
+      })
+    }));
+    const { prepareWorktree } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-fresh', {
+      agent: 'builder',
+      sequenceId: 1, projectIdentifier: 'X', workItem: { title: 't' }
+    });
+    expect(wt).not.toBeNull();
+    const reclaimIdx = calls.findIndex(c => c.includes(`worktree remove --force "${sibling}"`));
+    const addIdx = calls.findIndex(c => c.includes('worktree add'));
+    expect(reclaimIdx).toBeGreaterThan(-1);
+    expect(reclaimIdx).toBeLessThan(addIdx);
   });
 
   it('uses an explicit branch override when provided (reviewer/qa reuse)', async () => {
