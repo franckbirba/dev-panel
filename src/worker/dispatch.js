@@ -180,6 +180,23 @@ export async function enqueueWorkflowStart({
     plane = { ...plane, project_id: resolvedProjectId };
   }
 
+  // A UUID work_item_id that reaches this point with no project_root and no
+  // resolvedProjectId means resolveProjectIdFromWorkItemUuid returned null —
+  // managed-projects fan-out failed (API_BASE/ADMIN_API_KEY missing on the
+  // MCP host, cache miss, Plane 4xx) or the UUID belongs to a project not in
+  // the managed list. Letting the job through silently falls back to
+  // PROJECT_ROOT in the worker, which routes Zeno/EDMS commits into the
+  // dev-panel checkout — exit 0, no PR, no signal. Refuse loudly instead.
+  // Synthetic ids (github:owner/repo#42, cycle:<id>) and test fixtures
+  // (wi-d1, wi-pr4) don't match UUID_RE and keep the legacy escape hatch.
+  if (!context.project_root && !resolvedProjectId && UUID_RE.test(plane.work_item_id)) {
+    return {
+      ok: false,
+      error: 'project_unresolved',
+      message: `work_item_id=${plane.work_item_id} is a UUID but no plane.project_id was provided and resolveProjectIdFromWorkItemUuid returned null. Either pass plane.project_id explicitly, or ensure API_BASE+ADMIN_API_KEY+PLANE_API_KEY are set on the dispatcher and the work item's project is in the managed projects table.`
+    };
+  }
+
   let instance_id;
   try {
     instance_id = await createInstance({
