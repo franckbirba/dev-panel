@@ -79,6 +79,26 @@ docker exec plane-db psql -U plane -d plane -c "ALTER USER plane WITH PASSWORD '
 ```
 See memory `infra_plane_caveats.md` for the full symptom-to-fix decision tree.
 
+**Plane API rate limits — two layers, one knob.** Plane has *two* throttles: (1) the per-API-key `ApiKeyRateThrottle` in `/code/plane/api/rate_limit.py` (the one our agents hit — emits `error_code:5900 RATE_LIMIT_EXCEEDED`) defaulting to `60/minute`, controlled by env `API_KEY_RATE_LIMIT`; and (2) the DRF-wide `AnonRateThrottle` in `/code/plane/settings/common.py` defaulting to `30/minute`, with no env knob. With 5 devs × parallel `claude -p` agents × ~15 calls per work-item bootstrap, both saturate within seconds. The fix:
+
+- Set `API_KEY_RATE_LIMIT=10000/minute` on the `plane-api` service (already wired in `docker-compose.yml`). This is the actual fix — covers all authenticated MCP/agent traffic.
+- Mount `./infra/plane/common.py:/code/plane/settings/common.py:ro` on `plane-api` as belt-and-braces for paths that fall through to the anon throttle (also bumped to `10000/minute`).
+
+Verify after recreate:
+```bash
+docker exec -e DJANGO_SETTINGS_MODULE=plane.settings.production plane-api \
+  python -c "from django.conf import settings; print(settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'])"
+docker exec plane-api env | grep API_KEY_RATE_LIMIT
+```
+
+To upgrade Plane: `docker exec plane-api cat /code/plane/settings/common.py > infra/plane/common.py`, re-apply the bumped rates, commit.
+
+**Network landmine — `plane-api` recreate drops `devpanel_net`.** Recreating `plane-api` via compose attaches it only to `dev-panel_devpanel_net` (project-prefixed); but `plane-db`/`plane-redis` live on `devpanel_net` (no prefix), so the new container fails to resolve `plane-db` → 502 loop. Fix after every recreate:
+```bash
+docker network connect devpanel_net plane-api
+```
+This is the same network-split symptom documented in `infra_plane_caveats.md`. The proper fix would be marking `devpanel_net` as `external: true` in `docker-compose.yml`, but that's a bigger change touching every service — for now, the manual reconnect after a `plane-api` recreate is the working runbook.
+
 **The `projects` table lives services-side only.** It is the single source of truth for `plane_project_id`, `local_path`, `default_branch`, `api_key`, and team routing. The `devpanel-api` container mounts the SQLite file from the `devpanel-storage` volume on the services VPS. The agents host has its own checkout of this repo (`/home/deploy/projects/dev-panel`) but its `storage/projects.db` is **empty** — never trust it. Any code that needs to resolve a Plane project_id to a local checkout path **must** go through `GET /api/admin/projects/by-plane-id/:plane_project_id` (admin-auth) on services. The MCP `devpanel-mcp` and the worker's `enqueueWorkflowStart` already do this when `API_BASE` + `ADMIN_API_KEY` are set. Don't add new code that reads `projects.db` directly from the agents host. (DEVPA-180)
 
 ## GlitchTip — error tracking bootstrap (DEVPA-168)

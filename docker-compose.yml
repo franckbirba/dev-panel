@@ -380,6 +380,16 @@ services:
       # restart-loops before serving. 4 workers is the minimum for the
       # browser bootstrap (15+ parallel API calls); 2 saturates and 504s.
       GUNICORN_WORKERS: "4"
+      # Per-API-key throttle (plane.api.rate_limit.ApiKeyRateThrottle).
+      # Upstream default is 60/minute, which throttles our 5-dev × N-agent
+      # workload within seconds of a bootstrap. Bumped to keep the throttle
+      # as a circuit-breaker against runaway loops only.
+      API_KEY_RATE_LIMIT: "10000/minute"
+    volumes:
+      # Override DRF anon throttle rates — see header of infra/plane/common.py.
+      # (Belt-and-braces with API_KEY_RATE_LIMIT above; covers paths that fall
+      # through to AnonRateThrottle.)
+      - ./infra/plane/common.py:/code/plane/settings/common.py:ro
     depends_on:
       plane-db:
         condition: service_healthy
