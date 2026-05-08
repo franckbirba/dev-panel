@@ -41,13 +41,26 @@ function slugify(s, max = 32) {
 // Build a stable, sortable, descriptive branch name. Examples:
 //   feat/DEVPA-144-worker-worktree-isolation     (sequence available)
 //   feat/wi-228066cb-worker-worktree-isolation   (UUID fallback)
+//   feat/wi-github-epitec-fix-zeno-pagination    (synthetic ID like
+//                                                 "github:owner/repo#42")
 function deriveBranch({ sequenceId, projectIdentifier, workItemId, title }) {
   const slug = slugify(title);
   if (sequenceId && projectIdentifier) {
     return `feat/${projectIdentifier}-${sequenceId}-${slug}`;
   }
   if (workItemId) {
-    return `feat/wi-${workItemId.slice(0, 8)}-${slug}`;
+    // UUIDs slice cleanly to a-f0-9 + hyphen; synthetic IDs from the GitHub
+    // webhook (`github:owner/repo#42`) contain `:`, `/`, `#` — all illegal
+    // in git refs. `git worktree add -b` rejects them outright (observed in
+    // prod: jobs 1581/1605/1607/1609 looped on "fatal: 'feat/wi-github:E-…'
+    // is not a valid branch name"). Slugify the leading 12 chars only when
+    // the raw slice would be unsafe, so existing UUID-based names stay byte
+    // identical for idempotence with already-running instances.
+    const head = workItemId.slice(0, 12);
+    const safe = /^[a-z0-9-]+$/.test(head)
+      ? workItemId.slice(0, 8)
+      : slugify(head, 12);
+    return `feat/wi-${safe}-${slug}`;
   }
   return `feat/job-${slug}`;
 }

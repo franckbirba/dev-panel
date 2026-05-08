@@ -4,9 +4,13 @@ import { createInstance, updateInstance } from '../server/workflow-instances.js'
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 import { getProjectByPlaneId } from '../server/db.js';
 
-const WORKER_EVENTS_URL = process.env.WORKER_EVENTS_URL
-  || 'http://localhost:3030/api/admin/events/publish';
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+// Read at call time, not import time — tests set these in beforeEach AFTER
+// import, and a worker starting before EnvironmentFile loads would otherwise
+// stay deaf until restart.
+function workerEventsUrl() {
+  return process.env.WORKER_EVENTS_URL
+    || 'http://localhost:3030/api/admin/events/publish';
+}
 
 // DEVPA-180: when running on the agents host the local SQLite is empty (the
 // projects table is authoritative services-side, mounted on the devpanel-api
@@ -15,11 +19,12 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 // otherwise so unit tests and bare local dev still work.
 async function lookupProjectByPlaneId(plane_project_id) {
   const apiBase = process.env.API_BASE;
-  if (apiBase && ADMIN_API_KEY) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (apiBase && adminKey) {
     const url = `${apiBase.replace(/\/$/, '')}/api/admin/projects/by-plane-id/${encodeURIComponent(plane_project_id)}`;
     let r;
     try {
-      r = await fetch(url, { headers: { 'X-Admin-Key': ADMIN_API_KEY } });
+      r = await fetch(url, { headers: { 'X-Admin-Key': adminKey } });
     } catch (e) {
       const err = new Error(`api_unreachable: ${e.message}`);
       err.code = 'api_unreachable';
@@ -40,11 +45,12 @@ async function lookupProjectByPlaneId(plane_project_id) {
 }
 
 async function publishEvent(event, data) {
-  if (!ADMIN_API_KEY) return;
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return;
   try {
-    await fetch(WORKER_EVENTS_URL, {
+    await fetch(workerEventsUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
       body: JSON.stringify({ event, data })
     });
   } catch { /* SSE is best-effort */ }

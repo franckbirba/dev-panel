@@ -4,6 +4,7 @@ import request from 'supertest';
 
 const broadcastMock = vi.fn();
 const dispatchMock = vi.fn();
+const getProjectByGithubRepoMock = vi.fn();
 
 // Mock pg pool so hasActiveInstance doesn't hit a real DB
 vi.mock('../../src/server/pg.js', () => ({
@@ -14,6 +15,14 @@ vi.mock('../../src/server/pg.js', () => ({
 
 vi.mock('../../src/server/release-notes.js', () => ({
   broadcastRelease: (...a) => broadcastMock(...a)
+}));
+
+// Mock the projects-table lookup so the webhook can resolve repo →
+// plane_project_id without a real master SQLite. The webhook's runtime
+// `import { getProjectByGithubRepo } from './db.js'` is rewritten to this
+// mock by Vitest's module hoisting.
+vi.mock('../../src/server/db.js', () => ({
+  getProjectByGithubRepo: (...a) => getProjectByGithubRepoMock(...a)
 }));
 
 import { mountGitHubWebhook, __setDispatchForTests } from '../../src/server/webhooks-github.js';
@@ -43,6 +52,8 @@ describe('webhook closed+merged', () => {
     delete process.env.GITHUB_WEBHOOK_SECRET;
     broadcastMock.mockReset();
     dispatchMock.mockReset();
+    getProjectByGithubRepoMock.mockReset();
+    getProjectByGithubRepoMock.mockReturnValue(null); // no project linked by default
     __setDispatchForTests(dispatchMock);
   });
 
@@ -85,5 +96,41 @@ describe('webhook closed+merged', () => {
     expect(r.status).toBe(201);
     expect(dispatchMock).toHaveBeenCalledOnce();
     expect(broadcastMock).not.toHaveBeenCalled();
+  });
+
+  // DEVPA-180: when the PR's repo is registered in the master projects
+  // table, the webhook MUST pass plane_project_id into the dispatch so the
+  // worker creates the worktree under the right local checkout. Without
+  // this, every Zeno/EDMS PR worktree was being made under PROJECT_ROOT
+  // (dev-panel) and the builder was pushing commits to the wrong repo.
+  it('passes plane_project_id when the repo is linked in the projects table', async () => {
+    getProjectByGithubRepoMock.mockReturnValueOnce({
+      id: 'p-zeno', name: 'Zeno',
+      github_owner: 'owner', github_repo: 'repo',
+      plane_project_id: 'plane-zeno-uuid',
+      local_path: '/home/deploy/projects/Zeno'
+    });
+    dispatchMock.mockResolvedValueOnce({ ok: true, instance_id: 'i2', job_id: 'j2' });
+    const r = await request(makeApp())
+      .post('/api/webhooks/github')
+      .set('x-github-event', 'pull_request')
+      .send(payload('opened', false));
+    expect(r.status).toBe(201);
+    expect(getProjectByGithubRepoMock).toHaveBeenCalledWith('owner', 'repo');
+    const call = dispatchMock.mock.calls[0][0];
+    expect(call.plane.project_id).toBe('plane-zeno-uuid');
+    expect(call.plane.work_item_id).toBe('github:owner/repo#42');
+  });
+
+  it('omits plane.project_id when the repo is NOT in the projects table', async () => {
+    getProjectByGithubRepoMock.mockReturnValueOnce(null);
+    dispatchMock.mockResolvedValueOnce({ ok: true, instance_id: 'i3', job_id: 'j3' });
+    const r = await request(makeApp())
+      .post('/api/webhooks/github')
+      .set('x-github-event', 'pull_request')
+      .send(payload('opened', false));
+    expect(r.status).toBe(201);
+    const call = dispatchMock.mock.calls[0][0];
+    expect(call.plane.project_id).toBeUndefined();
   });
 });

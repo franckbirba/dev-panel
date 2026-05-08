@@ -4,6 +4,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import { pool } from './pg.js';
+import { getProjectByGithubRepo } from './db.js';
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 
@@ -143,10 +144,21 @@ export function mountGitHubWebhook(app) {
         // The agent resolves the actual Plane work item from planeRef at runtime.
         const workItemId = syntheticWorkItemId(repo, prNumber);
 
+        // Resolve repo → projects row → plane_project_id so the dispatcher's
+        // DEVPA-180 lookup can put the right `local_path` on context.
+        // Without this, every Zeno/EDMS PR worktree gets created under
+        // PROJECT_ROOT (dev-panel) — that's the bug that took out jobs
+        // 1581/1605/1607/1609 with "feat/wi-github:E-…" branch errors.
+        const [ownerName, repoName] = repo.split('/');
+        const project = getProjectByGithubRepo(ownerName, repoName);
+
         const dispatch = await getDispatch();
         const result = await dispatch({
           workflow: 'merge-coordinator',
-          plane: { work_item_id: workItemId },
+          plane: {
+            work_item_id: workItemId,
+            ...(project?.plane_project_id ? { project_id: project.plane_project_id } : {})
+          },
           work_item: {
             title: prTitle || `PR #${prNumber}`,
             description: pr.body || ''

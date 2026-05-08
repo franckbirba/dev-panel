@@ -99,6 +99,25 @@ describe('worktree — deriveBranch', () => {
     const { __internal } = await import('../../src/worker/worktree.js');
     expect(__internal.deriveBranch({})).toBe('feat/job-work');
   });
+
+  // Synthetic work item IDs from webhooks-github.js look like
+  // `github:owner/repo#42` and contain `:` `/` `#`, which are illegal in
+  // git refs. The previous slice-only path produced unusable branches like
+  // `feat/wi-github:E-…` that broke jobs 1581/1605/1607/1609 in prod.
+  it('slugifies synthetic ids that contain illegal git ref characters', async () => {
+    captureExec();
+    const { __internal } = await import('../../src/worker/worktree.js');
+    const branch = __internal.deriveBranch({
+      workItemId: 'github:EpitechAfrik/Zeno#45',
+      title: 'feat: sonde parent student activity'
+    });
+    // Must contain only [a-zA-Z0-9/_-]; no `:` `#` `/` outside the leading
+    // namespace component.
+    expect(branch).toMatch(/^feat\/wi-[a-z0-9-]+-[a-z0-9-]+$/);
+    expect(branch).not.toMatch(/[:#]/);
+    // Track exact value so any future drift is loud.
+    expect(branch).toBe('feat/wi-github-epite-feat-sonde-parent-student-activi');
+  });
 });
 
 describe('worktree — prepareWorktree', () => {

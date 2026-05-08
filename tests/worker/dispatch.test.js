@@ -221,16 +221,22 @@ d('enqueueWorkflowStart', () => {
       const enqueue = vi.fn().mockResolvedValue({ id: 'j-http-1' });
       __setEnqueueForTests(enqueue);
 
-      let calledUrl, calledHeaders;
+      // The dispatcher makes TWO fetches per dispatch: the by-plane-id lookup
+      // and a fire-and-forget publishEvent. Capture every call so the assert
+      // doesn't depend on which one happens last.
+      const fetchCalls = [];
       globalThis.fetch = vi.fn(async (url, init = {}) => {
-        calledUrl = String(url);
-        calledHeaders = init.headers || {};
-        return new Response(JSON.stringify({
-          id: 'p1', name: 'Zeno',
-          plane_project_id: planeId,
-          local_path: '/home/deploy/projects/Zeno',
-          default_branch: 'main'
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        fetchCalls.push({ url: String(url), headers: init.headers || {} });
+        if (String(url).includes('/api/admin/projects/by-plane-id/')) {
+          return new Response(JSON.stringify({
+            id: 'p1', name: 'Zeno',
+            plane_project_id: planeId,
+            local_path: '/home/deploy/projects/Zeno',
+            default_branch: 'main'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        // events/publish — best-effort, return a no-op 200.
+        return new Response('', { status: 200 });
       });
 
       const out = await enqueueWorkflowStart({
@@ -239,8 +245,10 @@ d('enqueueWorkflowStart', () => {
       });
       expect(out.ok).toBe(true);
       expect(enqueue.mock.calls[0][0].context.project_root).toBe('/home/deploy/projects/Zeno');
-      expect(calledUrl).toContain(`/api/admin/projects/by-plane-id/${planeId}`);
-      expect(calledHeaders['X-Admin-Key']).toBe('admin-tok');
+      const lookup = fetchCalls.find(c => c.url.includes('/by-plane-id/'));
+      expect(lookup).toBeDefined();
+      expect(lookup.url).toContain(`/api/admin/projects/by-plane-id/${planeId}`);
+      expect(lookup.headers['X-Admin-Key']).toBe('admin-tok');
     });
 
     it('returns project_not_linked when API responds 404', async () => {
