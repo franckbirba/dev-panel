@@ -90,13 +90,53 @@ const RESPONSE_SCHEMA = {
 
 function envForGoose() {
   return {
-    GOOSE_PROVIDER:  process.env.GOOSE_PROVIDER || DEFAULT_PROVIDER,
-    GOOSE_BASE_URL:  process.env.GOOSE_BASE_URL || DEFAULT_BASE_URL,
-    GOOSE_MODEL:     process.env.GOOSE_MODEL    || DEFAULT_MODEL,
-    OPENAI_BASE_URL: process.env.GOOSE_BASE_URL || DEFAULT_BASE_URL,
-    OPENAI_API_KEY:  process.env.OPENAI_API_KEY || process.env.DEEPINFRA_API_KEY || '',
-    GOOSE_MODE:      process.env.GOOSE_MODE     || 'auto',
+    GOOSE_PROVIDER:        process.env.GOOSE_PROVIDER || DEFAULT_PROVIDER,
+    GOOSE_BASE_URL:        process.env.GOOSE_BASE_URL || DEFAULT_BASE_URL,
+    GOOSE_MODEL:           process.env.GOOSE_MODEL    || DEFAULT_MODEL,
+    OPENAI_BASE_URL:       process.env.GOOSE_BASE_URL || DEFAULT_BASE_URL,
+    OPENAI_API_KEY:        process.env.OPENAI_API_KEY || process.env.DEEPINFRA_API_KEY || '',
+    GOOSE_MODE:            process.env.GOOSE_MODE     || 'auto',
+    // Force file-based secret storage so we can seed extension secrets via
+    // ~/.config/goose/secrets.yaml. Without this, goose looks up env_keys in
+    // the system keyring and the recipe fails with "Configuration value not
+    // found: X" — the model gets goose with zero MCP tools available, then
+    // wanders. See first canary 2026-05-08.
+    GOOSE_DISABLE_KEYRING: '1',
   };
+}
+
+// Goose stores extension secrets in ~/.config/goose/secrets.yaml as flat
+// top-level YAML key/value pairs (NOT nested by extension name). The recipe's
+// `env_keys` declares which keys an extension needs; goose looks them up
+// in this file. We render the file fresh at each spawn from process.env.
+//
+// Idempotent: same content on repeat calls. Cheap: ~30 keys, ~1 KB. Per-job
+// regeneration would need XDG_CONFIG_HOME isolation which adds plumbing for
+// no real benefit (goose is one process per job, no concurrent secret writes).
+function writeGooseSecrets(neededKeys) {
+  const home = process.env.HOME || homedir();
+  const dir = join(home, '.config', 'goose');
+  try { mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+  const path = join(dir, 'secrets.yaml');
+  const lines = [];
+  // Carry OPENAI_API_KEY explicitly — that's the model-provider key, separate
+  // from extension secrets but lives in the same file.
+  const openaiKey = process.env.OPENAI_API_KEY || process.env.DEEPINFRA_API_KEY || '';
+  if (openaiKey) lines.push(`OPENAI_API_KEY: ${yamlEscape(openaiKey)}`);
+  for (const k of neededKeys) {
+    const v = process.env[k];
+    if (typeof v === 'string' && v.length > 0) {
+      lines.push(`${k}: ${yamlEscape(v)}`);
+    }
+  }
+  writeFileSync(path, lines.join('\n') + '\n', { mode: 0o600 });
+}
+
+function yamlEscape(v) {
+  // Anything with quotes, colons, leading/trailing whitespace, or yaml
+  // special chars needs quoting. Simple safe rule: always double-quote
+  // and escape backslashes + double-quotes.
+  return `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function workerMcpConfigPath() {
@@ -135,12 +175,13 @@ function renderExtensions(mcpConfigPath) {
       cmd: spec.command,
       args: spec.args || [],
       env_keys,
-      envs: spec.env || {},
       timeout: 300,
+      description: `MCP extension: ${name}`,
     });
-    // Bubble the env up so goose's own process has them too — some MCP
-    // libraries read from process.env at import time, before the stdio
-    // launcher has a chance to inject them.
+    // Goose recipes don't read `envs` (only env_keys → secrets.yaml). But we
+    // still bubble values into the goose process env so the stdio MCP child
+    // sees them at exec time — some MCPs read process.env at module init
+    // before goose has a chance to inject anything via the launcher.
     for (const [k, v] of Object.entries(spec.env || {})) {
       if (typeof v === 'string') env_passthrough[k] = v;
     }
@@ -189,6 +230,15 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
       provider: goose.GOOSE_PROVIDER,
     });
     writeRecipe(recipe, recipePath);
+
+    // Seed ~/.config/goose/secrets.yaml with every key any extension needs.
+    // Goose reads from this file (with GOOSE_DISABLE_KEYRING=1) and not from
+    // process.env — that's why the first canary's MCP graph never started.
+    const neededKeys = new Set();
+    for (const ext of extensions) {
+      for (const k of ext.env_keys || []) neededKeys.add(k);
+    }
+    writeGooseSecrets([...neededKeys]);
 
     const proc = spawn('goose', [
       'run',
