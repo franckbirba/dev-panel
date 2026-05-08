@@ -256,6 +256,8 @@ d('enqueueWorkflowStart', () => {
             id: 'p1', name: 'Zeno',
             plane_project_id: planeId,
             local_path: '/home/deploy/projects/Zeno',
+            github_owner: 'EpitechAfrik',
+            github_repo: 'Zeno',
             default_branch: 'main'
           }), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
@@ -268,11 +270,42 @@ d('enqueueWorkflowStart', () => {
         plane: { work_item_id: 'wi-http-1', project_id: planeId }
       });
       expect(out.ok).toBe(true);
-      expect(enqueue.mock.calls[0][0].context.project_root).toBe('/home/deploy/projects/Zeno');
+      const ctx = enqueue.mock.calls[0][0].context;
+      expect(ctx.project_root).toBe('/home/deploy/projects/Zeno');
+      // Cross-repo PR target — without this, publishWorkItem creates the PR
+      // on franckbirba/dev-panel instead of EpitechAfrik/Zeno (no PR ever showed up).
+      expect(ctx.github_repo).toBe('EpitechAfrik/Zeno');
+      expect(ctx.default_branch).toBe('main');
       const lookup = fetchCalls.find(c => c.url.includes('/by-plane-id/'));
       expect(lookup).toBeDefined();
       expect(lookup.url).toContain(`/api/admin/projects/by-plane-id/${planeId}`);
       expect(lookup.headers['X-Admin-Key']).toBe('admin-tok');
+    });
+
+    it('omits context.github_repo when the projects row has no github_owner/github_repo (legacy local-only project)', async () => {
+      const planeId = 'plane-no-gh-uuid';
+      const enqueue = vi.fn().mockResolvedValue({ id: 'j-no-gh' });
+      __setEnqueueForTests(enqueue);
+      globalThis.fetch = vi.fn(async (url) => {
+        if (String(url).includes('/api/admin/projects/by-plane-id/')) {
+          return new Response(JSON.stringify({
+            id: 'p2', name: 'local-only',
+            plane_project_id: planeId,
+            local_path: '/home/deploy/projects/local-only'
+            // no github_owner / github_repo
+          }), { status: 200 });
+        }
+        return new Response('', { status: 200 });
+      });
+      const out = await enqueueWorkflowStart({
+        workflow: 'work-item',
+        plane: { work_item_id: 'wi-no-gh', project_id: planeId }
+      });
+      expect(out.ok).toBe(true);
+      const ctx = enqueue.mock.calls[0][0].context;
+      expect(ctx.project_root).toBe('/home/deploy/projects/local-only');
+      // No GH info → publishWorkItem falls back to its hardcoded default.
+      expect(ctx.github_repo).toBeUndefined();
     });
 
     it('returns project_not_linked when API responds 404', async () => {
