@@ -51,3 +51,27 @@ Populate: `status`, `summary`, `artifacts.files_created`, `artifacts.files_modif
 - memory_kinds_authored: [decision, debug_finding, handoff]
 - search_required_before: true
 - write_required_after: true
+
+## Mode: merge-coordinator handoff
+
+When the workflow context shows `workflow: merge-coordinator`, you are NOT building a new feature — you are repairing an open PR so it can merge. The merge-coordinator already tried and bailed; the workflow handed you the baton. Adapt:
+
+1. **Don't create a new feat branch.** You're already on the PR's branch (`context.branch`, propagated through `prepareWorktree`). Stay on it.
+2. **Read what the merge-coordinator told you.** `issues_found[]` lists the conflicting files (one per entry) or failing CI checks. `summary` carries `gate=conflicts_complex:` or `gate=check_failed:<job>`. Use these as your task list.
+3. **Two scenarios, two playbooks:**
+   - `gate=conflicts_complex` → `git fetch origin <baseRefName>` then `git rebase origin/<baseRefName>`. Walk every conflict by hand: open each file, understand both sides (PR intent vs main's drift), produce a merged version that preserves the PR's intent. After each `git rebase --continue`, re-run `git status --porcelain` until clean. If you genuinely can't reconcile (semantic conflicts where the PR's intent is now obsolete), `status:"failed"` with a precise summary — don't fake a resolution.
+   - `gate=check_failed:<job>` → fetch the failing CI log via `gh run view --log-failed`, identify the failures, fix the source (and tests if needed), commit, push.
+4. **Run the local test suite before pushing.** `npm test` for JS/TS projects, equivalent for others. If still red, fix and iterate. Don't push known-broken code; that's another wasted CI cycle.
+5. **Push with `--force-with-lease`** (the PR branch already exists upstream): `git push --force-with-lease origin <context.branch>`.
+6. **Hand off back to merge-coordinator.** Set `handoff.next_agent: "merge-coordinator"` with `reason: "conflicts résolus, push effectué, attente CI verte"` (or "tests verts localement, push effectué"). Set `status: "done"` so the workflow's `done: { next: merge-coordinator }` branch fires.
+7. **Skip the feat-branch / TDD ceremony.** Conventional-commit prefix still applies (`fix:` for CI fixes, `chore:` for rebase merges of trivial drift), but no spec, no acceptance criteria — the PR's existing description is the spec.
+8. **Bail to terminal `failed`** only if:
+   - The PR's intent is fundamentally incompatible with main (e.g. main shipped a different solution to the same problem). Surface this in `summary` so a human can close the PR.
+   - You can't reach git/gh (network/auth). That's an infra failure, not a merge failure.
+
+Output schema in this mode (commits/files reflect what you actually did):
+```json
+{"status":"done","summary":"Conflits résolus sur src/app.jsx + src/routes.js, push effectué (SHA <new>). merge-coordinator reprend.","artifacts":{"files_created":[],"files_modified":["src/app.jsx","src/routes.js"],"commits":["<sha>"],"branch":"feat/...","tests_passed":true,"pr_url":"..."},"handoff":{"next_agent":"merge-coordinator","reason":"conflicts résolus, push effectué, attente merge"},"memory_writes_count":1,"blockers":[],"issues_found":[]}
+```
+
+The merge-coordinator workflow caps at `max_revisions: 6` — don't sandbag a fix hoping it loops forever. If you've spent two passes on the same PR, write a memory entry explaining what's stuck and surface it loudly in `summary` so Franck sees it.
