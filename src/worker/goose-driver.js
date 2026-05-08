@@ -190,6 +190,52 @@ function renderExtensions(mcpConfigPath) {
   return { extensions, env_passthrough };
 }
 
+// Closing-protocol guidance for Qwen3-Coder via goose. Neither goose's
+// `final_output` recipe tool nor Qwen3's tool-calling template enforces
+// "stage and commit before claiming done" — both only validate output
+// shape after the fact. Canary 2108 (DEVPA-155, 2026-05-08): model wrote
+// 12 untracked files, never ran `git add`/`git commit`, never called
+// `final_output`, and goose closed the run with a fabricated status=done.
+//
+// The orchestration verifier (verifyDiffOrDowngrade in automation.js) is
+// the safety net — this prompt block is the prevention. We append it to
+// recipe.instructions only on the goose path so Claude's prompts stay
+// pristine (Claude already has commit-discipline baked into its system
+// prompt + claude-code's own tooling).
+const CLOSING_PROTOCOL = `
+
+---
+
+# CLOSING PROTOCOL — REQUIRED BEFORE final_output
+
+You MUST commit your work before signaling done. The orchestration runs a
+verifier that compares \`git diff origin/<base>...HEAD\` after you exit;
+returning status=done with an empty diff will be auto-downgraded to
+status=blocked and the work item will be replan'd. Don't waste a turn.
+
+Steps to execute IN ORDER as your last actions, before calling
+\`final_output\`:
+
+1. \`git status --short\` — confirm what changed.
+2. \`git add <each-file-you-touched>\` — never \`git add .\`, never
+   \`git add -A\`. Stage only files relevant to this work item.
+3. \`git diff --cached --stat\` — verify staging matches intent.
+4. \`git commit -m "<conventional commit message describing the work>"\`
+5. \`git diff --stat origin/<base-branch>...HEAD\` — confirm the diff is
+   non-empty. If empty, you have not done the work; do not claim done.
+6. THEN call \`final_output\` with the matching status.
+
+Status guidance:
+- \`done\` — work completed, commit landed in your worktree, diff is real.
+- \`blocked\` — you need information or a decision a human must make.
+  Explain in \`summary\`.
+- \`failed\` — you tried and the work cannot be done as specified.
+  Explain in \`summary\` what's wrong with the spec.
+
+Never invent files you didn't actually create. Never claim done while
+files remain untracked. The verifier will catch you.
+`;
+
 function buildRecipe({ prompt, extensions, model, provider }) {
   // The `developer` builtin extension provides the shell tool — the primitive
   // the model needs to read and edit files in the worktree. We restrict it to
@@ -223,7 +269,7 @@ function buildRecipe({ prompt, extensions, model, provider }) {
     version: '1.0.0',
     title: 'devpanl agent run',
     description: 'Agent dispatch — prompt + MCP extensions + structured output',
-    instructions: prompt,
+    instructions: prompt + CLOSING_PROTOCOL,
     prompt: 'Begin. End your response with a single JSON object matching the response schema.',
     extensions: allExtensions,
     settings: {

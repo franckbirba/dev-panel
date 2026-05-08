@@ -135,6 +135,99 @@ async function verifyMemoryWrites({ job_id, result }) {
   }
 }
 
+// Mutates `result` in place when the model claimed status=done but produced
+// no actual diff against origin/<base>. Goose × Qwen3 (canary 2108, DEVPA-155,
+// 2026-05-08) wrote 12 untracked files, never `git add`/`git commit`'d, then
+// returned status=done with a confident summary — Shelly trusted the JSON and
+// reported "Terminé" while nothing shipped.
+//
+// Since neither goose nor Qwen3 has a native closing-protocol enforcement
+// (sub-recipes order steps but don't gate completion; the `final_output`
+// recipe tool only validates JSON shape, not artefacts), the verifier has
+// to live here. Idempotent: only fires when status=done AND a worktree
+// was used (skips non-coding agents that have no diff to verify).
+//
+// Routing: the work-item workflow yaml maps `builder.on.blocked → pm/replan`,
+// so a downgraded result auto-triggers a replan with PM context — the right
+// behavior. No-op for status≠done so genuine failed/blocked claims pass
+// through unchanged.
+function verifyDiffOrDowngrade({ result, jobData }) {
+  if (!result || result.status !== 'done') return { changed: false };
+
+  const worktreePath = jobData.context?.worktree_path;
+  const branch = jobData.context?.branch;
+  if (!worktreePath || !branch) return { changed: false };
+
+  const baseBranch = jobData.context?.default_branch || 'main';
+
+  // `git diff --quiet` exits 0 when there's no diff, 1 when there is one.
+  // Compare worktree branch against origin/<base> — covers both committed
+  // and uncommitted changes. We deliberately compare against origin (not
+  // local main) so a stale local main doesn't mask "you didn't push";
+  // the work-item terminal publisher does the actual push later.
+  let hasDiff = false;
+  let detail = '';
+  try {
+    execSync(
+      `git diff --quiet "origin/${baseBranch}"...HEAD`,
+      { cwd: worktreePath, stdio: 'pipe' }
+    );
+  } catch (err) {
+    if (err.status === 1) {
+      hasDiff = true;
+      try {
+        detail = execSync(
+          `git diff --stat "origin/${baseBranch}"...HEAD`,
+          { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' }
+        ).trim().split('\n').slice(-1)[0] || '';
+      } catch { /* best effort */ }
+    } else {
+      // status > 1 means git itself errored (worktree gone, ref missing,
+      // etc.). Treat as "can't verify" — leave the result alone, log it,
+      // let the existing pipeline decide what to do.
+      console.warn(`[verifier] git diff errored (status=${err.status}) in ${worktreePath}: ${err.message?.slice(0, 200)}`);
+      return { changed: false, error: err.message };
+    }
+  }
+
+  // Also count uncommitted changes — model might have written files but
+  // not staged. That's still a "no diff vs origin" condition for the
+  // terminal publisher (it pushes commits, not unstaged changes), but
+  // the operator should know. Fold it into the downgrade reason so a
+  // human reading the alert can spot "you wrote files but didn't commit".
+  let uncommitted = '';
+  try {
+    uncommitted = execSync(
+      'git status --porcelain',
+      { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' }
+    ).trim();
+  } catch { /* best effort */ }
+
+  if (hasDiff) {
+    console.log(`[verifier] diff confirmed for job ${jobData.job_id}: ${detail}`);
+    return { changed: false, hasDiff: true, detail };
+  }
+
+  // No diff. Override status. Preserve the model's claim in the summary so
+  // the replan PM step has full context.
+  const claimedSummary = result.summary || '(no summary provided)';
+  const uncommittedNote = uncommitted
+    ? ` Uncommitted/untracked files in worktree:\n${uncommitted.split('\n').slice(0, 20).join('\n')}`
+    : ' Worktree is clean — model produced no files at all.';
+
+  result.status = 'blocked';
+  result.summary = `[verifier] model claimed status=done but produced no diff against origin/${baseBranch}. Original summary: ${claimedSummary}.${uncommittedNote}`;
+  result.blockers = result.blockers || [];
+  result.blockers.push({
+    kind: 'no_diff',
+    detail: `worktree ${worktreePath} has no diff vs origin/${baseBranch}`,
+    uncommitted_files: uncommitted ? uncommitted.split('\n').length : 0
+  });
+
+  console.warn(`[verifier] downgraded job ${jobData.job_id} to blocked: no diff. ${uncommittedNote}`);
+  return { changed: true, downgradedTo: 'blocked' };
+}
+
 // ---------------------------------------------------------------------------
 // Terminal publisher — closes the loop on successful work-item workflows.
 // When qa.done triggers `terminal: true`, this fires: locate the builder's
@@ -354,6 +447,16 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
 export async function runAutomation({ jobData, result, startedAt }) {
   const { job_id, agent, plane, context } = jobData;
   const durationMs = Date.now() - startedAt;
+
+  // Diff verifier MUST run before any notifications. Without this, when a
+  // goose × Qwen3 builder hallucinates status=done (canary 2108, 2026-05-08),
+  // we publish job.finished + updatePlane(done) + shelly.notify(done) before
+  // anything checks if there's a real diff. Result: Shelly tells Franck
+  // "Terminé" while the worktree contains 12 untracked files and no commits.
+  //
+  // Mutates `result` in place when downgrading. The rest of this function
+  // (Plane/Shelly/engine routing) then sees the corrected status.
+  verifyDiffOrDowngrade({ result, jobData });
 
   publishEvent('job.finished', { job_id, agent, status: result.status, summary: result.summary });
 
