@@ -18,12 +18,13 @@ RestartSec=5
 Environment=NODE_ENV=production
 Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
 Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
-# 4 GB RAM agents host; each `claude -p` builder spawns a full MCP graph
-# (devpanel + plane + github + affine x3 + playwright + telegram-multi).
-# At concurrency=3 the host OOM-killed Shelly every ~30 min on 2026-05-08
-# (dmesg: "global_oom, task_memcg=/system.slice/shelly.service, task=claude").
-# Single-builder is the safe cap until agents-host gets more RAM.
-Environment=WORKER_CONCURRENCY=1
+# Memory budget: each builder spawns a full MCP graph (devpanel + plane +
+# github + affine x3 + playwright + glitchtip ≈ 1-1.5 GB) on top of the
+# main agent process. Host went 4 GB → 8 GB on 2026-05-08 after OOMs at
+# concurrency=3 on the smaller VM. At 8 GB we have headroom for 2 builders
+# alongside Shelly (~1 GB) and the worker itself; revisit at 3 only after
+# 1 week of stable Phase A-1 canary runs.
+Environment=WORKER_CONCURRENCY=2
 Environment=WORKER_API_PORT=3099
 Environment=PATH=/home/deploy/.bun/bin:/home/deploy/.local/bin:/home/deploy/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
 
