@@ -39,7 +39,7 @@ async function fetchProjects() {
   const url = `${apiBaseUrl()}/api/admin/projects`;
   const r = await fetch(url, { headers: { 'X-Admin-Key': adminKey } });
   if (!r.ok) {
-    throw new Error(`GET /api/projects/summary → ${r.status}`);
+    throw new Error(`GET /api/admin/projects → ${r.status}`);
   }
   const body = await r.json();
   return body.projects || [];
@@ -100,7 +100,15 @@ export async function handlePrScanner(_jobData = {}) {
 
       const result = await enqueueWorkflowStart({
         workflow: 'merge-coordinator',
-        plane: { work_item_id: synthetic },
+        plane: {
+          work_item_id: synthetic,
+          // DEVPA-180: pass plane_project_id so the dispatcher resolves
+          // local_path → context.project_root and the worktree lands in
+          // the right repo checkout. Same fix as webhooks-github.js.
+          ...(project.plane_project_id
+            ? { project_id: project.plane_project_id }
+            : {})
+        },
         work_item: {
           title: pr.title || `PR #${pr.number}`,
           description: pr.body || ''

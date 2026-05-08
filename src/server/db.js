@@ -668,6 +668,20 @@ export function getProjectByPlaneId(plane_project_id) {
   return stmt.get(plane_project_id);
 }
 
+// Used by the GitHub webhook to translate a `owner/repo` pair (the only id
+// GitHub gives us on a PR event) into the projects row, so we can pass
+// plane_project_id into enqueueWorkflowStart and DEVPA-180's local_path
+// resolution fires. Without this, merge-coordinator dispatched from a Zeno
+// or EDMS PR would skip project_root resolution and fall back to
+// PROJECT_ROOT (dev-panel) — exactly the cross-repo bug DEVPA-180 closes.
+export function getProjectByGithubRepo(owner, repo) {
+  if (!owner || !repo) return null;
+  const stmt = masterDb.prepare(
+    'SELECT * FROM projects WHERE LOWER(github_owner) = LOWER(?) AND LOWER(github_repo) = LOWER(?)'
+  );
+  return stmt.get(owner, repo);
+}
+
 export function listProjects() {
   const stmt = masterDb.prepare(`
     SELECT id, name, description, github_owner, github_repo, api_key,
