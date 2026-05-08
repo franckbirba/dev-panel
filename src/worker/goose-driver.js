@@ -190,14 +190,32 @@ function renderExtensions(mcpConfigPath) {
 }
 
 function buildRecipe({ prompt, extensions, model, provider }) {
-  // The `developer` builtin extension provides shell/text_editor/file tools
-  // — the basic primitives the model needs to read and edit files in the
-  // worktree. Without it, listing only the stdio MCP extensions leaves the
-  // model with no way to access the filesystem (canary #3, 2026-05-08:
-  // "Unable to access the project files due to environment configuration
-  // issues" — the model had MCP tools but no shell).
+  // The `developer` builtin extension provides the shell tool — the primitive
+  // the model needs to read and edit files in the worktree. We restrict it to
+  // `shell` only via available_tools, hiding `text_editor`, `analyze`,
+  // `screen_capture`, `image_processor`. Per goose docs:
+  //
+  //   "The `available_tools` field within extension configuration allows
+  //    you to limit which tools are loaded from an extension. By listing
+  //    specific tool names, only those will be available to Goose."
+  //                          — goose docs/guides/config-files.md
+  //
+  // Why we hide text_editor: canary 2080 (2026-05-08) wasted 1800+ events
+  // looping on text_editor retries — Qwen3's edit hunks never matched the
+  // tool's exact-string requirement, model kept saying "let me try a
+  // different approach" without converging. Shell-based edits (sed/cat
+  // heredoc/etc.) always work because there's no string-matching layer
+  // between the model's intent and the bytes on disk.
+  //
+  // Tool names sourced from docs/mcp/developer-mcp.md:
+  //   shell, text_editor, analyze, screen_capture, image_processor
   const allExtensions = [
-    { type: 'builtin', name: 'developer', timeout: 300 },
+    {
+      type: 'builtin',
+      name: 'developer',
+      timeout: 300,
+      available_tools: ['shell'],
+    },
     ...extensions,
   ];
   return {
