@@ -2,7 +2,7 @@
 # scripts/tmux-cockpit.sh — Shelly mission-control on your Mac.
 #
 # Idempotent: attaches to the existing `devpanl` tmux session if running,
-# otherwise creates one with 7 windows aimed at production:
+# otherwise creates one with 8 windows aimed at production:
 #   1 shelly        — read-only attach to live Shelly on hetzner-vps
 #   2 shelly-log    — journalctl -fu shelly.service (hetzner-vps)
 #   3 worker-log    — journalctl -fu devpanel-worker.service (hetzner-vps)
@@ -10,6 +10,7 @@
 #   5 agents-shell  — interactive shell on hetzner-vps as deploy, in repo
 #   6 services      — interactive shell on services VPS as deploy, in repo
 #   7 local         — local repo shell (git, edits, ./scripts/deploy-agents.sh)
+#   8 agents-files  — yazi (TUI file explorer) on hetzner-vps, rooted in repo
 #
 # Prerequisites:
 #   - tmux 3.x on PATH
@@ -72,6 +73,12 @@ $TMUX new-window -t "$SESSION" -n services \
 # Window 7: local — local repo shell. Lands you in dev-panel for git/edits
 # and running ./scripts/deploy-agents.sh.
 $TMUX new-window -t "$SESSION" -n local -c "$REPO_ROOT"
+
+# Window 8: agents-files — yazi on hetzner-vps as deploy, rooted in the
+# project. When yazi exits (q), the bash login shell behind it stays so the
+# pane doesn't disappear; relaunch with `yazi` or just type other commands.
+$TMUX new-window -t "$SESSION" -n agents-files \
+  "$SSH_AGENTS 'su - deploy -c \"cd /home/deploy/projects/dev-panel && yazi; exec bash -l\"' || exec \$SHELL"
 
 # Land on Shelly.
 $TMUX select-window -t "$SESSION:shelly"
