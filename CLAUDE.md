@@ -79,6 +79,8 @@ docker exec plane-db psql -U plane -d plane -c "ALTER USER plane WITH PASSWORD '
 ```
 See memory `infra_plane_caveats.md` for the full symptom-to-fix decision tree.
 
+**The `projects` table lives services-side only.** It is the single source of truth for `plane_project_id`, `local_path`, `default_branch`, `api_key`, and team routing. The `devpanel-api` container mounts the SQLite file from the `devpanel-storage` volume on the services VPS. The agents host has its own checkout of this repo (`/home/deploy/projects/dev-panel`) but its `storage/projects.db` is **empty** — never trust it. Any code that needs to resolve a Plane project_id to a local checkout path **must** go through `GET /api/admin/projects/by-plane-id/:plane_project_id` (admin-auth) on services. The MCP `devpanel-mcp` and the worker's `enqueueWorkflowStart` already do this when `API_BASE` + `ADMIN_API_KEY` are set. Don't add new code that reads `projects.db` directly from the agents host. (DEVPA-180)
+
 ## GlitchTip — error tracking bootstrap (DEVPA-168)
 
 GlitchTip lives at `glitchtip.devpanl.dev` and feeds runtime errors into the captures inbox via the bridge endpoint at `POST /api/webhooks/glitchtip/:projectId` (DEVPA-169). Stack: `glitchtip-web` + `glitchtip-worker` + `glitchtip-migrate` + dedicated `glitchtip-db` (postgres) + dedicated `glitchtip-redis`. **Do not** reuse plane-db or devpanel's redis — Django migrations would interfere.

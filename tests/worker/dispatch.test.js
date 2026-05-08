@@ -1,5 +1,5 @@
 // tests/worker/dispatch.test.js
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'child_process';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
@@ -191,5 +191,86 @@ d('enqueueWorkflowStart', () => {
     });
     expect(retry.ok).toBe(true);
     expect(Number(retry.instance_id)).toBeGreaterThan(0);
+  });
+
+  // DEVPA-180: dispatcher prefers HTTP lookup against /api/admin/projects
+  // when API_BASE + ADMIN_API_KEY are set — covers the agents-host case
+  // where the local SQLite is empty.
+  describe('HTTP lookup of plane.project_id (DEVPA-180)', () => {
+    let originalFetch;
+    let originalApiBase;
+    let originalAdminKey;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      originalApiBase = process.env.API_BASE;
+      originalAdminKey = process.env.ADMIN_API_KEY;
+      process.env.API_BASE = 'https://api.test';
+      process.env.ADMIN_API_KEY = 'admin-tok';
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      if (originalApiBase === undefined) delete process.env.API_BASE; else process.env.API_BASE = originalApiBase;
+      if (originalAdminKey === undefined) delete process.env.ADMIN_API_KEY; else process.env.ADMIN_API_KEY = originalAdminKey;
+    });
+
+    it('resolves project_root via HTTP 200 and ignores any local SQLite row', async () => {
+      // Sanity: no local row for this plane_id, so a fallback hit would fail.
+      const planeId = 'plane-http-200-uuid';
+      const enqueue = vi.fn().mockResolvedValue({ id: 'j-http-1' });
+      __setEnqueueForTests(enqueue);
+
+      let calledUrl, calledHeaders;
+      globalThis.fetch = vi.fn(async (url, init = {}) => {
+        calledUrl = String(url);
+        calledHeaders = init.headers || {};
+        return new Response(JSON.stringify({
+          id: 'p1', name: 'Zeno',
+          plane_project_id: planeId,
+          local_path: '/home/deploy/projects/Zeno',
+          default_branch: 'main'
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const out = await enqueueWorkflowStart({
+        workflow: 'work-item',
+        plane: { work_item_id: 'wi-http-1', project_id: planeId }
+      });
+      expect(out.ok).toBe(true);
+      expect(enqueue.mock.calls[0][0].context.project_root).toBe('/home/deploy/projects/Zeno');
+      expect(calledUrl).toContain(`/api/admin/projects/by-plane-id/${planeId}`);
+      expect(calledHeaders['X-Admin-Key']).toBe('admin-tok');
+    });
+
+    it('returns project_not_linked when API responds 404', async () => {
+      const enqueue = vi.fn().mockResolvedValue({ id: 'j-http-404' });
+      __setEnqueueForTests(enqueue);
+      globalThis.fetch = vi.fn(async () =>
+        new Response(JSON.stringify({ error: 'project_not_linked' }), { status: 404 })
+      );
+      const out = await enqueueWorkflowStart({
+        workflow: 'work-item',
+        plane: { work_item_id: 'wi-http-404', project_id: 'plane-missing' }
+      });
+      expect(out.ok).toBe(false);
+      expect(out.error).toBe('project_not_linked');
+      expect(out.message).toMatch(/plane-missing/);
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('returns project_lookup_failed when fetch throws (network down)', async () => {
+      const enqueue = vi.fn().mockResolvedValue({ id: 'j-http-err' });
+      __setEnqueueForTests(enqueue);
+      globalThis.fetch = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
+      const out = await enqueueWorkflowStart({
+        workflow: 'work-item',
+        plane: { work_item_id: 'wi-http-err', project_id: 'plane-x' }
+      });
+      expect(out.ok).toBe(false);
+      expect(out.error).toMatch(/project_lookup_failed/);
+      expect(out.error).toMatch(/ECONNREFUSED/);
+      expect(enqueue).not.toHaveBeenCalled();
+    });
   });
 });

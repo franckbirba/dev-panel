@@ -8,6 +8,37 @@ const WORKER_EVENTS_URL = process.env.WORKER_EVENTS_URL
   || 'http://localhost:3030/api/admin/events/publish';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 
+// DEVPA-180: when running on the agents host the local SQLite is empty (the
+// projects table is authoritative services-side, mounted on the devpanel-api
+// container's storage volume). Resolve via /api/admin/projects/by-plane-id/:id
+// when API_BASE + ADMIN_API_KEY are available; fall back to the local DB
+// otherwise so unit tests and bare local dev still work.
+async function lookupProjectByPlaneId(plane_project_id) {
+  const apiBase = process.env.API_BASE;
+  if (apiBase && ADMIN_API_KEY) {
+    const url = `${apiBase.replace(/\/$/, '')}/api/admin/projects/by-plane-id/${encodeURIComponent(plane_project_id)}`;
+    let r;
+    try {
+      r = await fetch(url, { headers: { 'X-Admin-Key': ADMIN_API_KEY } });
+    } catch (e) {
+      const err = new Error(`api_unreachable: ${e.message}`);
+      err.code = 'api_unreachable';
+      throw err;
+    }
+    if (r.status === 404) return null;
+    if (!r.ok) {
+      const err = new Error(`api_${r.status}`);
+      err.code = `api_${r.status}`;
+      throw err;
+    }
+    const body = await r.json().catch(() => null);
+    return body || null;
+  }
+  // Fallback: local SQLite. Synchronous, but wrapped to keep the call
+  // signature uniform — callers always await.
+  return getProjectByPlaneId(plane_project_id) || null;
+}
+
 async function publishEvent(event, data) {
   if (!ADMIN_API_KEY) return;
   try {
@@ -61,7 +92,7 @@ export async function enqueueWorkflowStart({
   if (!context.project_root && plane.project_id) {
     let proj;
     try {
-      proj = getProjectByPlaneId(plane.project_id);
+      proj = await lookupProjectByPlaneId(plane.project_id);
     } catch (e) {
       return { ok: false, error: `project_lookup_failed: ${e.message}` };
     }
