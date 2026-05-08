@@ -150,6 +150,13 @@ rsync -av --delete \
 chown -R deploy:deploy /home/deploy/.claude/plugins/telegram-multi
 su - deploy -c 'cd /home/deploy/.claude/plugins/telegram-multi && /home/deploy/.bun/bin/bun install --no-summary'
 
+# Logrotate — keep /home/deploy/logs/*.log from blowing up the disk.
+# Specifically forced after the 2026-05-08 incident where telegram-multi.log
+# grew to 2.1 GB from a stderr EPIPE recursion.
+install -o root -g root -m 0644 \
+  /home/deploy/projects/dev-panel/infra/logrotate-agents.conf \
+  /etc/logrotate.d/devpanel-agents
+
 # Systemd units (worker + shelly + watchdog + relay + daily-restart)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/

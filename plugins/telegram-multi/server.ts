@@ -44,7 +44,11 @@ let logFd: number | null = null
 try { logFd = openSync(LOG_FILE, 'a') } catch {}
 function log(msg: string): void {
   const line = `${new Date().toISOString()} ${msg}\n`
-  process.stderr.write(line)
+  // stderr can EPIPE if Claude's MCP transport closed its end (hot reload,
+  // parent crash). A throw here re-enters uncaughtException → log() → throw,
+  // which is exactly how the 2.1 GB telegram-multi.log of identical EPIPE
+  // lines was generated.
+  try { process.stderr.write(line) } catch {}
   if (logFd != null) { try { appendFileSync(logFd, line) } catch {} }
 }
 
@@ -76,6 +80,10 @@ process.on('unhandledRejection', err => {
   log(`telegram-multi: unhandled rejection: ${err}`)
 })
 process.on('uncaughtException', err => {
+  // EPIPE on stderr almost always means our parent (Claude's MCP transport)
+  // closed; logging the EPIPE re-throws another EPIPE. Drop it on the floor —
+  // either we shut down naturally on stdin EOF, or the orphan watchdog kicks.
+  if ((err as NodeJS.ErrnoException)?.code === 'EPIPE') return
   log(`telegram-multi: uncaught exception: ${err}`)
 })
 
@@ -577,6 +585,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           sentIds.length === 1
             ? `sent (id: ${sentIds[0]})`
             : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
+        const outPreview = text.replace(/\s+/g, ' ').slice(0, 120)
+        const filesTag = files.length > 0 ? ` files=${files.length}` : ''
+        log(`outbound bot=${bot_label} chat=${chat_id} reply ids=${sentIds.join(',')}${filesTag} text=${JSON.stringify(outPreview)}`)
         return { content: [{ type: 'text', text: result }] }
       }
       case 'react': {
@@ -585,6 +596,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         await r.bot.api.setMessageReaction(args.chat_id as string, Number(args.message_id), [
           { type: 'emoji', emoji: args.emoji as ReactionTypeEmoji['emoji'] },
         ])
+        log(`outbound bot=${args.bot_label} chat=${args.chat_id} react msg=${args.message_id} emoji=${args.emoji}`)
         return { content: [{ type: 'text', text: 'reacted' }] }
       }
       case 'download_attachment': {
@@ -618,6 +630,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           ...(editParseMode ? [{ parse_mode: editParseMode }] : []),
         )
         const id = typeof edited === 'object' ? edited.message_id : args.message_id
+        const editPreview = (args.text as string).replace(/\s+/g, ' ').slice(0, 120)
+        log(`outbound bot=${args.bot_label} chat=${args.chat_id} edit msg=${id} text=${JSON.stringify(editPreview)}`)
         return { content: [{ type: 'text', text: `edited (id: ${id})` }] }
       }
       default:
@@ -628,6 +642,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    log(`outbound tool=${req.params.name} FAILED: ${msg}`)
     return {
       content: [{ type: 'text', text: `${req.params.name} failed: ${msg}` }],
       isError: true,
@@ -1027,6 +1042,13 @@ async function handleInbound(
   }
 
   const imagePath = downloadImage ? await downloadImage() : undefined
+
+  // Structured inbound log — one line per delivered message. Truncate text to
+  // keep the log grep-friendly even when a user pastes a wall.
+  const fromLabel = from.username ? `@${from.username}` : `${from.first_name ?? ''}(${from.id})`
+  const preview = text.replace(/\s+/g, ' ').slice(0, 120)
+  const attachTag = attachment ? ` attach=${attachment.kind}` : imagePath ? ' attach=photo' : ''
+  log(`inbound bot=${row.bot_label} chat=${chat_id} from=${fromLabel} msg=${msgId ?? '?'}${attachTag} text=${JSON.stringify(preview)}`)
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.

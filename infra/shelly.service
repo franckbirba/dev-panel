@@ -76,16 +76,17 @@ ExecStart=/usr/bin/tmux -L deploy new-session -d -s shelly "/usr/bin/claude --da
 #       the second Enter (4s after the first, well after the dialog renders).
 #    Without these the channel never registers and the pane warns
 #    "server: entries need --dangerously-load-development-channels".
-# 2) Mirror the pane to the systemd journal under tag "shelly" so journalctl
-#    -t shelly survives a session kill (tmux pty would otherwise lose the
-#    crash trace). pipe-pane appends to a fresh stream on every restart.
-# 3) Also tee to a plain file so a frustrated human doesn't need journalctl
-#    to read the last 200 lines.
+#
+# We DELIBERATELY don't pipe-pane the tmux output anywhere. Claude Code is a
+# TUI; capturing its pane produces 27MB of ANSI escape / cursor-move noise per
+# day and journald collapses long lines into "[NNNB blob data]" placeholders.
+# Useful per-event signal lives in /home/deploy/logs/telegram-multi.log
+# (inbound/outbound, tool calls, errors) — that's the log to tail. The pane
+# itself stays viewable via `tmux -L deploy attach -t shelly` for humans.
 ExecStartPost=/bin/sh -c "sleep 4 && \
   /usr/bin/tmux -L deploy send-keys -t shelly Enter && \
   sleep 4 && \
-  /usr/bin/tmux -L deploy send-keys -t shelly Enter && \
-  /usr/bin/tmux -L deploy pipe-pane -O -t shelly:0.0 'tee -a /home/deploy/logs/shelly.log | systemd-cat -t shelly -p info'"
+  /usr/bin/tmux -L deploy send-keys -t shelly Enter"
 
 ExecStop=-/usr/bin/tmux -L deploy kill-session -t shelly
 
