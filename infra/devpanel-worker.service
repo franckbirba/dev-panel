@@ -32,6 +32,10 @@ Environment=PG_DATABASE=agent_memory
 Environment=AGENT_MEMORY_NAMESPACE=dev-panel
 Environment=VOYAGE_MODEL=voyage-code-3
 Environment=WORKER_EVENTS_URL=https://devpanl.dev/api/admin/events/publish
+# DEVPA-180: dispatcher resolves Plane project_id → local_path via the
+# services-side /api/admin/projects/by-plane-id/:id route. Without this,
+# enqueueWorkflowStart falls back to the agents-host SQLite which is empty.
+Environment=API_BASE=https://devpanl.dev
 
 # Plane REST config (non-secrets). PLANE_API_KEY is in .env.agent.
 Environment=PLANE_BASE_URL=https://plane.devpanl.dev
