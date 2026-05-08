@@ -50,10 +50,15 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
     const promptPath = join(promptDir, `${jobId}-${randomUUID()}.txt`);
     writeFileSync(promptPath, prompt, 'utf8');
 
+    // -i <file> reads instructions from a file (per goose docs). -t is text-only
+    // and does NOT interpret an @-prefix as a path — passing `-t @/tmp/foo.txt`
+    // makes goose treat the literal `@/tmp/foo.txt` string as the prompt, the
+    // model never sees the work item, and replies to its own welcome banner.
+    // First canary on 2026-05-08 hit exactly this. Use -i.
     const proc = spawn('goose', [
       'run',
       '--no-session',
-      '-t', `@${promptPath}`,
+      '-i', promptPath,
     ], {
       cwd,
       env: {
