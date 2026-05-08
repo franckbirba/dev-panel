@@ -178,6 +178,17 @@ export async function enqueueWorkflowStart({
     // Propagate the resolved project_id forward so downstream steps in
     // engine.triggerNext don't have to re-resolve.
     plane = { ...plane, project_id: resolvedProjectId };
+    // Propagate the GitHub repo identity so publishWorkItem (automation.js)
+    // creates the PR on the right repo. Without this, ZENO/EDMS work items
+    // produced commits in the right worktree but `gh pr create` was hardcoded
+    // to franckbirba/dev-panel — zero PRs ever showed up cross-repo.
+    if (proj.github_owner && proj.github_repo) {
+      context = {
+        ...context,
+        github_repo: `${proj.github_owner}/${proj.github_repo}`,
+        default_branch: proj.default_branch || 'main'
+      };
+    }
   }
 
   // A UUID work_item_id that reaches this point with no project_root and no
