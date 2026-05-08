@@ -33,6 +33,7 @@ import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+import { parseResult } from './prompt-builder.js';
 
 const DEFAULT_PROVIDER = 'openai';
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1/openai';
@@ -326,12 +327,24 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
     proc.on('close', (code) => {
       activeProcesses.delete(jobId);
       errStream.end();
+      // Persist `payload.result` as the same shape Claude's stream-json emits:
+      // a string-encoded JSON object matching parseResult's contract. The
+      // dashboard's /api/work-items/:id/jobs handler does
+      // `JSON.parse(payload.result)` to read artifacts/status — without
+      // extraction, goose's stdout (mostly model prose) makes that parse
+      // throw and the job shows up with null artifacts/status even on
+      // success. Canary 2080 hit this: parseResult-in-automation found the
+      // JSON fine, but the dashboard view didn't.
+      const parsed = parseResult(stdoutBuf);
+      const resultPayload = parsed.ok
+        ? JSON.stringify(parsed.data)
+        : stdoutBuf;
       appendEvent({
         job_id: String(jobId),
         seq: seq++,
         event_type: 'result',
         event_subtype: code === 0 ? 'success' : 'error',
-        payload: { type: 'result', result: stdoutBuf, exit_code: code, harness: 'goose' },
+        payload: { type: 'result', result: resultPayload, exit_code: code, harness: 'goose' },
       }).catch(() => {});
       broadcastDone(String(jobId), { exit_code: code, events: seq });
       if (code === 0) {
