@@ -80,20 +80,42 @@ const SEQ_RE = /^([A-Z][A-Z0-9]*)-(\d+)$/;
 
 async function resolvePlaneWorkItem(idOrSeq) {
   if (!PLANE_KEY) return null;
-  const m = (idOrSeq || '').match(SEQ_RE);
-  if (!m) return null;
+  const isSeq = SEQ_RE.test(idOrSeq || '');
+  const isUuid = UUID_RE.test(idOrSeq || '');
+  if (!isSeq && !isUuid) return null;
   const headers = { 'X-API-Key': PLANE_KEY };
   try {
-    // Same fix as plane-attachments.js#resolveWorkItem (PR #39): hit the
-    // workspace-level identifier endpoint instead of trying to filter by
-    // ?sequence= (Plane v1.3 silently ignores that filter and returns the
-    // project's first issue, which is how DEVPA-174 lost ZENO-238).
-    const wiRes = await fetch(
-      `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/work-items/${idOrSeq}/`,
-      { headers, signal: AbortSignal.timeout(5000) }
-    );
-    if (!wiRes.ok) return null;
-    const wi = await wiRes.json();
+    let wi = null;
+    if (isSeq) {
+      // Sequence path: workspace-level identifier endpoint (PR #39 fix; the
+      // ?sequence= filter is silently ignored by Plane v1.3 and returns the
+      // first issue of the project — DEVPA-174 loss of ZENO-238).
+      const r = await fetch(
+        `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/work-items/${idOrSeq}/`,
+        { headers, signal: AbortSignal.timeout(5000) }
+      );
+      if (!r.ok) return null;
+      wi = await r.json();
+    } else {
+      // UUID path: the workspace endpoint doesn't accept UUIDs. We don't
+      // know which project the UUID belongs to (multi-project workspace),
+      // so fan out across known managed projects via the local services
+      // admin endpoint, then try each project's work-items/<uuid>/. First
+      // 200 wins. This is what was missing for `plane_dispatch_work_item`
+      // when called with a UUID instead of a DEVPA-NN sequence — the
+      // worker's DEVPA-180 lookup needs project_id, and without resolving
+      // it here every UUID dispatch fell back to dev-panel checkout.
+      const projects = await fetchManagedProjects();
+      for (const p of projects) {
+        if (!p.plane_project_id) continue;
+        const r = await fetch(
+          `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${p.plane_project_id}/issues/${idOrSeq}/`,
+          { headers, signal: AbortSignal.timeout(5000) }
+        );
+        if (r.ok) { wi = await r.json(); break; }
+      }
+      if (!wi) return null;
+    }
     if (!wi?.id || !wi?.project) return null;
     const desc = (wi.description_html || '')
       .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, '\n')
@@ -113,6 +135,33 @@ async function resolvePlaneWorkItem(idOrSeq) {
   } catch (err) {
     console.warn(`[resolvePlaneWorkItem] ${idOrSeq}: ${err.message}`);
     return null;
+  }
+}
+
+let _managedProjectsCache = { at: 0, value: [] };
+async function fetchManagedProjects() {
+  // 5-min cache: project list rarely changes and we hit this from every
+  // UUID dispatch fan-out.
+  const now = Date.now();
+  if (now - _managedProjectsCache.at < 5 * 60 * 1000 && _managedProjectsCache.value.length) {
+    return _managedProjectsCache.value;
+  }
+  const apiBase = process.env.API_BASE;
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!apiBase || !adminKey) return [];
+  try {
+    const r = await fetch(`${apiBase.replace(/\/$/, '')}/api/admin/projects`, {
+      headers: { 'X-Admin-Key': adminKey },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!r.ok) return [];
+    const body = await r.json();
+    const list = body?.projects || [];
+    _managedProjectsCache = { at: now, value: list };
+    return list;
+  } catch (err) {
+    console.warn(`[fetchManagedProjects] ${err.message}`);
+    return [];
   }
 }
 
@@ -562,9 +611,20 @@ server.tool(
     let fetched_title;
     let fetched_description;
 
-    if (!UUID_RE.test(work_item_id)) {
-      const wi = await resolvePlaneWorkItem(work_item_id);
-      if (!wi) {
+    // Always resolve via Plane — sequences (DEVPA-93) AND UUIDs both need
+    // it now. UUID-only callers (Shelly's `plane_dispatch_work_item` with
+    // a UUID, or builder retreats that propagate the resolved id forward)
+    // were skipping resolution and dispatching with no project_id, which
+    // made the worker fall back to dev-panel's PROJECT_ROOT for every
+    // EDMS/Zeno work item — exactly the bug DEVPA-180 was supposed to
+    // close. resolvePlaneWorkItem now accepts both forms.
+    const wi = await resolvePlaneWorkItem(work_item_id);
+    if (!wi) {
+      // For UUIDs we don't fail hard — older workflow paths may pass a
+      // UUID we can't fan-out to (e.g. a project that's not in the
+      // managed `projects` table yet). Fall back to leaving project_id
+      // unset; the worker will OOPS with project_not_linked if it needs it.
+      if (!UUID_RE.test(work_item_id)) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
             ok: false,
@@ -574,6 +634,7 @@ server.tool(
           isError: true
         };
       }
+    } else {
       resolved_id = wi.id;
       plane_project_id = wi.project_id;
       fetched_title = wi.title;
