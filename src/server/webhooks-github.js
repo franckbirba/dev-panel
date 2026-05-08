@@ -164,11 +164,20 @@ export function mountGitHubWebhook(app) {
             description: pr.body || ''
           },
           context: {
+            // Top-level `branch` makes prepareWorktree check out the PR's
+            // head branch instead of creating a synthetic one off main —
+            // required for the merge-coordinator to actually rebase the PR.
+            // `head_ref_origin` is set when the PR is from a fork; we pass
+            // it so the worker can fetch from the right remote URL.
+            branch,
             github: {
               repo,
               pr_number: prNumber,
               head_sha: headSha,
               branch,
+              base_ref: pr.base?.ref || 'main',
+              head_ref_origin: pr.head?.repo?.full_name || repo,
+              is_fork: pr.head?.repo?.full_name && pr.head.repo.full_name !== repo,
               plane_ref: planeRef
             }
           }

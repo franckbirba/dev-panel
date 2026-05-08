@@ -117,6 +117,16 @@ export async function prepareWorktree(jobId, opts = {}) {
   try { git(`fetch origin ${baseBranch} --prune`, repoRoot); }
   catch (err) { console.warn(`[worktree] fetch failed: ${err.message}`); }
 
+  // When the caller pinned an existing branch (reviewer/qa retreat OR
+  // merge-coordinator on a PR head), make sure that branch's tip is also
+  // fetched. Without this `rev-parse --verify origin/<branch>` below
+  // misses fresh remotes and we'd silently create a new branch off main
+  // instead of checking out the PR's actual head.
+  if (opts.branch) {
+    try { git(`fetch origin ${opts.branch}:refs/remotes/origin/${opts.branch} --prune`, repoRoot); }
+    catch { /* branch may not exist on origin yet — checked below */ }
+  }
+
   // Does the branch already exist locally or on origin? Reviewer/QA reuse.
   let branchExists = false;
   try {

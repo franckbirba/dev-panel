@@ -114,11 +114,18 @@ export async function handlePrScanner(_jobData = {}) {
           description: pr.body || ''
         },
         context: {
+          // Top-level `branch` so prepareWorktree checks out the PR's head
+          // branch (merge-coordinator rebases there). Same shape as the
+          // webhook path.
+          branch: pr.head?.ref,
           github: {
             repo,
             pr_number: pr.number,
             head_sha: pr.head?.sha,
             branch: pr.head?.ref,
+            base_ref: pr.base?.ref || 'main',
+            head_ref_origin: pr.head?.repo?.full_name || repo,
+            is_fork: pr.head?.repo?.full_name && pr.head.repo.full_name !== repo,
             plane_ref: planeRef
           }
         }
