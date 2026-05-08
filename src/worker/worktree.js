@@ -181,30 +181,50 @@ export async function prepareWorktree(jobId, opts = {}) {
     catch { /* branch may not exist on origin yet — checked below */ }
   }
 
-  // Does the branch already exist locally or on origin? Reviewer/QA reuse.
-  let branchExists = false;
-  try {
-    git(`rev-parse --verify --quiet "refs/heads/${branch}"`, repoRoot);
-    branchExists = true;
-  } catch { /* not local */ }
-  if (!branchExists) {
-    try {
-      git(`rev-parse --verify --quiet "refs/remotes/origin/${branch}"`, repoRoot);
-      branchExists = true;
-      // Materialize a tracking local branch from the remote.
-      git(`branch --track "${branch}" "origin/${branch}"`, repoRoot);
-    } catch { /* not on remote either */ }
-  }
-
-  // Reclaim a stale worktree that's still attached to the branch we want.
-  // Common after a SIGTERM/OOM kill — git keeps the branch pinned to the
-  // dead worktree's path, and the next `worktree add` fails with
-  // "'feat/wi-...' is already used by worktree at ...". Same invariant as
-  // the same-slot reclaim above: single-host worker, no concurrent same-job
-  // dispatch, so the holder is dead.
+  // Reclaim any stale worktree still attached to the target branch, BEFORE
+  // we touch the branch itself. Common after a SIGTERM/OOM kill — git keeps
+  // the branch pinned to the dead worktree's path, and `branch -D` would
+  // refuse ("currently checked out at ..."). Single-host worker invariant
+  // means the holder is dead; reclaim is safe.
   const conflicting = listWorktrees(repoRoot).find(w => w.branch === branch && w.path !== path);
   if (conflicting) {
     reclaimWorktree(conflicting.path, repoRoot, `branch ${branch} pinned to dead worktree`);
+  }
+
+  // Branch resolution. Two cases:
+  //
+  // (a) Caller pinned `opts.branch` (reviewer/qa retreat, merge-coordinator
+  //     on a PR head). The branch IS the work — honour it and check it out
+  //     at whatever commit it currently points to. If only on origin, track.
+  //
+  // (b) We derived the branch from work-item id. An existing local branch
+  //     is almost always stale residue from a prior failed run. Reusing it
+  //     silently checks out the OLD commit (canary 2122 on 2026-05-08: worker
+  //     was at e800147 but the local `feat/wi-4360623f-...` branch from
+  //     canary 2108 still pointed to 46bd339 → new worktree got built on a
+  //     stale base). For derived branches, force-delete the stale local
+  //     ref so the worktree-add below recreates it off origin/<base>.
+  let branchExists = false;
+  if (opts.branch) {
+    try {
+      git(`rev-parse --verify --quiet "refs/heads/${branch}"`, repoRoot);
+      branchExists = true;
+    } catch { /* not local */ }
+    if (!branchExists) {
+      try {
+        git(`rev-parse --verify --quiet "refs/remotes/origin/${branch}"`, repoRoot);
+        branchExists = true;
+        git(`branch --track "${branch}" "origin/${branch}"`, repoRoot);
+      } catch { /* not on remote either */ }
+    }
+  } else {
+    try {
+      git(`rev-parse --verify --quiet "refs/heads/${branch}"`, repoRoot);
+      console.warn(`[worktree] deleting stale local branch ${branch} (re-derived for builder)`);
+      try { git(`branch -D "${branch}"`, repoRoot); }
+      catch (err) { console.warn(`[worktree] branch -D failed: ${err.message?.slice(0, 200)}`); }
+    } catch { /* not local — nothing to clean */ }
+    // branchExists stays false → take the `worktree add -b ... origin/<base>` path below.
   }
 
   // Create the worktree. New branch off baseBranch; existing branch checked out.

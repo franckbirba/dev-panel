@@ -270,6 +270,79 @@ describe('worktree — prepareWorktree', () => {
     expect(calls.some(c => c.cmd.includes('worktree add -b "feat/DEVPA-144-existing"'))).toBe(true);
   });
 
+  it('wipes a stale local branch when re-deriving for builder, then recreates off origin/main', async () => {
+    // Canary 2122 (2026-05-08): worker on commit X, but a local branch
+    // `feat/wi-...` from a prior failed builder attempt still pointed to
+    // commit X-1. Without the wipe, prepareWorktree silently checked out
+    // the stale commit; the verifier then saw a misleading "real" diff
+    // (mostly negative reverts) and let the job through. Test that for a
+    // DERIVED branch (no opts.branch), an existing local ref triggers
+    // `branch -D` and the worktree-add takes the `-b ... origin/main` path.
+    const calls = [];
+    vi.doMock('child_process', () => ({
+      execSync: vi.fn((cmd) => {
+        calls.push({ cmd });
+        if (cmd.includes('worktree list --porcelain')) {
+          return 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n';
+        }
+        if (cmd.includes('rev-parse --verify --quiet "refs/heads/')) {
+          // Branch DOES exist locally — simulate the stale-leftover case.
+          return '';
+        }
+        if (cmd.includes('rev-parse --verify --quiet "refs/remotes/origin/')) {
+          const err = new Error('not found'); err.status = 128; throw err;
+        }
+        return '';
+      })
+    }));
+    const { prepareWorktree } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-stale-branch', {
+      agent: 'builder',
+      sequenceId: 155, projectIdentifier: 'DEVPA',
+      workItem: { title: 'add storybook' }
+    });
+    expect(wt).not.toBeNull();
+    // The branch -D fired before the worktree add.
+    const deleteIdx = calls.findIndex(c => c.cmd.includes(`branch -D "feat/DEVPA-155-add-storybook"`));
+    const addIdx = calls.findIndex(c => c.cmd.startsWith('git worktree add -b'));
+    expect(deleteIdx).toBeGreaterThan(-1);
+    expect(addIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeLessThan(addIdx);
+    // And we DID take the `-b ... origin/main` path (not the `add <path> <branch>` path).
+    expect(calls.some(c => c.cmd.includes('worktree add -b "feat/DEVPA-155-add-storybook"') && c.cmd.includes('"origin/main"'))).toBe(true);
+  });
+
+  it('does NOT wipe a local branch when caller passed opts.branch (reviewer/qa retreat)', async () => {
+    // Reviewer/QA on retreat passes the builder's branch explicitly. That
+    // branch is the WORK — wiping it would lose the builder's commits.
+    const calls = [];
+    vi.doMock('child_process', () => ({
+      execSync: vi.fn((cmd) => {
+        calls.push({ cmd });
+        if (cmd.includes('worktree list --porcelain')) {
+          return 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n';
+        }
+        if (cmd.includes('rev-parse --verify --quiet "refs/heads/feat/builder-work"')) {
+          return ''; // exists locally
+        }
+        if (cmd.includes('rev-parse --verify')) {
+          const err = new Error('not found'); err.status = 128; throw err;
+        }
+        return '';
+      })
+    }));
+    const { prepareWorktree } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-reviewer', {
+      agent: 'reviewer',
+      branch: 'feat/builder-work'
+    });
+    expect(wt.branch).toBe('feat/builder-work');
+    // No branch -D should have fired.
+    expect(calls.some(c => c.cmd.includes('branch -D'))).toBe(false);
+    // Should have used the `worktree add <path> <branch>` form (existing branch).
+    expect(calls.some(c => c.cmd.includes('worktree add "') && !c.cmd.includes(' -b '))).toBe(true);
+  });
+
   it('runs git in the supplied repoRoot, not PROJECT_ROOT', async () => {
     const calls = captureExec();
     const { prepareWorktree } = await import('../../src/worker/worktree.js');
