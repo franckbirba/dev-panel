@@ -190,13 +190,23 @@ function renderExtensions(mcpConfigPath) {
 }
 
 function buildRecipe({ prompt, extensions, model, provider }) {
+  // The `developer` builtin extension provides shell/text_editor/file tools
+  // — the basic primitives the model needs to read and edit files in the
+  // worktree. Without it, listing only the stdio MCP extensions leaves the
+  // model with no way to access the filesystem (canary #3, 2026-05-08:
+  // "Unable to access the project files due to environment configuration
+  // issues" — the model had MCP tools but no shell).
+  const allExtensions = [
+    { type: 'builtin', name: 'developer', timeout: 300 },
+    ...extensions,
+  ];
   return {
     version: '1.0.0',
     title: 'devpanl agent run',
     description: 'Agent dispatch — prompt + MCP extensions + structured output',
     instructions: prompt,
     prompt: 'Begin. End your response with a single JSON object matching the response schema.',
-    extensions,
+    extensions: allExtensions,
     settings: {
       goose_provider: provider,
       goose_model: model,
