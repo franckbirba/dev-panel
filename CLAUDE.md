@@ -158,6 +158,41 @@ The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLIT
 
 The bridge above goes one direction (GlitchTip → captures). For the other direction — Shelly triaging an issue by id, or an ephemeral agent closing an issue after a fix has merged — the devpanel-mcp exposes two tools backed by the Sentry-compatible API: `glitchtip_get_issue({ org_slug, issue_id })` returns `{ title, culprit, level, status, last_event: { message, exception, stack, breadcrumbs, tags } }`, and `glitchtip_resolve_issue({ org_slug, issue_id })` PUTs `status=resolved`. Auth is `Bearer $GLITCHTIP_API_TOKEN` (the same UI-generated token from bootstrap §6, with `org:admin + project:admin + project:write`); base URL is `$GLITCHTIP_BASE_URL` (defaults to `https://glitchtip.devpanl.dev`). Both env vars are wired through `infra/agents-mcp.json.template` → `~/.mcp.json` on the agents host. 401/403 surface explicitly so a rotated/revoked token never silently returns an empty payload.
 
+## Remote MCP — `https://devpanl.dev/mcp`
+
+The same MCP server that runs in stdio for Shelly (`src/mcp/server.js`, 23+ tools — dispatch, plane, memory, threads, captures, glitchtip, dev-bots, attachments) is also exposed over HTTP at `https://devpanl.dev/mcp` so any teammate's local Claude Code / Claude Desktop can hit prod without cloning this repo.
+
+**Auth.** `Authorization: Bearer <ADMIN_API_KEY>`. The traefik router for `/mcp` is **deliberately NOT gated by `oauth-google@docker`** — Bearer clients can't satisfy Google SSO, and the SPA catch-all router would 307 them to `auth.devpanl.dev` (symptom: 500 / login redirect from Claude). Auth is enforced inside `src/server/mcp-http.js`. Skipping the SSO middleware is the *whole point* of this router; if you ever add `oauth-google@docker` to it, Bearer auth breaks.
+
+**Wiring (already in `docker-compose.yml`):**
+- `devpanel-api` env: `ENABLE_MCP_HTTP=true`. Without this, the transport is not mounted (`src/server/index.js` checks the flag).
+- `devpanel-api` traefik labels: `traefik.http.routers.devpanel-mcp.rule=Host(devpanl.dev) && PathPrefix(/mcp)`, priority `250` (beats SPA catch-all at `100`), no middleware.
+- `MCP_NO_AUTOSTART=1` is set in-process before importing `src/mcp/server.js` so its stdio bootstrap doesn't try to colonize the Express stdin/stdout.
+
+**Client config** (each dev's `~/.config/claude-code/.claude.json` or wherever they keep MCP server defs):
+```json
+{
+  "mcpServers": {
+    "devpanel-prod": {
+      "type": "streamable-http",
+      "url": "https://devpanl.dev/mcp",
+      "headers": { "Authorization": "Bearer ${ADMIN_API_KEY}" }
+    }
+  }
+}
+```
+For now we share `ADMIN_API_KEY` — single token. Per-dev tokens (revocable) are a follow-up; track with `dev_bots`-style rotation if it becomes an issue.
+
+**Smoke-test.** From any host:
+```bash
+curl -sS -X POST https://devpanl.dev/mcp \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 500
+```
+Expect a JSON-RPC envelope listing tools. A 401 means the Bearer token is wrong. A 307 to `auth.devpanl.dev` means traefik is routing through SSO — check the priority on `devpanel-mcp` vs. `devpanel-spa`.
+
 ## Shelly — the orchestration agent (READ BEFORE TOUCHING TELEGRAM)
 
 Shelly is **not a script, not a bot framework, not `claw.js`**. She is a persistent **Claude Code CLI session** running on the agents host with the `telegram-multi` plugin (Apache-2.0 fork of `claude-plugins-official:telegram` with multi-bot support). You chat with her in Telegram; she dispatches work to other agents and reports back.

@@ -58,6 +58,22 @@ export function createServer(storagePath = './storage') {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // Remote MCP transport — exposes the same tools as the stdio MCP server
+  // at /mcp via StreamableHTTPServerTransport. Bearer auth, no SSO. The
+  // server module self-bootstraps on import (stdio); MCP_NO_AUTOSTART=1
+  // suppresses that so we own the transport here.
+  if (process.env.ENABLE_MCP_HTTP === 'true') {
+    process.env.MCP_NO_AUTOSTART = '1';
+    Promise.all([
+      import('../mcp/server.js'),
+      import('./mcp-http.js'),
+    ]).then(([{ server }, { mountMcpHttp }]) => {
+      return mountMcpHttp(app, { server, token: process.env.ADMIN_API_KEY });
+    }).catch(err => {
+      console.error('[mcp-http] failed to mount:', err);
+    });
+  }
+
   // Routes
   app.use('/api', createRouter(config));
   mountDevBotsRoutes(app);

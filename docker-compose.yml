@@ -134,6 +134,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       ENABLE_MONITORING: "true"
       ENABLE_BULLMQ: "true"
+      ENABLE_MCP_HTTP: "true"
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # Trust X-Forwarded-User from Traefik (set by traefik-forward-auth
@@ -202,6 +203,17 @@ services:
       - "traefik.http.routers.devpanel-agents.tls.certresolver=letsencrypt"
       - "traefik.http.routers.devpanel-agents.service=devpanel"
       - "traefik.http.routers.devpanel-agents.priority=250"
+      # ── Remote MCP transport: /mcp — Bearer ADMIN_API_KEY auth, no SSO.
+      # Same reasoning as devpanel-agents above: Bearer clients (Claude
+      # Code / Claude Desktop) can't satisfy Google OAuth, so we pin a
+      # higher priority than the SPA catch-all and skip the oauth-google
+      # middleware. Auth is enforced by src/server/mcp-http.js.
+      - "traefik.http.routers.devpanel-mcp.rule=Host(`devpanl.dev`) && PathPrefix(`/mcp`)"
+      - "traefik.http.routers.devpanel-mcp.entrypoints=websecure"
+      - "traefik.http.routers.devpanel-mcp.tls=true"
+      - "traefik.http.routers.devpanel-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.devpanel-mcp.service=devpanel"
+      - "traefik.http.routers.devpanel-mcp.priority=250"
       # ── SPA router: everything else (/, /dashboard/*, static assets).
       # Gated by oauth-google@docker — Traefik bounces unauthenticated
       # browsers through auth.devpanl.dev → Google → back with cookie.
