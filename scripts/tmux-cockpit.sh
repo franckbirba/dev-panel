@@ -67,8 +67,10 @@ $TMUX new-window -t "$SESSION" -n agents-shell \
   "$SSH_AGENTS 'su - deploy -c \"cd /home/deploy/projects/dev-panel && exec bash -l\"' || exec \$SHELL"
 
 # Window 6: services — interactive shell on services VPS, in the repo.
+# `bash -il` (interactive + login) is required: `-l` alone reads profile but
+# isn't interactive over SSH, so the pane shows the prompt but swallows keys.
 $TMUX new-window -t "$SESSION" -n services \
-  "$SSH_SERVICES 'cd ~/dev-panel && exec bash -l' || exec \$SHELL"
+  "$SSH_SERVICES 'cd ~/dev-panel && exec bash -il' || exec \$SHELL"
 
 # Window 7: local — local repo shell. Lands you in dev-panel for git/edits
 # and running ./scripts/deploy-agents.sh.
