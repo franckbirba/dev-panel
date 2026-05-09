@@ -83,6 +83,7 @@ import { initMasterDatabase } from '../server/db.js';
 import { prepareWorktree, shouldUseWorktree } from './worktree.js';
 import { updateInstance } from '../server/workflow-instances.js';
 import { spawnGoose, shouldUseGoose } from './goose-driver.js';
+import { spawnMiniSwe, shouldUseMiniSwe } from './mini-swe-driver.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -144,10 +145,19 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
-  // Phase A — env-gated cheap-tier harness. When DRIVER_<AGENT>=goose (or
-  // DRIVER_DEFAULT=goose) and FORCE_TIER!=opus, route to goose driving
-  // Qwen3-Coder via DeepInfra. Same return contract as the Claude path
-  // below: resolve(finalText) on exit 0, reject on non-zero.
+  // Cheap-tier harness routing:
+  //   DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3 (preferred — empirical
+  //                           canary 2026-05-09 showed 40s, ~$0.002, real
+  //                           commit; goose was 17min, $3-5, no commit)
+  //   DRIVER_<AGENT>=goose  → legacy goose path, kept for fallback only
+  //   anything else         → Claude (Anthropic, default)
+  // FORCE_TIER=opus globally overrides everything to Claude.
+  if (shouldUseMiniSwe(agentRole)) {
+    return spawnMiniSwe({
+      jobId, prompt, agentRole, cwd,
+      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    });
+  }
   if (shouldUseGoose(agentRole)) {
     return spawnGoose({
       jobId, prompt, agentRole, cwd,
