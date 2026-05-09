@@ -70,3 +70,71 @@ export async function addToAllowlist(tgUserId: bigint, firstName: string | null,
     [tgUserId, firstName, addedVia]
   );
 }
+
+// ---------------------------------------------------------------------------
+// Verbatim transcript log — every inbound/outbound message lands here so
+// Shelly can reconstruct conversation history beyond Claude Code's context
+// window. Read via the devpanel-mcp transcript_* tools. Schema in
+// infra/migrations/009-shelly-transcript.sql.
+// ---------------------------------------------------------------------------
+
+export type TranscriptDirection = 'in' | 'out';
+export type TranscriptRole = 'user' | 'shelly' | 'system';
+
+export interface TranscriptRow {
+  bot_label: string;
+  bot_username?: string | null;
+  tg_chat_id?: string | null;
+  tg_user_id?: string | null;
+  tg_message_id?: number | null;
+  direction: TranscriptDirection;
+  role: TranscriptRole;
+  source?: string;            // default 'telegram'
+  thread_subject?: string | null;
+  content: string;
+  attachment_path?: string | null;
+  attachment_kind?: string | null;
+  meta?: Record<string, unknown> | null;
+}
+
+// Extracts a [thread:<type>/<id>] tag from message content if present.
+// Returns just the canonical "<type>/<id>" form, e.g. "capture/47", or null.
+// Mirrors the protocol used by `src/server/threads.js` on the dev-panel side.
+const THREAD_TAG_RE = /\[thread:([a-z_-]+)\/([^\]\s]+)\]/i;
+export function extractThreadSubject(content: string): string | null {
+  const m = THREAD_TAG_RE.exec(content || '');
+  if (!m) return null;
+  return `${m[1].toLowerCase()}/${m[2]}`;
+}
+
+// Fire-and-forget. Never throws — transcript writes must NOT block the
+// message path. A DB hiccup here loses one log line, not a user message.
+export function recordTranscript(row: TranscriptRow): void {
+  const subject = row.thread_subject ?? extractThreadSubject(row.content);
+  getPool().query(
+    `INSERT INTO shelly_transcript
+      (bot_label, bot_username, tg_chat_id, tg_user_id, tg_message_id,
+       direction, role, source, thread_subject, content,
+       attachment_path, attachment_kind, meta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      row.bot_label,
+      row.bot_username ?? null,
+      row.tg_chat_id ?? null,
+      row.tg_user_id ?? null,
+      row.tg_message_id ?? null,
+      row.direction,
+      row.role,
+      row.source ?? 'telegram',
+      subject,
+      row.content,
+      row.attachment_path ?? null,
+      row.attachment_kind ?? null,
+      row.meta ? JSON.stringify(row.meta) : null,
+    ]
+  ).catch(err => {
+    // Stderr only — the plugin's main `log()` writes to stdout which Claude
+    // Code reads as MCP traffic. Don't pollute that channel with DB chatter.
+    console.error(`telegram-multi: shelly_transcript insert failed: ${err?.message ?? err}`);
+  });
+}
