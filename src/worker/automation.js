@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { logStep, countMemoryWrites } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
-import { loadWorkflows, triggerNext } from './engine.js';
+import { getCachedWorkflows, triggerNext } from './engine.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 
 // DEVPA-145: same MODE_FILE convention as src/worker/index.js — Shelly's
@@ -36,13 +36,11 @@ async function publishEvent(event, data) {
   }
 }
 
-// Flows are loaded once per worker process; editing any YAML under
-// src/worker/workflows/ requires a worker restart to take effect.
-let _flows = null;
-function getFlows() {
-  if (!_flows) _flows = loadWorkflows();
-  return _flows;
-}
+// Reload-aware: getCachedWorkflows() reuses parsed flows when no YAML on disk
+// has changed since the last call. Pre-fix the worker cached flows for the
+// process lifetime, so a deploy that only updated a YAML (PR #67) was
+// silently invisible until somebody restarted the worker by hand.
+function getFlows() { return getCachedWorkflows(); }
 
 // Replaceable for tests
 let _enqueue = async (payload) => {

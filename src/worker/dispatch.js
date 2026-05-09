@@ -1,5 +1,5 @@
 // src/worker/dispatch.js
-import { loadWorkflows } from './engine.js';
+import { getCachedWorkflows } from './engine.js';
 import { createInstance, updateInstance } from '../server/workflow-instances.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 import { getProjectByPlaneId } from '../server/db.js';
@@ -109,11 +109,11 @@ async function publishEvent(event, data) {
   } catch { /* SSE is best-effort */ }
 }
 
-let _flows = null;
-function getFlows() {
-  if (!_flows) _flows = loadWorkflows();
-  return _flows;
-}
+// Reload-aware: getCachedWorkflows() returns the parsed flows from cache only
+// if no YAML on disk has changed. Fixes the silent staleness bug that wedged
+// PR #17 / #18 in merge-coordinator → blocked-terminal for ~30h after the
+// PR #67 YAML deploy without a worker restart.
+function getFlows() { return getCachedWorkflows(); }
 
 let _enqueue = async (payload, opts = {}) => {
   const queue = getQueue(QUEUES.agents);
