@@ -135,96 +135,159 @@ async function verifyMemoryWrites({ job_id, result }) {
   }
 }
 
-// Mutates `result` in place when the model claimed status=done but produced
-// no actual diff against origin/<base>. Goose × Qwen3 (canary 2108, DEVPA-155,
-// 2026-05-08) wrote 12 untracked files, never `git add`/`git commit`'d, then
-// returned status=done with a confident summary — Shelly trusted the JSON and
-// reported "Terminé" while nothing shipped.
+// Worker-side commit authority. The model is treated as a pure file-mutation
+// engine — its job is to edit the worktree and report status. Commit discipline
+// (staging, committing, verifying a diff exists vs origin) is the WORKER's job.
 //
-// Since neither goose nor Qwen3 has a native closing-protocol enforcement
-// (sub-recipes order steps but don't gate completion; the `final_output`
-// recipe tool only validates JSON shape, not artefacts), the verifier has
-// to live here. Idempotent: only fires when status=done AND a worktree
-// was used (skips non-coding agents that have no diff to verify).
+// Why this lives here and not in the prompt: prompting Qwen3 to "remember to
+// `git commit`" failed (canary 2108, 2026-05-08 — model wrote 12 untracked
+// files and claimed status=done). Adding a structural gate via MOIM persistent
+// instructions worked (canary 2129) but burns prompt budget every turn and
+// leaks orchestration concerns into the model. The structurally-pure shape:
+// model never hears about commit discipline, worker commits on its behalf
+// from `artifacts.files_modified[]` ∪ `artifacts.files_created[]` ∪ whatever
+// `git status --porcelain` shows. If after that there's still no diff, it
+// truly didn't do the work — downgrade to blocked.
 //
-// Routing: the work-item workflow yaml maps `builder.on.blocked → pm/replan`,
-// so a downgraded result auto-triggers a replan with PM context — the right
-// behavior. No-op for status≠done so genuine failed/blocked claims pass
-// through unchanged.
-function verifyDiffOrDowngrade({ result, jobData }) {
+// Mutates `result` in place. Idempotent: only fires when status=done AND a
+// worktree was used (skips non-coding agents). Returns a small report for
+// logging.
+function verifyAndCommit({ result, jobData }) {
   if (!result || result.status !== 'done') return { changed: false };
 
   const worktreePath = jobData.context?.worktree_path;
   const branch = jobData.context?.branch;
   if (!worktreePath || !branch) return { changed: false };
 
-  const baseBranch = jobData.context?.default_branch || 'main';
+  // Worktree may have been cleaned up between spawn close and verifier run
+  // (canary 2129, 2026-05-08). Treat as "can't verify, can't commit" — leave
+  // the result alone. The `existsSync` shortcircuit must come BEFORE any
+  // execSync since Node's chdir-then-execve fails with spawnSync ENOENT
+  // before our try/catch runs.
+  if (!existsSync(worktreePath)) {
+    console.warn(`[verifier] worktree gone, skipping: ${worktreePath}`);
+    return { changed: false, error: 'worktree_gone' };
+  }
 
-  // `git diff --quiet` exits 0 when there's no diff, 1 when there is one.
-  // Compare worktree branch against origin/<base> — covers both committed
-  // and uncommitted changes. We deliberately compare against origin (not
-  // local main) so a stale local main doesn't mask "you didn't push";
-  // the work-item terminal publisher does the actual push later.
-  let hasDiff = false;
-  let detail = '';
-  try {
-    execSync(
-      `git diff --quiet "origin/${baseBranch}"...HEAD`,
-      { cwd: worktreePath, stdio: 'pipe' }
-    );
-  } catch (err) {
-    if (err.status === 1) {
-      hasDiff = true;
-      try {
-        detail = execSync(
-          `git diff --stat "origin/${baseBranch}"...HEAD`,
-          { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' }
-        ).trim().split('\n').slice(-1)[0] || '';
-      } catch { /* best effort */ }
-    } else {
-      // status > 1 means git itself errored (worktree gone, ref missing,
-      // etc.). Treat as "can't verify" — leave the result alone, log it,
-      // let the existing pipeline decide what to do.
-      console.warn(`[verifier] git diff errored (status=${err.status}) in ${worktreePath}: ${err.message?.slice(0, 200)}`);
-      return { changed: false, error: err.message };
+  const baseBranch = jobData.context?.default_branch || 'main';
+  const job_id = jobData.job_id;
+
+  function hasDiffVsOrigin() {
+    try {
+      execSync(`git diff --quiet "origin/${baseBranch}"...HEAD`,
+               { cwd: worktreePath, stdio: 'pipe' });
+      return { has: false };
+    } catch (err) {
+      if (err.status === 1) {
+        let detail = '';
+        try {
+          detail = execSync(`git diff --stat "origin/${baseBranch}"...HEAD`,
+                            { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' })
+                   .trim().split('\n').slice(-1)[0] || '';
+        } catch { /* best effort */ }
+        return { has: true, detail };
+      }
+      return { has: false, error: err.message };
     }
   }
 
-  // Also count uncommitted changes — model might have written files but
-  // not staged. That's still a "no diff vs origin" condition for the
-  // terminal publisher (it pushes commits, not unstaged changes), but
-  // the operator should know. Fold it into the downgrade reason so a
-  // human reading the alert can spot "you wrote files but didn't commit".
-  let uncommitted = '';
-  try {
-    uncommitted = execSync(
-      'git status --porcelain',
-      { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' }
-    ).trim();
-  } catch { /* best effort */ }
-
-  if (hasDiff) {
-    console.log(`[verifier] diff confirmed for job ${jobData.job_id}: ${detail}`);
-    return { changed: false, hasDiff: true, detail };
+  // 1. Already have a real diff? Model may have committed properly. Accept.
+  let diff = hasDiffVsOrigin();
+  if (diff.error) {
+    console.warn(`[verifier] git diff errored (skip): ${diff.error?.slice(0, 200)}`);
+    return { changed: false, error: diff.error };
+  }
+  if (diff.has) {
+    console.log(`[verifier] diff confirmed for job ${job_id}: ${diff.detail}`);
+    return { changed: false, hasDiff: true };
   }
 
-  // No diff. Override status. Preserve the model's claim in the summary so
-  // the replan PM step has full context.
+  // 2. No diff. Try to commit on the model's behalf. This is the structural
+  // shift: the worker is the commit authority. Stage anything the model
+  // claimed it touched, fall back to whatever git sees as dirty.
+  const claimed = [
+    ...(Array.isArray(result.artifacts?.files_modified) ? result.artifacts.files_modified : []),
+    ...(Array.isArray(result.artifacts?.files_created)  ? result.artifacts.files_created  : []),
+  ].filter(p => typeof p === 'string' && p.length > 0);
+
+  let dirty = '';
+  try {
+    dirty = execSync('git status --porcelain',
+                     { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' }).trim();
+  } catch { /* best effort */ }
+
+  // Stage exactly the files the model claimed it touched. Never `git add .`
+  // / `git add -A` — a worker-managed worktree may carry residue from a
+  // half-failed prior run, IDE detritus, OS files; sweeping all dirty paths
+  // would commit cruft as if it were the work item's diff. If the model
+  // returned an empty manifest, we DO NOT guess — we let the downgrade-to-
+  // blocked path fire. Untracked files that aren't in the manifest are a
+  // signal the model lied about scope; replan is the right answer.
+  let staged = false;
+  let stageError = null;
+  if (claimed.length > 0) {
+    try {
+      // Stage in batches; long file lists can blow argv. 100/batch is safe.
+      for (let i = 0; i < claimed.length; i += 100) {
+        const batch = claimed.slice(i, i + 100).map(p => `"${p.replace(/"/g, '\\"')}"`).join(' ');
+        execSync(`git add -- ${batch}`, { cwd: worktreePath, stdio: 'pipe' });
+      }
+      staged = true;
+    } catch (err) {
+      stageError = err.message?.slice(0, 200);
+      console.warn(`[verifier] git add (claimed) failed: ${stageError}`);
+    }
+  }
+
+  if (staged) {
+    // Commit with the model's summary. If the staged diff is empty (e.g.,
+    // model claimed files that match HEAD already), commit will fail —
+    // that's fine, we'll just fall through to the no-diff downgrade.
+    const subject = (result.summary || `agent ${jobData.agent} work`).split('\n')[0].slice(0, 72);
+    const body = result.summary && result.summary.length > 72
+      ? `\n\n${result.summary}`
+      : '';
+    const message = `${subject}${body}\n\nCo-authored-by: ${jobData.agent} <agent@devpanl.dev>`;
+    try {
+      // Use stdin to avoid quoting hell on multi-line summaries.
+      execSync('git commit -F -', {
+        cwd: worktreePath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        input: message,
+      });
+      console.log(`[verifier] auto-committed for job ${job_id}: ${subject}`);
+    } catch (err) {
+      // Common: "nothing to commit" because everything staged was identical
+      // to HEAD. Don't treat as fatal; fall through to the diff re-check.
+      console.warn(`[verifier] auto-commit failed (proceeding): ${err.message?.slice(0, 200)}`);
+    }
+  }
+
+  // 3. Re-check diff after our commit attempt.
+  diff = hasDiffVsOrigin();
+  if (diff.has) {
+    console.log(`[verifier] diff confirmed AFTER auto-commit for job ${job_id}: ${diff.detail}`);
+    return { changed: false, hasDiff: true, autoCommitted: staged };
+  }
+
+  // 4. Still no diff. Real downgrade.
   const claimedSummary = result.summary || '(no summary provided)';
-  const uncommittedNote = uncommitted
-    ? ` Uncommitted/untracked files in worktree:\n${uncommitted.split('\n').slice(0, 20).join('\n')}`
-    : ' Worktree is clean — model produced no files at all.';
+  const dirtyNote = dirty
+    ? ` Dirty files at verify time:\n${dirty.split('\n').slice(0, 20).join('\n')}`
+    : ' Worktree was clean — model produced no files at all.';
+  const stageNote = stageError ? ` Stage error: ${stageError}.` : '';
 
   result.status = 'blocked';
-  result.summary = `[verifier] model claimed status=done but produced no diff against origin/${baseBranch}. Original summary: ${claimedSummary}.${uncommittedNote}`;
+  result.summary = `[verifier] model claimed status=done but produced no diff against origin/${baseBranch} even after worker auto-commit attempt. Original summary: ${claimedSummary}.${dirtyNote}${stageNote}`;
   result.blockers = result.blockers || [];
   result.blockers.push({
     kind: 'no_diff',
-    detail: `worktree ${worktreePath} has no diff vs origin/${baseBranch}`,
-    uncommitted_files: uncommitted ? uncommitted.split('\n').length : 0
+    detail: `worktree ${worktreePath} has no diff vs origin/${baseBranch} after auto-commit`,
+    files_claimed: claimed.length,
+    dirty_files: dirty ? dirty.split('\n').length : 0,
   });
 
-  console.warn(`[verifier] downgraded job ${jobData.job_id} to blocked: no diff. ${uncommittedNote}`);
+  console.warn(`[verifier] downgraded job ${job_id} to blocked: no diff after auto-commit.${dirtyNote}`);
   return { changed: true, downgradedTo: 'blocked' };
 }
 
@@ -448,15 +511,12 @@ export async function runAutomation({ jobData, result, startedAt }) {
   const { job_id, agent, plane, context } = jobData;
   const durationMs = Date.now() - startedAt;
 
-  // Diff verifier MUST run before any notifications. Without this, when a
-  // goose × Qwen3 builder hallucinates status=done (canary 2108, 2026-05-08),
-  // we publish job.finished + updatePlane(done) + shelly.notify(done) before
-  // anything checks if there's a real diff. Result: Shelly tells Franck
-  // "Terminé" while the worktree contains 12 untracked files and no commits.
-  //
-  // Mutates `result` in place when downgrading. The rest of this function
-  // (Plane/Shelly/engine routing) then sees the corrected status.
-  verifyDiffOrDowngrade({ result, jobData });
+  // Worker is the commit authority — it stages and commits the model's work
+  // from artifacts.files_modified[] before any notifications fire. If the
+  // model truly produced nothing, downgrades status=done → blocked. Mutates
+  // `result` in place. The rest of this function (Plane/Shelly/engine
+  // routing) then sees the corrected status.
+  verifyAndCommit({ result, jobData });
 
   publishEvent('job.finished', { job_id, agent, status: result.status, summary: result.summary });
 

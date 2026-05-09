@@ -33,7 +33,7 @@ import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
-import { parseResult } from './prompt-builder.js';
+import { parseResult, readSoul } from './prompt-builder.js';
 
 const DEFAULT_PROVIDER = 'openai';
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1/openai';
@@ -190,51 +190,40 @@ function renderExtensions(mcpConfigPath) {
   return { extensions, env_passthrough };
 }
 
-// Closing-protocol guidance for Qwen3-Coder via goose. Neither goose's
-// `final_output` recipe tool nor Qwen3's tool-calling template enforces
-// "stage and commit before claiming done" — both only validate output
-// shape after the fact. Canary 2108 (DEVPA-155, 2026-05-08): model wrote
-// 12 untracked files, never ran `git add`/`git commit`, never called
-// `final_output`, and goose closed the run with a fabricated status=done.
+// Closing protocol used to live here as a prompt-time gate (CLOSING_PROTOCOL
+// constant + GOOSE_MOIM_MESSAGE_FILE injection). It moved to the worker side
+// on 2026-05-08: `verifyAndCommit` in src/worker/automation.js now stages
+// `artifacts.files_modified[]` ∪ `artifacts.files_created[]` and commits on
+// the model's behalf. The model is a pure file-mutation engine; commit
+// discipline is the worker's job. This frees ~40 lines of prompt budget per
+// turn and removes the model's awareness of orchestration concerns.
+
+// Channel the agent's SOUL through goose's MOIM (Model-Observed Internal
+// Memory). MOIM is goose's "context contextualizer" that re-reads its
+// source on every turn — the right shape for durable identity content
+// that must survive long-running spawns without burning recipe.instructions
+// budget. Empirically verified 2026-05-09 against goose 1.33.1 in
+// --no-session --recipe mode: GOOSE_MOIM_MESSAGE_FILE is loaded; .goosehints
+// in a `git worktree add` checkout was not (cwd-resolution differs in
+// worktrees vs plain dirs); ~/.agents/skills/<name>/SKILL.md was not.
 //
-// The orchestration verifier (verifyDiffOrDowngrade in automation.js) is
-// the safety net — this prompt block is the prevention. We append it to
-// recipe.instructions only on the goose path so Claude's prompts stay
-// pristine (Claude already has commit-discipline baked into its system
-// prompt + claude-code's own tooling).
-const CLOSING_PROTOCOL = `
-
----
-
-# CLOSING PROTOCOL — REQUIRED BEFORE final_output
-
-You MUST commit your work before signaling done. The orchestration runs a
-verifier that compares \`git diff origin/<base>...HEAD\` after you exit;
-returning status=done with an empty diff will be auto-downgraded to
-status=blocked and the work item will be replan'd. Don't waste a turn.
-
-Steps to execute IN ORDER as your last actions, before calling
-\`final_output\`:
-
-1. \`git status --short\` — confirm what changed.
-2. \`git add <each-file-you-touched>\` — never \`git add .\`, never
-   \`git add -A\`. Stage only files relevant to this work item.
-3. \`git diff --cached --stat\` — verify staging matches intent.
-4. \`git commit -m "<conventional commit message describing the work>"\`
-5. \`git diff --stat origin/<base-branch>...HEAD\` — confirm the diff is
-   non-empty. If empty, you have not done the work; do not claim done.
-6. THEN call \`final_output\` with the matching status.
-
-Status guidance:
-- \`done\` — work completed, commit landed in your worktree, diff is real.
-- \`blocked\` — you need information or a decision a human must make.
-  Explain in \`summary\`.
-- \`failed\` — you tried and the work cannot be done as specified.
-  Explain in \`summary\` what's wrong with the spec.
-
-Never invent files you didn't actually create. Never claim done while
-files remain untracked. The verifier will catch you.
-`;
+// Per-job file under tmp so concurrent jobs don't share a single hints
+// file. Best-effort: write failure leaves recipe.instructions unchanged
+// (we already passed skipSoul=true to buildPrompt, so the worst case
+// is the model runs without explicit identity for one job — better than
+// failing the whole spawn).
+function writeMoimSoul(jobId, agentRole) {
+  try {
+    const dir = join(tmpdir(), 'goose-recipes');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${jobId}-soul.md`);
+    writeFileSync(path, readSoul(agentRole), 'utf8');
+    return path;
+  } catch (err) {
+    console.warn(`[goose] writeMoimSoul failed: ${err.message?.slice(0, 200)}`);
+    return null;
+  }
+}
 
 function buildRecipe({ prompt, extensions, model, provider }) {
   // The `developer` builtin extension provides the shell tool — the primitive
@@ -269,7 +258,7 @@ function buildRecipe({ prompt, extensions, model, provider }) {
     version: '1.0.0',
     title: 'devpanl agent run',
     description: 'Agent dispatch — prompt + MCP extensions + structured output',
-    instructions: prompt + CLOSING_PROTOCOL,
+    instructions: prompt,
     prompt: 'Begin. End your response with a single JSON object matching the response schema.',
     extensions: allExtensions,
     settings: {
@@ -295,6 +284,11 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
     const recipeDir = join(tmpdir(), 'goose-recipes');
     try { mkdirSync(recipeDir, { recursive: true }); } catch { /* exists */ }
     const recipePath = join(recipeDir, `${jobId}-${randomUUID()}.json`);
+
+    // Channel SOUL via MOIM (re-injected every turn). Matches the
+    // skipSoul=true pass in src/worker/index.js so the recipe.instructions
+    // field stays lean — only the per-job work-item prompt lives there.
+    const moimSoulPath = writeMoimSoul(jobId, agentRole);
 
     const { extensions, env_passthrough } = renderExtensions(workerMcpConfigPath());
     const goose = envForGoose();
@@ -325,6 +319,7 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
         ...process.env,
         ...goose,
         ...env_passthrough,
+        ...(moimSoulPath ? { GOOSE_MOIM_MESSAGE_FILE: moimSoulPath } : {}),
         JOB_ID: jobId,
         AGENT_ROLE: agentRole,
         PATH: [

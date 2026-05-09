@@ -5,11 +5,30 @@ import { join } from 'path';
 const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 
 /**
+ * Read the agent's SOUL.md text. Returns the file contents or a minimal
+ * fallback. Exposed so the goose harness can write SOUL into a `.goosehints`
+ * file at the worktree root instead of bundling it into recipe.instructions
+ * — frees ~2k tokens/turn from the per-recipe prompt budget.
+ * @param {string} agent - Agent role name
+ * @returns {string}
+ */
+export function readSoul(agent) {
+  const soulPath = join(PROJECT_ROOT, '.agents', agent, 'SOUL.md');
+  if (existsSync(soulPath)) return readFileSync(soulPath, 'utf8');
+  return `You are the ${agent} agent. Follow project conventions.`;
+}
+
+/**
  * Build the full prompt for claude -p from agent SOUL + skills + task
  * @param {Object} jobData - Job data from BullMQ
+ * @param {Object} opts
+ * @param {boolean} opts.skipSoul - Skip the SOUL section (used when the SOUL
+ *   is delivered through a side channel like goose's .goosehints, so the
+ *   recipe prompt doesn't double-ship it).
  * @returns {string} Assembled prompt
  */
-export function buildPrompt(jobData) {
+export function buildPrompt(jobData, opts = {}) {
+  const { skipSoul = false } = opts;
   const {
     job_id, agent, mode = 'autonomous',
     workflow = null, workflow_instance_id = null, workflow_revision = null,
@@ -51,12 +70,11 @@ export function buildPrompt(jobData) {
     );
   }
 
-  // 1. Agent SOUL
-  const soulPath = join(PROJECT_ROOT, '.agents', agent, 'SOUL.md');
-  if (existsSync(soulPath)) {
-    sections.push(readFileSync(soulPath, 'utf8'));
-  } else {
-    sections.push(`You are the ${agent} agent. Follow project conventions.`);
+  // 1. Agent SOUL — skip when the harness delivers SOUL via a side channel
+  // (e.g. goose's .goosehints, written to the worktree root before spawn).
+  // Avoids double-shipping the SOUL on every per-job recipe.
+  if (!skipSoul) {
+    sections.push(readSoul(agent));
   }
 
   // 2. Required skills

@@ -190,13 +190,16 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
     });
 
     try {
+      // Strip per-spawn fields from forwarded context (see comment on the
+      // forward-transition enqueue below for full rationale).
+      const { worktree_path: _wtPath, ...replanContext } = jobData.context || {};
       await enqueue({
         agent: 'pm',
         workflow: 'replan',
         workflow_instance_id: childId,
         plane: jobData.plane,
         work_item: jobData.work_item,
-        context: jobData.context,
+        context: replanContext,
         parent_workflow: flow.name,
         parent_revision: instance.revision,
         parent_instance_id: instance.id,
@@ -228,6 +231,14 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
     if (currentRev >= flow.max_revisions) {
       return applyExhaustion(instance, flow, _emit);
     }
+    // Sanitize context before forwarding. Per-spawn fields (worktree_path)
+    // belong to the CURRENT job only — the next agent will derive its own
+    // worktree in src/worker/index.js. Carrying worktree_path forward was
+    // the structural cause of canary 2129 (DEVPA-155, 2026-05-08): the
+    // verifier in the next step inherited a path that prepareWorktree had
+    // already reclaimed. Workflow-level fields (branch, default_branch,
+    // project_root, github_issue_number, devpanel_ticket_id, etc.) propagate.
+    const { worktree_path, ...workflow_context } = jobData.context || {};
     await enqueue({
       agent: effective.next,
       workflow: flow.name,
@@ -235,7 +246,7 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
       workflow_revision: currentRev,
       plane: jobData.plane,
       work_item: jobData.work_item,
-      context: jobData.context
+      context: workflow_context
     });
     await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
                    { current_step: effective.next, last_job_id: jobData.job_id });

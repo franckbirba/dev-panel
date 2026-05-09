@@ -337,8 +337,12 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     };
   }
 
-  // Build prompt (now sees worktree_path + branch in context)
-  const prompt = buildPrompt(jobData);
+  // Build prompt (now sees worktree_path + branch in context). When the
+  // goose harness will run this job, skip the SOUL section — goose-driver
+  // delivers SOUL to the model via .goosehints written to the worktree
+  // root, so bundling it into recipe.instructions would double-ship it.
+  const useGoose = shouldUseGoose(jobData.agent);
+  const prompt = buildPrompt(jobData, { skipSoul: useGoose });
 
   const startedAt = Date.now();
 
