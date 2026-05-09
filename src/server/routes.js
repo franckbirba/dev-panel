@@ -15,7 +15,7 @@ import {
   initProjectDatabase,
 } from './db.js';
 import {
-  createCapture, getCapture, listCaptures,
+  createCapture, getCapture, listCaptures, listCapturesAdmin,
   updateCapture, deleteCapture,
   setCaptureRouting, getCaptureRouting
 } from './captures.js';
@@ -804,6 +804,22 @@ export function createRouter(config = {}) {
         local_path: proj.local_path,
         default_branch: proj.default_branch
       });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // /admin/captures — cross-project capture list for the agents host. The
+  // per-project GET /api/captures requires X-API-Key (one project at a time);
+  // Shelly + ephemeral agents only carry ADMIN_API_KEY, hence this admin twin.
+  // Filters: project_id (optional UUID), status, kind, limit (≤200).
+  router.get('/admin/captures', authenticateAdmin, (req, res) => {
+    try {
+      const project_id = req.query.project_id ? String(req.query.project_id) : null;
+      const status = req.query.status ? String(req.query.status) : null;
+      const kind = req.query.kind ? String(req.query.kind) : null;
+      const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+      res.json({ captures: listCapturesAdmin({ project_id, status, kind, limit }) });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

@@ -1509,6 +1509,52 @@ server.tool(
   }
 );
 
+server.tool(
+  'list_captures',
+  'List pending captures across DevPanel projects for triage. Admin-keyed (ADMIN_API_KEY) so it works from the agents host without per-project credentials. Defaults to status=new. Returns id, project_id, project_name, content, kind, status, environment, reporter, created_at, plane_work_item_id, plane_sequence_id.',
+  {
+    project_id: z.string().optional().describe('DevPanel project UUID — omit to list across every managed project'),
+    status: z.enum(['new', 'triaging', 'promoted', 'dropped']).default('new').describe('Capture lifecycle state (default "new")'),
+    kind: z.enum(['bug', 'idea']).optional().describe('Filter on capture kind'),
+    limit: z.number().int().min(1).max(200).default(50).describe('Max rows to return (default 50, max 200)')
+  },
+  async ({ project_id, status, kind, limit }) => {
+    if (!ADMIN_API_KEY) {
+      return { content: [{ type: 'text', text: 'ADMIN_API_KEY not configured — list_captures requires admin auth.' }], isError: true };
+    }
+    try {
+      const params = new URLSearchParams();
+      if (project_id) params.set('project_id', project_id);
+      if (status) params.set('status', status);
+      if (kind) params.set('kind', kind);
+      if (limit) params.set('limit', String(limit));
+      const url = `${API_BASE}/api/admin/captures${params.toString() ? `?${params}` : ''}`;
+      const r = await fetch(url, { headers: { 'X-Admin-Key': ADMIN_API_KEY } });
+      if (!r.ok) {
+        const body = await r.text();
+        return { content: [{ type: 'text', text: `GET ${url} → ${r.status}: ${body}` }], isError: true };
+      }
+      const { captures = [] } = await r.json();
+      const result = captures.map(c => ({
+        id: c.id,
+        project_id: c.project_id,
+        project_name: c.project_name,
+        kind: c.kind,
+        status: c.status,
+        content: c.content,
+        environment: c.environment,
+        reporter: c.reporter,
+        created_at: c.created_at,
+        plane_work_item_id: c.plane_work_item_id,
+        plane_sequence_id: c.plane_sequence_id
+      }));
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `list_captures failed: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 // ============================================================================
 // START
 // ============================================================================

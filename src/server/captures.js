@@ -234,6 +234,28 @@ export function listPendingForAllProjects({ limit = 50 } = {}) {
   `).all(limit);
 }
 
+// Admin-scoped capture list. Unlike listCaptures (which is per-project, used
+// by the X-API-Key route), this can omit project_id (returns captures across
+// every project) and supports a `kind` filter. Used by GET /api/admin/captures
+// and the list_captures MCP tool — Shelly + ephemeral agents triage from the
+// agents host where there is no per-project api_key.
+export function listCapturesAdmin({ project_id = null, status = null, kind = null, limit = 50 } = {}) {
+  const db = getMasterDatabase();
+  let sql = `
+    SELECT c.*, p.name AS project_name
+      FROM captures c
+      JOIN projects p ON p.id = c.project_id
+     WHERE 1=1
+  `;
+  const params = [];
+  if (project_id) { sql += ` AND c.project_id = ?`; params.push(project_id); }
+  if (status)     { sql += ` AND c.status = ?`;     params.push(status); }
+  if (kind)       { sql += ` AND c.kind = ?`;       params.push(kind); }
+  sql += ` ORDER BY c.created_at DESC LIMIT ?`;
+  params.push(limit);
+  return db.prepare(sql).all(...params).map(r => ({ ...r, reporter: assembleReporter(r) }));
+}
+
 export function updateCapture(id, patch) {
   const db = getMasterDatabase();
   const allowed = ['status', 'kind', 'plane_work_item_id', 'plane_sequence_id'];
