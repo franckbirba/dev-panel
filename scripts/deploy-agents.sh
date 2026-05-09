@@ -156,10 +156,15 @@ chmod 600 /home/deploy/.mcp-shelly-pi.json
 # (@modelcontextprotocol/sdk in mcp-bridge, pg in telegram-out, etc).
 # github + loop-guard are dep-free so far, install is a no-op there but
 # keeps the pattern uniform. Run as deploy so file ownership is right.
+# NOTE: this loop runs inside the unquoted heredoc on line 53, so any
+# unescaped \$var would expand LOCALLY (where it's unset under set -u)
+# instead of on the remote. Backslash-escape every shell var so it
+# survives the heredoc and gets evaluated on hetzner-vps. Same convention
+# as the `for v in PG_PASS …` loop above (which uses indirect ${!v}).
 for ext in mcp-bridge telegram-out github loop-guard; do
-  ext_dir=/home/deploy/projects/dev-panel/infra/pi-extensions/$ext
-  if [ -d "$ext_dir" ] && [ -f "$ext_dir/package.json" ]; then
-    su - deploy -c "cd $ext_dir && /usr/bin/npm install --no-audit --no-fund --silent"
+  ext_dir=/home/deploy/projects/dev-panel/infra/pi-extensions/\$ext
+  if [ -d "\$ext_dir" ] && [ -f "\$ext_dir/package.json" ]; then
+    su - deploy -c "cd \$ext_dir && /usr/bin/npm install --no-audit --no-fund --silent"
   fi
 done
 
