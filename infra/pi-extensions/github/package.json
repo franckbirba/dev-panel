@@ -1,0 +1,10 @@
+{
+  "name": "@dev-panel/pi-ext-github",
+  "version": "0.1.0",
+  "description": "Pi extension: structured GitHub tools (gh_pr_create, gh_pr_view, …) backed by the gh CLI. Removes shell-quoting failure modes the agent kept hitting on French apostrophes in PR titles.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
