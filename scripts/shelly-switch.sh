@@ -46,12 +46,23 @@ current_mode() {
   fi
 }
 
+unit_state() {
+  local unit=$1
+  local active enabled
+  active=$(systemctl is-active "$unit" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$unit" 2>/dev/null || echo unknown)
+  if [ -L "${ETC_SYSTEMD}/${unit}" ] && [ "$(readlink "${ETC_SYSTEMD}/${unit}")" = "/dev/null" ]; then
+    enabled="masked"
+  fi
+  echo "${active} (${enabled})"
+}
+
 print_status() {
   local mode
   mode=$(current_mode)
   echo "Shelly mode:        $mode"
-  echo "shelly.service:     $(systemctl is-active "$SHELLY_CLAUDE" 2>/dev/null || true) ($(systemctl is-enabled "$SHELLY_CLAUDE" 2>/dev/null || echo unknown))"
-  echo "shelly-pi.service:  $(systemctl is-active "$SHELLY_PI" 2>/dev/null || true) ($(systemctl is-enabled "$SHELLY_PI" 2>/dev/null || echo unknown))"
+  echo "shelly.service:     $(unit_state "$SHELLY_CLAUDE")"
+  echo "shelly-pi.service:  $(unit_state "$SHELLY_PI")"
   echo "DRIVER_DEFAULT:     $(grep -E '^DRIVER_DEFAULT' "$DRIVER_FILE" 2>/dev/null || echo '(unset)')"
   echo "$WORKER:            $(systemctl is-active "$WORKER" 2>/dev/null || echo inactive)"
 }
@@ -138,6 +149,27 @@ stop_openclaw_pollers() {
   done
 }
 
+# `systemctl mask <unit>` refuses if the unit file already exists in
+# /etc/systemd/system/ (only auto-masks units that live in /usr/lib/...).
+# Our units are deployed to /etc/systemd/system/ by deploy-agents.sh, so
+# we manually do what mask would have done: replace the file with a
+# /dev/null symlink. unmask_unit puts the real file back from the repo.
+# Both operations call daemon-reload so systemd picks up the change.
+ETC_SYSTEMD=/etc/systemd/system
+REPO_INFRA=/home/deploy/projects/dev-panel/infra
+mask_unit() {
+  local unit=$1
+  ln -sf /dev/null "${ETC_SYSTEMD}/${unit}"
+  systemctl daemon-reload
+}
+unmask_unit() {
+  local unit=$1
+  if [ -L "${ETC_SYSTEMD}/${unit}" ] && [ "$(readlink "${ETC_SYSTEMD}/${unit}")" = "/dev/null" ]; then
+    cp "${REPO_INFRA}/${unit}" "${ETC_SYSTEMD}/${unit}"
+    systemctl daemon-reload
+  fi
+}
+
 switch_to_pi() {
   echo "→ stopping $SHELLY_CLAUDE"
   systemctl stop "$SHELLY_CLAUDE" || true
@@ -145,21 +177,21 @@ switch_to_pi() {
   # actually kill the spawned tmux/claude/bun tree. Disable+stop the unit,
   # then nuke the tmux session so claude (and its bun MCP child) actually die.
   systemctl disable "$SHELLY_CLAUDE" 2>/dev/null || true
-  # MASK the off-mode unit. After the first flip-to-pi attempt, something
-  # we couldn't trace (not the watchdog, not the daily-restart timer)
-  # issued a `systemctl start shelly.service` ~22s after the flip, which
-  # the symmetric Conflicts= then forced our Pi unit to stop in response.
-  # `systemctl mask` is the only safe answer — it makes the unit literally
-  # un-startable until unmasked. switch_to_claude unmasks first.
-  systemctl mask "$SHELLY_CLAUDE" 2>/dev/null || true
+  # Mask. After the first flip-to-pi attempts, something we couldn't trace
+  # (not the watchdog, not the daily-restart timer) issued a
+  # `systemctl start shelly.service` ~20s after the flip and the symmetric
+  # Conflicts= then forced Pi unit down. mask_unit makes shelly.service
+  # un-startable until switch_to_claude unmasks it.
+  echo "→ masking $SHELLY_CLAUDE"
+  mask_unit "$SHELLY_CLAUDE"
   /usr/bin/tmux -L deploy kill-session -t shelly 2>/dev/null || true
   stop_openclaw_pollers
   echo "→ waiting for telegram long-polls to release"
   release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=pi"
   write_driver_default pi
-  echo "→ enabling + starting $SHELLY_PI"
-  systemctl unmask "$SHELLY_PI" 2>/dev/null || true
+  echo "→ unmasking + enabling + starting $SHELLY_PI"
+  unmask_unit "$SHELLY_PI"
   systemctl enable "$SHELLY_PI" 2>/dev/null || true
   systemctl start "$SHELLY_PI"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=pi)"
@@ -172,14 +204,15 @@ switch_to_claude() {
   echo "→ stopping $SHELLY_PI"
   systemctl stop "$SHELLY_PI" || true
   systemctl disable "$SHELLY_PI" 2>/dev/null || true
-  systemctl mask "$SHELLY_PI" 2>/dev/null || true
+  echo "→ masking $SHELLY_PI"
+  mask_unit "$SHELLY_PI"
   stop_openclaw_pollers
   echo "→ waiting for telegram long-polls to release"
   release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=claude"
   write_driver_default claude
-  echo "→ enabling + starting $SHELLY_CLAUDE"
-  systemctl unmask "$SHELLY_CLAUDE" 2>/dev/null || true
+  echo "→ unmasking + enabling + starting $SHELLY_CLAUDE"
+  unmask_unit "$SHELLY_CLAUDE"
   systemctl enable "$SHELLY_CLAUDE" 2>/dev/null || true
   systemctl start "$SHELLY_CLAUDE"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=claude)"
