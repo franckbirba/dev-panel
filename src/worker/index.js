@@ -84,6 +84,7 @@ import { prepareWorktree, shouldUseWorktree } from './worktree.js';
 import { updateInstance } from '../server/workflow-instances.js';
 import { spawnGoose, shouldUseGoose } from './goose-driver.js';
 import { spawnMiniSwe, shouldUseMiniSwe } from './mini-swe-driver.js';
+import { spawnPi, shouldUsePi } from './pi-driver.js';
 import { selectClaudeModel } from './select-claude-model.js';
 
 const require = createRequire(import.meta.url);
@@ -147,14 +148,22 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
   // Cheap-tier harness routing:
-  //   DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3 (preferred — empirical
-  //                           canary 2026-05-09 showed 40s, ~$0.002, real
-  //                           commit; goose was 17min, $3-5, no commit)
+  //   DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3 (legacy cheap path;
+  //                           40s/$0.002 on toys, unproven on real DEVPA)
+  //   DRIVER_<AGENT>=pi     → pi (@earendil-works/pi-coding-agent) × Qwen3
+  //                           via DeepInfra by default. Phase 2 of the
+  //                           harness migration (plan ok-anyway-we-need-...)
   //   DRIVER_<AGENT>=goose  → legacy goose path, kept for fallback only
-  //   anything else         → Claude (Anthropic, default)
+  //   anything else         → Claude Code (Anthropic, default)
   // FORCE_TIER=opus globally overrides everything to Claude.
   if (shouldUseMiniSwe(agentRole)) {
     return spawnMiniSwe({
+      jobId, prompt, agentRole, cwd,
+      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    });
+  }
+  if (shouldUsePi(agentRole)) {
+    return spawnPi({
       jobId, prompt, agentRole, cwd,
       activeProcesses, agentLogDir: AGENT_LOG_DIR,
     });
