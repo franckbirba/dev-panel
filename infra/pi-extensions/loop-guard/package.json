@@ -1,0 +1,10 @@
+{
+  "name": "@dev-panel/pi-ext-loop-guard",
+  "version": "0.1.0",
+  "description": "Pi extension: repetition guard + closing protocol. Stops runaway tool-call loops (e.g., model retrying broken shell quoting 24× on the same input) and accepts a structural marker for clean termination.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

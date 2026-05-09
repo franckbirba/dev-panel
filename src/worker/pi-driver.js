@@ -40,6 +40,23 @@ import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
 const DEFAULT_PI_BIN = process.env.PI_BIN
   || join(process.env.HOME || '/home/deploy', '.npm-global/bin/pi');
 
+// Pi extensions vendored in this repo. Loaded via --extension flags so the
+// agents host doesn't need a separate `npm install`-step for them. Pi runs
+// .ts directly via jiti — no compile step required.
+//   - github: structured gh_pr_create / gh_pr_view / etc. tools so the
+//     model never has to escape strings through bash (ZENO-339 canary
+//     showed Qwen3 burning 24 retries on French apostrophes in `gh pr
+//     create`).
+//   - loop-guard: blocks identical tool calls repeated > N times, accepts
+//     a closing-protocol marker for clean termination. Same structural
+//     fix mini-swe-agent provides via its yaml.
+const PI_EXTENSIONS_ROOT = process.env.PI_EXTENSIONS_ROOT
+  || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
+const DEFAULT_PI_EXTENSIONS = [
+  join(PI_EXTENSIONS_ROOT, 'github'),
+  join(PI_EXTENSIONS_ROOT, 'loop-guard')
+];
+
 export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir }) {
   return new Promise((resolve, reject) => {
     const selected = selectPiModel(agentRole);
@@ -60,6 +77,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
     // prompt itself. Letting pi auto-load CLAUDE.md from the worktree's
     // parent dirs would inject project-level instructions the role-specific
     // SOUL deliberately doesn't include.
+    const extensionFlags = DEFAULT_PI_EXTENSIONS.flatMap(p => ['--extension', p]);
     const args = [
       '--provider', provider,
       '--model', model,
@@ -68,6 +86,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
       '--no-context-files',
       '--no-skills',
       '--no-prompt-templates',
+      ...extensionFlags,
       '--append-system-prompt', soul,
       '-p', prompt
     ];
