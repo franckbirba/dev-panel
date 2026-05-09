@@ -50,9 +50,9 @@ print_status() {
   local mode
   mode=$(current_mode)
   echo "Shelly mode:        $mode"
-  echo "shelly.service:     $(systemctl is-active "$SHELLY_CLAUDE" 2>/dev/null || echo inactive)"
-  echo "shelly-pi.service:  $(systemctl is-active "$SHELLY_PI" 2>/dev/null || echo inactive)"
-  echo "DRIVER_DEFAULT:     $(cat "$DRIVER_FILE" 2>/dev/null | grep -E '^DRIVER_DEFAULT' || echo '(unset)')"
+  echo "shelly.service:     $(systemctl is-active "$SHELLY_CLAUDE" 2>/dev/null || true) ($(systemctl is-enabled "$SHELLY_CLAUDE" 2>/dev/null || echo unknown))"
+  echo "shelly-pi.service:  $(systemctl is-active "$SHELLY_PI" 2>/dev/null || true) ($(systemctl is-enabled "$SHELLY_PI" 2>/dev/null || echo unknown))"
+  echo "DRIVER_DEFAULT:     $(grep -E '^DRIVER_DEFAULT' "$DRIVER_FILE" 2>/dev/null || echo '(unset)')"
   echo "$WORKER:            $(systemctl is-active "$WORKER" 2>/dev/null || echo inactive)"
 }
 
@@ -117,6 +117,27 @@ release_telegram_long_polls() {
   sleep 1
 }
 
+# Stop and best-effort nuke the rogue OpenClaw user-instance services if
+# they're running. They are dead code per CLAUDE.md "Dead code — do not
+# resurrect" but were never cleaned up; they poll Telegram with the same
+# bot tokens we use, causing persistent 409 Conflict on every getUpdates
+# from telegram-multi. Stops are idempotent (no-op if already stopped or
+# absent). The user systemd manager runs as PID-1 of the deploy user; we
+# need its XDG_RUNTIME_DIR to talk to it.
+stop_openclaw_pollers() {
+  local deploy_uid
+  deploy_uid=$(id -u deploy 2>/dev/null || echo 1001)
+  for unit in openclaw-gateway.service openclaw-node.service; do
+    su - deploy -c "XDG_RUNTIME_DIR=/run/user/${deploy_uid} systemctl --user is-active --quiet ${unit}" 2>/dev/null \
+      && {
+        echo "→ stopping rogue ${unit} (deploy user systemd)"
+        su - deploy -c "XDG_RUNTIME_DIR=/run/user/${deploy_uid} systemctl --user stop ${unit}" 2>/dev/null || true
+        su - deploy -c "XDG_RUNTIME_DIR=/run/user/${deploy_uid} systemctl --user disable ${unit}" 2>/dev/null || true
+      } \
+      || true
+  done
+}
+
 switch_to_pi() {
   echo "→ stopping $SHELLY_CLAUDE"
   systemctl stop "$SHELLY_CLAUDE" || true
@@ -124,12 +145,21 @@ switch_to_pi() {
   # actually kill the spawned tmux/claude/bun tree. Disable+stop the unit,
   # then nuke the tmux session so claude (and its bun MCP child) actually die.
   systemctl disable "$SHELLY_CLAUDE" 2>/dev/null || true
+  # MASK the off-mode unit. After the first flip-to-pi attempt, something
+  # we couldn't trace (not the watchdog, not the daily-restart timer)
+  # issued a `systemctl start shelly.service` ~22s after the flip, which
+  # the symmetric Conflicts= then forced our Pi unit to stop in response.
+  # `systemctl mask` is the only safe answer — it makes the unit literally
+  # un-startable until unmasked. switch_to_claude unmasks first.
+  systemctl mask "$SHELLY_CLAUDE" 2>/dev/null || true
   /usr/bin/tmux -L deploy kill-session -t shelly 2>/dev/null || true
+  stop_openclaw_pollers
   echo "→ waiting for telegram long-polls to release"
   release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=pi"
   write_driver_default pi
   echo "→ enabling + starting $SHELLY_PI"
+  systemctl unmask "$SHELLY_PI" 2>/dev/null || true
   systemctl enable "$SHELLY_PI" 2>/dev/null || true
   systemctl start "$SHELLY_PI"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=pi)"
@@ -142,11 +172,14 @@ switch_to_claude() {
   echo "→ stopping $SHELLY_PI"
   systemctl stop "$SHELLY_PI" || true
   systemctl disable "$SHELLY_PI" 2>/dev/null || true
+  systemctl mask "$SHELLY_PI" 2>/dev/null || true
+  stop_openclaw_pollers
   echo "→ waiting for telegram long-polls to release"
   release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=claude"
   write_driver_default claude
   echo "→ enabling + starting $SHELLY_CLAUDE"
+  systemctl unmask "$SHELLY_CLAUDE" 2>/dev/null || true
   systemctl enable "$SHELLY_CLAUDE" 2>/dev/null || true
   systemctl start "$SHELLY_CLAUDE"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=claude)"

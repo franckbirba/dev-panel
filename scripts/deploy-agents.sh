@@ -186,15 +186,32 @@ install -o root -g root -m 0644 \
   /home/deploy/projects/dev-panel/infra/logrotate-agents.conf \
   /etc/logrotate.d/devpanel-agents
 
-# Systemd units (worker + shelly + watchdog + relay + daily-restart + pi fallback)
-cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-pi.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-relay.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service /etc/systemd/system/
-cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer /etc/systemd/system/
+# Systemd units (worker + shelly + watchdog + relay + daily-restart + pi fallback).
+# CRITICAL: shelly-switch.sh masks the off-mode unit by creating a symlink
+# /etc/systemd/system/<unit> → /dev/null. A naive `cp` would overwrite the
+# symlink with a real file, un-masking the unit and letting it be started.
+# Use a helper that respects mask state: leave the symlink in place if the
+# unit is currently masked.
+install_unit() {
+  local src=\$1
+  local name
+  name=\$(basename "\$src")
+  local dest=/etc/systemd/system/\$name
+  if [ -L "\$dest" ] && [ "\$(readlink "\$dest")" = "/dev/null" ]; then
+    echo "(skipping install of \$name — masked by shelly-switch.sh)"
+    return 0
+  fi
+  cp "\$src" "\$dest"
+}
+
+install_unit /home/deploy/projects/dev-panel/infra/devpanel-worker.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly-pi.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly-watchdog.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer
+install_unit /home/deploy/projects/dev-panel/infra/shelly-relay.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service
+install_unit /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer
 
 # Quota-fallback switch script — Franck runs this when Claude Max is out.
 install -o deploy -g deploy -m 0755 \
@@ -213,12 +230,27 @@ install -o deploy -g deploy -m 0755 \
   /home/deploy/bin/shelly-memory-reminder.sh
 
 systemctl daemon-reload
-systemctl enable devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service shelly-daily-restart.timer
+
+# Mode-aware enable: shelly-switch.sh masks the off-mode shelly unit so a
+# stray systemctl-start can't bring it back. Trying to `enable` a masked
+# unit fails with non-zero, which would abort this deploy under set -e.
+# Enable each unit individually, skipping any that are masked.
+for u in devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service shelly-daily-restart.timer; do
+  state=\$(systemctl is-enabled "\$u" 2>&1 || true)
+  if [ "\$state" = "masked" ]; then
+    echo "(skipping enable of \$u — masked by shelly-switch.sh)"
+    continue
+  fi
+  systemctl enable "\$u" 2>/dev/null || true
+done
+
 systemctl restart devpanel-worker
 systemctl restart shelly-relay.service
-# Reload shelly only if it's running; do not start a kill cascade if a human
-# is debugging by attaching to the tmux. Watchdog will pick it up if needed.
-if systemctl is-active --quiet shelly.service; then
+# Reload shelly only if it's running AND not masked; do not start a kill
+# cascade if a human is debugging by attaching to the tmux, and never try
+# to restart a unit shelly-switch.sh has masked (Pi mode).
+if [ "\$(systemctl is-enabled shelly.service 2>/dev/null || true)" != "masked" ] \
+   && systemctl is-active --quiet shelly.service; then
   systemctl reload-or-restart shelly.service || true
 fi
 systemctl restart shelly-watchdog.timer
