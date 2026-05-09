@@ -16,7 +16,7 @@ import {
   addMessage
 } from '../server/db.js';
 import { embed } from '../server/voyage.js';
-import { memoryInsert, memorySearchSql, memoryList } from '../server/pg.js';
+import { memoryInsert, memorySearchSql, memoryList, transcriptSearch, transcriptRange } from '../server/pg.js';
 import { recordMemoryWrite } from '../server/jobs-log.js';
 import { parseTag } from '../server/telegram-tag.js';
 import { getSubject } from '../server/subjects.js';
@@ -1236,6 +1236,119 @@ server.tool(
       kind: args.kind || null,
       agent: args.agent || null,
       module_id: args.module_id || null,
+      limit: args.limit
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+// ============================================================================
+// SHELLY TRANSCRIPT — verbatim conversation log
+//
+// Why these exist: Claude Code auto-compacts long conversations. Shelly's
+// system prompt + earlier turns get summarized into a lossy bullet list,
+// and after ~12-19h of activity she "forgets" context Franck still expects
+// her to know. The shelly_transcript table (services-side Postgres,
+// migration 009) stores every inbound DM and every outbound reply
+// verbatim, time-indexed, with FTS + trigram indexes for fast search.
+// These tools let Shelly query that log to rebuild context.
+//
+// Read path is one-way: Shelly reads transcripts. The plugin writes them
+// (plugins/telegram-multi/src/loader.ts#recordTranscript). No write tool
+// here — agents shouldn't be able to forge or delete transcript rows.
+// ============================================================================
+
+// transcript_search — keyword search across all-time, with optional time
+// range + facets. Use when Franck asks about something from "yesterday" or
+// "last week" by topic.
+server.tool(
+  'transcript_search',
+  {
+    query: z.string().min(2).describe(
+      'Plain-text keyword(s) to search. No tsquery syntax needed; we use ' +
+      'plainto_tsquery + ILIKE substring fallback.'
+    ),
+    since: z.string().optional().describe(
+      'ISO 8601 lower bound, e.g. "2026-05-09" or "2026-05-09T00:00:00Z". ' +
+      'Inclusive. Optional.'
+    ),
+    until: z.string().optional().describe(
+      'ISO 8601 upper bound. Inclusive. Optional.'
+    ),
+    bot_label: z.string().optional().describe(
+      'Filter to one paired bot (franck, alice, …). Omit for all bots.'
+    ),
+    thread_subject: z.string().optional().describe(
+      'Filter to messages tagged with a specific thread, e.g. "capture/47" ' +
+      'or "work_item/<UUID>". Omit for untagged + all tags.'
+    ),
+    direction: z.enum(['in','out']).optional().describe(
+      '"in" = user → Shelly, "out" = Shelly → user. Omit for both.'
+    ),
+    limit: z.number().int().min(1).max(200).default(50)
+  },
+  async (args) => {
+    const rows = await transcriptSearch({
+      query: args.query,
+      since: args.since || null,
+      until: args.until || null,
+      bot_label: args.bot_label || null,
+      thread_subject: args.thread_subject || null,
+      direction: args.direction || null,
+      limit: args.limit
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+// transcript_range — pure time-range scan, no query. For "what happened
+// since X" use cases (post-restart context restoration, "give me the last
+// 24h on alice's bot"). Returns ascending by ts so Shelly can replay in
+// order. Required `since` prevents accidental whole-table scans.
+server.tool(
+  'transcript_range',
+  {
+    since: z.string().describe(
+      'ISO 8601 lower bound (REQUIRED). e.g. "2026-05-09T18:00:00Z".'
+    ),
+    until: z.string().optional(),
+    bot_label: z.string().optional(),
+    thread_subject: z.string().optional(),
+    direction: z.enum(['in','out']).optional(),
+    limit: z.number().int().min(1).max(500).default(200)
+  },
+  async (args) => {
+    const rows = await transcriptRange({
+      since: args.since,
+      until: args.until || null,
+      bot_label: args.bot_label || null,
+      thread_subject: args.thread_subject || null,
+      direction: args.direction || null,
+      limit: args.limit
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+// transcript_replay_recent — convenience wrapper over transcript_range with
+// `since = now() - minutes`. Use this on Shelly's first turn after a
+// restart: replay the last 4h to rebuild context.
+server.tool(
+  'transcript_replay_recent',
+  {
+    minutes: z.number().int().min(5).max(1440).default(240).describe(
+      'How far back to scan. Default 240 = 4 hours. Max 24h.'
+    ),
+    bot_label: z.string().optional(),
+    direction: z.enum(['in','out']).optional(),
+    limit: z.number().int().min(1).max(500).default(200)
+  },
+  async (args) => {
+    const since = new Date(Date.now() - args.minutes * 60 * 1000).toISOString();
+    const rows = await transcriptRange({
+      since,
+      bot_label: args.bot_label || null,
+      direction: args.direction || null,
       limit: args.limit
     });
     return { content: [{ type: 'text', text: JSON.stringify(rows) }] };

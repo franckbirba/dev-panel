@@ -27,7 +27,7 @@ import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, appendFileSync, openSync } from 'fs'
 import { homedir } from 'os'
 import { join, extname, sep } from 'path'
-import { loadActiveBots, loadAllowlist, addToAllowlist, markRevoked, touchInbound, updateOwner, type DevBotRow } from './src/loader.ts'
+import { loadActiveBots, loadAllowlist, addToAllowlist, markRevoked, touchInbound, updateOwner, recordTranscript, type DevBotRow } from './src/loader.ts'
 import { BotRegistry } from './src/registry.ts'
 import { pollRetryDelayMs } from './src/supervisor.ts'
 
@@ -588,6 +588,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const outPreview = text.replace(/\s+/g, ' ').slice(0, 120)
         const filesTag = files.length > 0 ? ` files=${files.length}` : ''
         log(`outbound bot=${bot_label} chat=${chat_id} reply ids=${sentIds.join(',')}${filesTag} text=${JSON.stringify(outPreview)}`)
+
+        // Persist outbound verbatim. We log ONE row for the whole reply
+        // (not one per chunk) — content is the original `text` Shelly emitted.
+        // tg_message_id is the FIRST sent chunk's id; the rest are stored in
+        // meta.chunk_ids so a future replay can rebuild the multi-part message.
+        // Fire-and-forget — the user has already received the message.
+        recordTranscript({
+          bot_label,
+          bot_username: r.bot.botInfo?.username,
+          tg_chat_id: chat_id,
+          tg_user_id: null,                // outbound has no human sender
+          tg_message_id: sentIds[0] ?? null,
+          direction: 'out',
+          role: 'shelly',
+          source: 'telegram',
+          content: text,
+          attachment_path: null,
+          attachment_kind: files.length > 0 ? 'file' : null,
+          meta: {
+            chunk_ids: sentIds,
+            ...(reply_to != null ? { reply_to } : {}),
+            ...(parseMode ? { parse_mode: parseMode } : {}),
+            ...(files.length > 0 ? { files } : {}),
+          },
+        })
+
         return { content: [{ type: 'text', text: result }] }
       }
       case 'react': {
@@ -1049,6 +1075,33 @@ async function handleInbound(
   const preview = text.replace(/\s+/g, ' ').slice(0, 120)
   const attachTag = attachment ? ` attach=${attachment.kind}` : imagePath ? ' attach=photo' : ''
   log(`inbound bot=${row.bot_label} chat=${chat_id} from=${fromLabel} msg=${msgId ?? '?'}${attachTag} text=${JSON.stringify(preview)}`)
+
+  // Persist verbatim. This is what lets Shelly recover context after a
+  // restart / compaction. Fire-and-forget — DB hiccup must not drop a
+  // user message. Schema: infra/migrations/009-shelly-transcript.sql.
+  recordTranscript({
+    bot_label: row.bot_label,
+    bot_username: row.bot_username,
+    tg_chat_id: chat_id,
+    tg_user_id: String(from.id),
+    tg_message_id: msgId ?? null,
+    direction: 'in',
+    role: 'user',
+    source: 'telegram',
+    content: text,
+    attachment_path: imagePath ?? null,
+    attachment_kind: attachment?.kind ?? (imagePath ? 'photo' : null),
+    meta: {
+      from_username: from.username ?? null,
+      from_first_name: from.first_name ?? null,
+      ...(attachment ? {
+        attachment_file_id: attachment.file_id,
+        attachment_size: attachment.size,
+        attachment_mime: attachment.mime,
+        attachment_name: attachment.name,
+      } : {}),
+    },
+  })
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.

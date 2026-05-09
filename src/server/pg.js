@@ -74,3 +74,80 @@ export async function memoryList({
   const { rows } = await pool.query(sql, params);
   return rows;
 }
+
+// ---------------------------------------------------------------------------
+// Shelly transcript — verbatim conversation log queries.
+//
+// Schema: infra/migrations/009-shelly-transcript.sql
+// Writes: plugins/telegram-multi/src/loader.ts#recordTranscript
+// Reads (Shelly-facing MCP tools): src/mcp/server.js (transcript_search,
+// transcript_range, transcript_replay_recent).
+//
+// All three helpers return rows shaped:
+//   { id, ts, bot_label, tg_chat_id, tg_user_id, tg_message_id,
+//     direction, role, source, thread_subject, content,
+//     attachment_path, attachment_kind, meta }
+// ---------------------------------------------------------------------------
+
+const TRANSCRIPT_SELECT = `
+  SELECT id, ts, bot_label, bot_username, tg_chat_id, tg_user_id, tg_message_id,
+         direction, role, source, thread_subject, content,
+         attachment_path, attachment_kind, meta`;
+
+// Full-text search with optional time-range and faceted filters.
+// `query` is plain text — we use `plainto_tsquery` so callers don't need to
+// know tsquery syntax. Falls back to a `content ILIKE` substring match when
+// `tsquery` returns nothing useful (which happens for tokens shorter than 3
+// chars, all-symbol queries, or French apostrophes that simple-config splits
+// awkwardly). The pg_trgm GIN index makes ILIKE cheap.
+export async function transcriptSearch({
+  query, since = null, until = null, bot_label = null, thread_subject = null,
+  direction = null, limit = 50
+}) {
+  const params = [];
+  const clauses = [];
+  // FTS first (fast path).
+  params.push(query);
+  clauses.push(
+    `(to_tsvector('simple', content) @@ plainto_tsquery('simple', $${params.length})
+      OR content ILIKE '%' || $${params.length} || '%')`
+  );
+  if (since)         { params.push(since);         clauses.push(`ts >= $${params.length}`); }
+  if (until)         { params.push(until);         clauses.push(`ts <= $${params.length}`); }
+  if (bot_label)     { params.push(bot_label);     clauses.push(`bot_label = $${params.length}`); }
+  if (thread_subject){ params.push(thread_subject);clauses.push(`thread_subject = $${params.length}`); }
+  if (direction)     { params.push(direction);     clauses.push(`direction = $${params.length}`); }
+  params.push(limit);
+  const sql = `${TRANSCRIPT_SELECT}
+      FROM shelly_transcript
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY ts DESC
+     LIMIT $${params.length}`;
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
+// Pure time-range scan, no query. For "show me everything since X" use cases
+// (post-restart context restoration). `since` is required to keep accidental
+// full-table scans from sneaking in.
+export async function transcriptRange({
+  since, until = null, bot_label = null, thread_subject = null,
+  direction = null, limit = 200
+}) {
+  if (!since) throw new Error('transcriptRange requires `since`');
+  const params = [since];
+  const clauses = [`ts >= $${params.length}`];
+  if (until)         { params.push(until);         clauses.push(`ts <= $${params.length}`); }
+  if (bot_label)     { params.push(bot_label);     clauses.push(`bot_label = $${params.length}`); }
+  if (thread_subject){ params.push(thread_subject);clauses.push(`thread_subject = $${params.length}`); }
+  if (direction)     { params.push(direction);     clauses.push(`direction = $${params.length}`); }
+  params.push(limit);
+  const sql = `${TRANSCRIPT_SELECT}
+      FROM shelly_transcript
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY ts ASC
+     LIMIT $${params.length}`;
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
