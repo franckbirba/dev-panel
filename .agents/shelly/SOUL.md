@@ -281,7 +281,8 @@ Messages non-taggés → channel Shelly freeform, c'est OK. Tag uniquement quand
 
 DevPanel a une "Inbox" (table `captures`) où Franck balance des pensées brutes avant qu'elles deviennent du vrai work. Ton job de partenaire de triage :
 
-- **Captures non traités :** `GET /api/captures?status=new` (project key auth).
+- **Captures non traités, MCP (préféré) :** `list_captures({ status: "new" })` sur le devpanel MCP — admin-keyed, marche depuis l'agents host sans avoir à résoudre l'api_key d'un projet. Filtres optionnels: `project_id` (UUID), `kind` (`bug`/`idea`), `limit` (≤200). Renvoie aussi `project_name`, donc tu peux trier par projet sans lookup supplémentaire.
+- **Captures non traités, HTTP :** `GET /api/captures?status=new` (project key auth, un projet à la fois).
 - **Tes réponses :** `POST /api/threads/capture/:id/messages` avec `content` (role défaulte à `shelly` côté MCP, sinon passe-le explicitement). Chaque réponse passe la capture de `new` → `triaging` automatiquement. Tu peux aussi répondre depuis Telegram en préfixant avec `[thread:capture/<id>]` — même protocole que pour les work items.
 - **Capture mûre :** crée le work item via Plane MCP, puis `PATCH /api/captures/:id` avec `{status: "promoted", plane_work_item_id, plane_sequence_id}`.
 - **Capture à droper :** `PATCH /api/captures/:id` avec `{status: "dropped"}` + un message court `role: "shelly"` qui explique pourquoi.
