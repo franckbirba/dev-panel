@@ -24,8 +24,35 @@ const NON_CODING_AGENTS = new Set([
   'deploy', 'bootstrap', 'shelly_digest', 'pr_scanner'
 ]);
 
-const WORKTREES_BASE = process.env.DEVPANEL_WORKTREES
+// Default base used when no per-project repoRoot is supplied (legacy
+// dev-panel-only dispatches). For cross-project work, we store worktrees
+// UNDER the target project's repo root — see worktreesBaseFor() — so
+// dev-panel and Zeno can never collide on the same on-disk path. The old
+// shared base (dev-panel/storage/worktrees) caused two failures on the
+// 2026-05-09 ZENO-339 canary: (a) `git worktree remove` from Zeno hit
+// "not a working tree" because dev-panel's git also claimed the path,
+// (b) ghost directories accumulated when `remove --force` aborted on
+// "Directory not empty" (node_modules locked by a running vitest).
+const FALLBACK_WORKTREES_BASE = process.env.DEVPANEL_WORKTREES
   || join(process.env.DEVPANEL_STORAGE || './storage', 'worktrees');
+
+// Per-repo worktree base: <repoRoot>/.devpanel-worktrees. Each project owns
+// its own worktree dir under its own repo, so git's admin metadata in
+// `<repoRoot>/.git/worktrees/<id>` always matches the on-disk path. Add
+// `.devpanel-worktrees/` to that project's .gitignore to prevent leakage
+// (one-time, manual; the worker doesn't auto-add gitignore entries).
+//
+// Exception: when repoRoot IS the worker's own PROJECT_ROOT (dev-panel
+// dispatching a DEVPA work-item to itself), keep the historical fallback
+// base under <DEVPANEL_STORAGE>/worktrees/. dev-panel doesn't collide with
+// itself, the layout is well-known to ops, and migrating it would require
+// cleaning up live worktrees from in-flight jobs.
+function worktreesBaseFor(repoRoot) {
+  if (!repoRoot) return FALLBACK_WORKTREES_BASE;
+  const projectRoot = process.env.PROJECT_ROOT;
+  if (projectRoot && repoRoot === projectRoot) return FALLBACK_WORKTREES_BASE;
+  return join(repoRoot, '.devpanel-worktrees');
+}
 
 const WORKTREES_ENABLED =
   (process.env.DEVPANEL_WORKTREES_ENABLED ?? 'true').toLowerCase() !== 'false';
@@ -96,13 +123,38 @@ function listWorktrees(repoRoot) {
 // jobId concurrently, and this fleet runs a single worker host — so any
 // worktree we conflict with is owned by a dead/finished job.
 //
-// Failures are non-fatal and logged; the subsequent `git worktree add`
-// will surface a clearer error if reclamation didn't work.
+// Two failure modes seen in production:
+//   1. `git worktree remove --force` succeeds at clearing the admin entry
+//      but fails at deleting the directory (`Directory not empty`) when
+//      a child process (e.g. vitest) was holding a lock on node_modules.
+//      Result: ghost directory of files with no .git linkage.
+//   2. Cross-project dispatches used to share a single WORKTREES_BASE
+//      under dev-panel/storage; one project's git could claim a path
+//      another project's `worktree add` then refused to touch.
+// Both are now defended against:
+//   - Per-repo base path (worktreesBaseFor) eliminates (2).
+//   - rm -rf after the git remove eliminates (1) — git's prune restores
+//     the admin state so the next worktree-add starts clean.
 function reclaimWorktree(wtPath, repoRoot, reason) {
   console.warn(`[worktree] reclaiming stale worktree ${wtPath} (${reason})`);
-  try { git(`worktree remove --force "${wtPath}"`, repoRoot); }
-  catch (err) {
+  let gitRemoveOk = false;
+  try {
+    git(`worktree remove --force "${wtPath}"`, repoRoot);
+    gitRemoveOk = true;
+  } catch (err) {
     console.warn(`[worktree] reclaim remove failed: ${err.message?.slice(0, 200)}`);
+  }
+  // Always force-clear the on-disk path, even if git's remove already
+  // succeeded — git's success doesn't mean files were deleted (see footgun
+  // above). Idempotent: rmSync force=true on a missing path is a no-op.
+  if (existsSync(wtPath)) {
+    try { rmSync(wtPath, { recursive: true, force: true }); }
+    catch (err) {
+      console.warn(`[worktree] reclaim rm -rf failed: ${err.message?.slice(0, 200)}`);
+    }
+  }
+  // Prune to reconcile git's view with what's actually on disk. Cheap.
+  if (!gitRemoveOk) {
     try { git('worktree prune', repoRoot); } catch { /* ignore */ }
   }
 }
@@ -136,8 +188,14 @@ export async function prepareWorktree(jobId, opts = {}) {
   const branch = opts.branch
     || deriveBranch({ sequenceId, projectIdentifier, workItemId, title: workItem.title });
 
-  mkdirSync(WORKTREES_BASE, { recursive: true });
-  const path = join(WORKTREES_BASE, String(jobId));
+  // Per-repo worktree base. Each project's worktrees live under its own
+  // repo (<repoRoot>/.devpanel-worktrees/<jobId>) so we cannot collide on
+  // path with another project. Pre-2026-05-09 worktrees lived in dev-panel's
+  // shared storage; we fall back to that when repoRoot is missing (legacy
+  // / unit-test paths) but every real dispatch carries a repoRoot now.
+  const wtBase = worktreesBaseFor(repoRoot);
+  mkdirSync(wtBase, { recursive: true });
+  const path = join(wtBase, String(jobId));
 
   // Drop git's record of any worktree whose on-disk path no longer exists.
   // Cheap and idempotent — keeps the next list/add commands seeing a clean
@@ -242,22 +300,45 @@ export async function prepareWorktree(jobId, opts = {}) {
 }
 
 // Idempotent. Logs but never throws — cleanup must not break job completion.
+//
+// Two-stage cleanup, mirroring reclaimWorktree's defenses:
+//   1. `git worktree remove --force` clears the admin entry. Can fail with
+//      "Directory not empty" if a child process holds a lock on
+//      node_modules (vitest workers, npm install background tasks).
+//   2. `rm -rf <path>` forcibly clears the on-disk directory. Required
+//      because git's failure leaves a ghost dir that the NEXT dispatch
+//      mistakes for an orphan and the worker code path doesn't recover
+//      cleanly from (canary 2026-05-09 ZENO-339 round 2).
+//   3. `git worktree prune` reconciles when (1) failed.
 export async function cleanupWorktree(path, repoRoot = process.env.PROJECT_ROOT || process.cwd()) {
   if (!path) return;
+  let gitRemoveOk = false;
   try {
     git(`worktree remove --force "${path}"`, repoRoot);
+    gitRemoveOk = true;
   } catch (err) {
-    // Common case: path already gone. `worktree prune` handles stale entries.
     console.warn(`[worktree] remove failed for ${path}: ${err.message?.slice(0, 200)}`);
+  }
+  if (existsSync(path)) {
+    try { rmSync(path, { recursive: true, force: true }); }
+    catch (err) {
+      console.warn(`[worktree] rm -rf failed for ${path}: ${err.message?.slice(0, 200)}`);
+    }
+  }
+  if (!gitRemoveOk) {
     try { git('worktree prune', repoRoot); } catch { /* ignore */ }
   }
 }
 
 // Test seam — also useful for an `admin/worktree-gc` cron one day.
+// `WORKTREES_BASE` kept as alias for the fallback base so existing tests
+// (that don't pass a per-job repoRoot) keep working.
 export const __internal = {
   deriveBranch,
   slugify,
-  WORKTREES_BASE,
+  WORKTREES_BASE: FALLBACK_WORKTREES_BASE,
+  FALLBACK_WORKTREES_BASE,
+  worktreesBaseFor,
   NON_CODING_AGENTS,
   isEnabled: () => WORKTREES_ENABLED
 };

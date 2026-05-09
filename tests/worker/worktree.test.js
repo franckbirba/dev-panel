@@ -345,21 +345,59 @@ describe('worktree — prepareWorktree', () => {
 
   it('runs git in the supplied repoRoot, not PROJECT_ROOT', async () => {
     const calls = captureExec();
+    // Use a real on-disk path so mkdir succeeds when we land in
+    // <repoRoot>/.devpanel-worktrees (per-repo base, see ZENO-339 fix).
+    const fakeRepoRoot = await fs.mkdtemp(join(tmpdir(), 'wt-cross-'));
     const { prepareWorktree } = await import('../../src/worker/worktree.js');
     const wt = await prepareWorktree('job-cross', {
       agent: 'builder',
       sequenceId: 42,
       projectIdentifier: 'ZENO',
       workItem: { title: 'cross repo' },
-      repoRoot: '/home/deploy/projects/zeno'
+      repoRoot: fakeRepoRoot
     });
     expect(wt).not.toBeNull();
     // Every git command must run with cwd set to the cross-repo path. If
     // any execSync call lands in PROJECT_ROOT, builders would push commits
     // onto the wrong repo (the bug this test guards).
     for (const { opts } of calls) {
-      expect(opts?.cwd).toBe('/home/deploy/projects/zeno');
+      expect(opts?.cwd).toBe(fakeRepoRoot);
     }
+    await fs.rm(fakeRepoRoot, { recursive: true, force: true });
+  });
+
+  it('places cross-project worktrees under <repoRoot>/.devpanel-worktrees, not the shared base', async () => {
+    // ZENO-339 fix: shared WORKTREES_BASE caused dev-panel↔Zeno path
+    // collisions. Each project's worktrees now live under its own repo.
+    const calls = captureExec();
+    const fakeRepoRoot = await fs.mkdtemp(join(tmpdir(), 'wt-zeno-'));
+    const { prepareWorktree, __internal } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-zeno-1', {
+      agent: 'builder',
+      sequenceId: 7,
+      projectIdentifier: 'ZENO',
+      workItem: { title: 'tab styling' },
+      repoRoot: fakeRepoRoot
+    });
+    expect(wt.path).toBe(join(fakeRepoRoot, '.devpanel-worktrees', 'job-zeno-1'));
+    expect(wt.path).not.toMatch(__internal.FALLBACK_WORKTREES_BASE);
+    await fs.rm(fakeRepoRoot, { recursive: true, force: true });
+  });
+
+  it('keeps the legacy fallback base when repoRoot equals PROJECT_ROOT (dev-panel→dev-panel)', async () => {
+    // Backward-compat: when dev-panel dispatches a DEVPA work item to its
+    // own clone, the worktree path stays where ops expect it
+    // (storage/worktrees/<jobId>). No need to migrate live worktrees.
+    captureExec();
+    const { prepareWorktree, __internal } = await import('../../src/worker/worktree.js');
+    const wt = await prepareWorktree('job-self', {
+      agent: 'builder',
+      sequenceId: 8,
+      projectIdentifier: 'DEVPA',
+      workItem: { title: 'self dispatch' },
+      repoRoot: process.env.PROJECT_ROOT  // ← same as worker's own root
+    });
+    expect(wt.path).toBe(join(__internal.FALLBACK_WORKTREES_BASE, 'job-self'));
   });
 });
 
@@ -395,5 +433,22 @@ describe('worktree — cleanupWorktree', () => {
     const { cleanupWorktree } = await import('../../src/worker/worktree.js');
     await cleanupWorktree('');
     expect(calls).toHaveLength(0);
+  });
+
+  it('force-rms the on-disk path after git remove (defends against "Directory not empty")', async () => {
+    // ZENO-339 fix: `git worktree remove --force` can succeed at clearing
+    // the admin entry but fail at deleting the dir if a child holds a
+    // lock on node_modules. The follow-up rm -rf prevents ghost dirs from
+    // accumulating across reattempts of the same jobId.
+    const ghostPath = await fs.mkdtemp(join(tmpdir(), 'wt-ghost-'));
+    await fs.writeFile(join(ghostPath, 'leftover.txt'), 'still here');
+    const calls = captureExec();
+    const { cleanupWorktree } = await import('../../src/worker/worktree.js');
+    await cleanupWorktree(ghostPath);
+    // The on-disk path is gone after cleanup, even though we mocked the
+    // child_process layer (the rm uses fs.rmSync, not git).
+    await expect(fs.access(ghostPath)).rejects.toThrow();
+    // git worktree remove was still attempted first.
+    expect(calls.some(c => c.cmd.includes(`worktree remove --force "${ghostPath}"`))).toBe(true);
   });
 });
