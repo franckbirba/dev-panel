@@ -1397,6 +1397,68 @@ server.tool(
   }
 );
 
+server.tool(
+  'plane_list_estimate_points',
+  'List estimate points (complexity levels) for a Plane project that uses complexity-based estimates. Accepts a project UUID or short identifier (DEVPA/ZENO/EDMS). Returns estimate_id and points array with {id, key, value} for each complexity level. If the project has no estimate configuration, returns estimate_id=null with empty points array.',
+  {
+    project: z.string().describe('Plane project UUID or short identifier (DEVPA, ZENO, EDMS)')
+  },
+  async ({ project }) => {
+    try {
+      if (!PLANE_KEY) throw new Error('PLANE_API_KEY missing');
+      const pid = await resolvePlaneProjectId(project);
+
+      // Fetch project details to get estimate_id
+      const projectRes = await fetch(
+        `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${pid}/`,
+        { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(5000) }
+      );
+      if (!projectRes.ok) throw new Error(`Plane project fetch failed: HTTP ${projectRes.status}`);
+      const projectData = await projectRes.json();
+      const estimate_id = projectData.estimate_id || null;
+
+      // If no estimate configuration, return empty points
+      if (!estimate_id) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ ok: true, estimate_id: null, points: [] }, null, 2)
+            }
+          ]
+        };
+      }
+
+      // Fetch estimate points
+      const estimateRes = await fetch(
+        `${PLANE_BASE}/api/v1/workspaces/${PLANE_SLUG}/projects/${pid}/estimates/${estimate_id}/estimate-points/`,
+        { headers: { 'X-API-Key': PLANE_KEY }, signal: AbortSignal.timeout(5000) }
+      );
+      if (!estimateRes.ok) throw new Error(`Plane estimate points fetch failed: HTTP ${estimateRes.status}`);
+      const estimateData = await estimateRes.json();
+      const points = (estimateData.results || estimateData).map(p => ({
+        id: p.id,
+        key: p.key,
+        value: p.value
+      }));
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ ok: true, estimate_id, points }, null, 2)
+          }
+        ]
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }],
+        isError: true
+      };
+    }
+  }
+);
+
 // ============================================================================
 // DEV-BOTS — pair / list / revoke Telegram bots and inspect the DM allowlist.
 // Mirrors the HTTP surface in src/server/routes-dev-bots.js so Shelly can
