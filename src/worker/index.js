@@ -84,6 +84,7 @@ import { prepareWorktree, shouldUseWorktree } from './worktree.js';
 import { updateInstance } from '../server/workflow-instances.js';
 import { spawnGoose, shouldUseGoose } from './goose-driver.js';
 import { spawnMiniSwe, shouldUseMiniSwe } from './mini-swe-driver.js';
+import { selectClaudeModel } from './select-claude-model.js';
 
 const require = createRequire(import.meta.url);
 const Redis = require('ioredis');
@@ -175,14 +176,18 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
     const MCP_CONFIG = process.env.WORKER_MCP_CONFIG
       || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
 
-    const proc = spawn('claude', [
+    const model = selectClaudeModel(agentRole);
+    const argv = [
       '-p', prompt,
       '--strict-mcp-config',
       '--mcp-config', MCP_CONFIG,
       '--output-format', 'stream-json',
       '--verbose',
       '--dangerously-skip-permissions'
-    ], {
+    ];
+    if (model) argv.splice(2, 0, '--model', model);
+
+    const proc = spawn('claude', argv, {
       cwd,
       env: {
         ...process.env,
