@@ -1,0 +1,15 @@
+{
+  "name": "@dev-panel/pi-ext-mcp-bridge",
+  "version": "0.1.0",
+  "description": "Pi extension: spawn every server in ~/.mcp-worker.json (or PI_MCP_CONFIG) over stdio and re-expose their tools to Pi as mcp__<server>__<tool>. Lets pi-driven agents (ephemerals AND Shelly-on-Pi) call plane / devpanel / pgvector / affine / playwright / glitchtip / telegram MCPs the same way Claude Code does.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "typebox": "^1.1.38"
+  }
+}

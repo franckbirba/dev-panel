@@ -308,6 +308,50 @@ If the smoke fails (missing `goose` binary, auth error, no tool call), do **not*
 
 **Cost ceiling:** track DeepInfra spend daily on the dashboard once Phase B B4 ships. Until then, monitor manually via DeepInfra's billing UI; pause the canary if daily spend exceeds $5.
 
+## Quota fallback — Shelly + ephemerals on Pi/Qwen3 (one switch)
+
+When Claude Max quota is exhausted, the studio doesn't stop — Shelly herself, plus every ephemeral builder/reviewer/etc., flips to Pi/Qwen3 via DeepInfra in one shot. Reverse with the same script when the quota resets.
+
+```bash
+# On the agents host (or via ssh):
+ssh hetzner-vps 'sudo /home/deploy/bin/shelly-switch.sh pi'      # → Pi/Qwen3
+ssh hetzner-vps 'sudo /home/deploy/bin/shelly-switch.sh claude'  # → Claude
+ssh hetzner-vps 'sudo /home/deploy/bin/shelly-switch.sh status'  # which mode now?
+```
+
+**What flips together** (atomic, in this order):
+1. `shelly.service` ↔ `shelly-pi.service` — orchestration agent. They're systemd `Conflicts=` so both can never run at once.
+2. `/home/deploy/.driver-default` rewritten with `DRIVER_DEFAULT=pi` (or `claude`). The worker's unit reads it via `EnvironmentFile=-`.
+3. `devpanel-worker.service` bounced so the next dispatched job picks up the new `DRIVER_DEFAULT`. Already-running jobs finish on their original harness — same kill-switch semantics as `FORCE_TIER=opus`.
+
+**Per-role overrides still win.** If you set `DRIVER_REVIEWER=claude` because reviewers must stay on Opus regardless of quota mode, that override beats `DRIVER_DEFAULT=pi`. Same routing as today (see `shouldUsePi` / `shouldUseGoose` etc).
+
+**Why Pi-Shelly works at all** — Pi 0.74 ships zero MCP support out of the box (their docs say so). We bridge the gap with three vendored Pi extensions in `infra/pi-extensions/`:
+
+- **`mcp-bridge`** — spawns every server in `PI_MCP_CONFIG` over stdio (using `@modelcontextprotocol/sdk`) and re-exposes their tools as `mcp__<server>__<tool>`. Same naming Claude Code uses, so SOUL.md prompts (`memory_search`, `plane_dispatch_work_item`, etc.) work identically across both harnesses. Loaded by **all** pi runs (Shelly + ephemerals).
+- **`telegram-out`** — Pi-Shelly only. Outbound Telegram tools (`reply` / `react` / `edit_message` / `download_attachment`) backed by Telegram's HTTP Bot API + a `dev_bots` Postgres lookup. Why a separate extension instead of going through the bridge: Pi-Shelly's loop owns a long-lived `telegram-multi` poller (Telegram's one-poller-per-token rule), so the bridge cannot also spawn one — splitting outbound to HTTP avoids the 409 Conflict.
+- **`github`** + **`loop-guard`** — pre-existing, unchanged.
+
+**MCP config files** (rendered by `scripts/deploy-agents.sh`):
+
+- `~/.mcp.json` — full set including `telegram`. Used by **Claude-Shelly** only.
+- `~/.mcp-worker.json` — full set minus `telegram`. Used by **ephemeral workers** (Claude or Pi).
+- `~/.mcp-shelly-pi.json` — full set minus `telegram`. Used by **Pi-Shelly's per-message bridge runs**.
+
+**Pi-Shelly runtime** (`scripts/shelly-pi-loop.js`):
+
+1. Owns a long-lived `bun telegram-multi/server.ts` child (sole poller, writes inbound to `shelly_transcript`).
+2. Tails `shelly_transcript` for new `direction='in'` rows from a stored bookmark.
+3. For each new row, spawns `pi -p "<channel ...>...</channel>" --extension mcp-bridge --extension telegram-out --extension github --extension loop-guard --provider deepinfra --model Qwen3-Coder-480B-A35B-Instruct --append-system-prompt $(cat .agents/shelly/SOUL.md)` with `PI_MCP_CONFIG=~/.mcp-shelly-pi.json`.
+4. Pi processes the message, calls MCP tools (full studio surface) + `telegram-out` for the reply, exits.
+5. Loop.
+
+One-shot-per-message instead of a persistent REPL — no in-memory conversation context, but `transcript_replay_recent` MCP tool covers the recall path. SOUL.md already documents this pattern in the "Transcript verbatim" section, so Pi-Shelly behaves like Claude-Shelly after a fresh restart (which she does daily via `shelly-daily-restart.timer` regardless).
+
+**Known limitation — `shelly-watchdog.timer` is mode-blind.** It currently restarts `shelly.service` on detected staleness. When in Pi mode, restart `shelly-pi.service` manually if it goes deaf. Making the watchdog mode-aware is a follow-up.
+
+**When you DON'T need to flip:** if only ephemerals are tight on quota, set `DRIVER_BUILDER=pi` (or `DRIVER_DEFAULT=pi` directly in the worker env) and leave Claude-Shelly running — she's tool-routing, not coding, and uses far less context per turn than a builder does. Full flip is for "Claude account is hard-locked" days.
+
 ## Shelly's persona
 
 Shelly's full persona, voice, tools, capture protocol and thread-tag protocol live in **`.agents/shelly/SOUL.md`** and are auto-loaded by Claude Code via the `@` include below. That file is the single source of truth — edit it, not this section.

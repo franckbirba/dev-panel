@@ -139,6 +139,30 @@ jq 'del(.mcpServers.telegram)' /home/deploy/.mcp.json \
 chown deploy:deploy /home/deploy/.mcp-worker.json
 chmod 600 /home/deploy/.mcp-worker.json
 
+# Pi-Shelly MCP config — same content as .mcp-worker.json (telegram stripped).
+# Used by scripts/shelly-pi-loop.js for per-message pi runs. Telegram is
+# excluded because the loop owns its own long-lived telegram-multi child
+# (sole poller), and the per-pi-run mcp-bridge mustn't spawn a second one
+# (409 Conflict on getUpdates). Outbound replies go through the
+# telegram-out Pi extension instead, which uses Telegram's HTTP Bot API.
+jq 'del(.mcpServers.telegram)' /home/deploy/.mcp.json \
+  > /home/deploy/.mcp-shelly-pi.json
+chown deploy:deploy /home/deploy/.mcp-shelly-pi.json
+chmod 600 /home/deploy/.mcp-shelly-pi.json
+
+# Pi extensions — npm install per extension dir. Pi runs .ts via jiti so
+# source changes apply without a build, BUT each extension's own
+# node_modules must exist on disk for jiti to resolve imports
+# (@modelcontextprotocol/sdk in mcp-bridge, pg in telegram-out, etc).
+# github + loop-guard are dep-free so far, install is a no-op there but
+# keeps the pattern uniform. Run as deploy so file ownership is right.
+for ext in mcp-bridge telegram-out github loop-guard; do
+  ext_dir=/home/deploy/projects/dev-panel/infra/pi-extensions/$ext
+  if [ -d "$ext_dir" ] && [ -f "$ext_dir/package.json" ]; then
+    su - deploy -c "cd $ext_dir && /usr/bin/npm install --no-audit --no-fund --silent"
+  fi
+done
+
 # Plugin: telegram-multi (multi-tenant Telegram channel for Shelly).
 # Source of truth is in the repo (plugins/telegram-multi/); we sync it into
 # the deploy user's plugin install location and install bun deps.
@@ -157,14 +181,20 @@ install -o root -g root -m 0644 \
   /home/deploy/projects/dev-panel/infra/logrotate-agents.conf \
   /etc/logrotate.d/devpanel-agents
 
-# Systemd units (worker + shelly + watchdog + relay + daily-restart)
+# Systemd units (worker + shelly + watchdog + relay + daily-restart + pi fallback)
 cp /home/deploy/projects/dev-panel/infra/devpanel-worker.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly.service /etc/systemd/system/
+cp /home/deploy/projects/dev-panel/infra/shelly-pi.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-relay.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service /etc/systemd/system/
 cp /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer /etc/systemd/system/
+
+# Quota-fallback switch script — Franck runs this when Claude Max is out.
+install -o deploy -g deploy -m 0755 \
+  /home/deploy/projects/dev-panel/scripts/shelly-switch.sh \
+  /home/deploy/bin/shelly-switch.sh
 
 # Watchdog script must be executable and on the deploy user's PATH.
 install -d -o deploy -g deploy /home/deploy/bin /home/deploy/logs

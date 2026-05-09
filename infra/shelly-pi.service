@@ -1,0 +1,59 @@
+[Unit]
+Description=Shelly — Pi (Qwen3) fallback when Claude quota is exhausted
+Documentation=file:///home/deploy/projects/dev-panel/CLAUDE.md
+After=network-online.target
+Wants=network-online.target
+# MUTUALLY EXCLUSIVE with shelly.service. Both processes act on every
+# inbound message in shelly_transcript — running them together means each
+# user DM gets two replies (and both pi/claude burn cost on every message).
+# scripts/shelly-switch.sh enforces this at the management layer too;
+# Conflicts= is the systemd safety net.
+Conflicts=shelly.service
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/projects/dev-panel
+Environment=HOME=/home/deploy
+Environment=PATH=/home/deploy/.npm-global/bin:/home/deploy/.bun/bin:/home/deploy/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Same Postgres/Redis network knobs Shelly needs — devpanel-mcp spawned by
+# the bridge defaults to firewalled public IPs without these.
+Environment=REDIS_HOST=10.0.0.2
+Environment=REDIS_PORT=6379
+Environment=PG_HOST=10.0.0.2
+Environment=PG_PORT=5432
+Environment=PG_USER=affine
+Environment=PG_DATABASE=agent_memory
+Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
+Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
+# Shelly's full MCP set — the bridge re-exposes these to Pi as
+# mcp__<server>__<tool>. Includes telegram (which workers strip).
+Environment=SHELLY_MCP_CONFIG=/home/deploy/.mcp.json
+# DeepInfra knobs — same as the worker Pi path. Override per-deploy via
+# .env.agent if we ever swap providers.
+Environment=SHELLY_PI_PROVIDER=deepinfra
+Environment=SHELLY_PI_MODEL=Qwen/Qwen3-Coder-480B-A35B-Instruct
+EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
+
+# IMPORTANT: telegram-multi is the SOLE poller for the bot tokens. Under
+# Claude-Shelly it's spawned by Claude Code as part of the `telegram` MCP
+# subscription. Under Pi-Shelly the loop spawns it via the mcp-bridge
+# (per inbound) AND a separate keepalive in production should be
+# considered. For now the per-message spawn is enough — telegram-multi
+# itself runs as a stdio child of the bridge each time pi processes a
+# message, polls long enough to deliver the reply, and exits with pi.
+#
+# If polling latency becomes a problem (cold-start every reply ~2s), add
+# a sidecar systemd unit that keeps telegram-multi alive across pi runs.
+# Not doing that today — premature optimization.
+
+ExecStart=/usr/bin/node /home/deploy/projects/dev-panel/scripts/shelly-pi-loop.js
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

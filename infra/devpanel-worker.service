@@ -62,6 +62,12 @@ Environment=BACKLOG_PULL_INTERVAL_MS=900000
 # Required keys: PG_PASSWORD, VOYAGE_API_KEY, ADMIN_API_KEY, GITHUB_TOKEN,
 #                TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PLANE_API_KEY
 EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent
+# Cheap-tier toggle managed by scripts/shelly-switch.sh. Carries
+# DRIVER_DEFAULT=pi (when Claude quota is exhausted) or DRIVER_DEFAULT=claude.
+# Missing file is fine — DRIVER_DEFAULT defaults to absent → claude per the
+# routing in shouldUsePi(). The dash prefix means systemd doesn't fail when
+# the file isn't there (e.g. fresh deploy before the first switch).
+EnvironmentFile=-/home/deploy/.driver-default
 
 StandardOutput=journal
 StandardError=journal

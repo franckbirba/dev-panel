@@ -1,0 +1,15 @@
+{
+  "name": "@dev-panel/pi-ext-telegram-out",
+  "version": "0.1.0",
+  "description": "Pi extension: outbound-only Telegram tools (reply / react / edit / download_attachment) backed by HTTP Bot API + dev_bots Postgres lookup. Used by Pi-Shelly when she can't share telegram-multi's stdio MCP (because the loop owns the long-lived poller). Workers do not load this — they have no Telegram surface.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "pg": "^8.20.0",
+    "typebox": "^1.1.38"
+  }
+}

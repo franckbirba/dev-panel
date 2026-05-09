@@ -2,10 +2,18 @@
 //
 // Pi (`@earendil-works/pi-coding-agent`) harness driver. Spawns
 // `pi --provider <p> --model <m> --mode json -p <prompt>` with SOUL injected
-// via `--append-system-prompt`. Pi reads ~/.pi/agent/mcp.json (symlinked to
-// our existing ~/.mcp-worker.json on the agents host) and exposes every MCP
-// server we already mount. Built-in tools (read, edit, bash, grep, write,
-// find, ls) are available alongside the MCP-prefixed ones.
+// via `--append-system-prompt`.
+//
+// MCP access: pi 0.74 ships ZERO built-in MCP support (their docs say so
+// explicitly). To give pi-driven agents the same MCP surface Claude Code
+// gets, we load the `mcp-bridge` extension (infra/pi-extensions/mcp-bridge),
+// which spawns every server in PI_MCP_CONFIG (default ~/.mcp-worker.json on
+// the agents host) and re-exposes their tools as `mcp__<server>__<tool>` —
+// same naming Claude Code uses, so SOUL prompts and memory writes that
+// reference tool names work identically across both harnesses.
+//
+// Built-in tools (read, edit, bash, grep, write, find, ls) are available
+// alongside the MCP-prefixed ones.
 //
 // Why pi over goose / mini-swe / claude-code:
 //
@@ -40,9 +48,16 @@ import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
 const DEFAULT_PI_BIN = process.env.PI_BIN
   || join(process.env.HOME || '/home/deploy', '.npm-global/bin/pi');
 
-// Pi extensions vendored in this repo. Loaded via --extension flags so the
-// agents host doesn't need a separate `npm install`-step for them. Pi runs
-// .ts directly via jiti — no compile step required.
+// Pi extensions vendored in this repo. Loaded via --extension flags. Pi
+// runs .ts directly via jiti so source changes apply without a build step,
+// BUT each extension's own node_modules must exist on disk — the bridge
+// pulls in @modelcontextprotocol/sdk, so deploy-agents.sh runs `npm install`
+// inside infra/pi-extensions/mcp-bridge/.
+//
+//   - mcp-bridge: spawn every server in ~/.mcp-worker.json and re-expose
+//     their tools as mcp__<server>__<tool>. Without this, pi has no plane
+//     / devpanel / pgvector / affine / playwright / glitchtip access at
+//     all. THIS IS NOT OPTIONAL for agents that need real work done.
 //   - github: structured gh_pr_create / gh_pr_view / etc. tools so the
 //     model never has to escape strings through bash (ZENO-339 canary
 //     showed Qwen3 burning 24 retries on French apostrophes in `gh pr
@@ -53,6 +68,7 @@ const DEFAULT_PI_BIN = process.env.PI_BIN
 const PI_EXTENSIONS_ROOT = process.env.PI_EXTENSIONS_ROOT
   || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
 const DEFAULT_PI_EXTENSIONS = [
+  join(PI_EXTENSIONS_ROOT, 'mcp-bridge'),
   join(PI_EXTENSIONS_ROOT, 'github'),
   join(PI_EXTENSIONS_ROOT, 'loop-guard')
 ];
@@ -91,12 +107,22 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
       '-p', prompt
     ];
 
+    // mcp-bridge reads PI_MCP_CONFIG to know which mcp.json to load. Workers
+    // must use the worker config (telegram stripped — see deploy-agents.sh)
+    // so ephemerals don't spawn parasitic telegram-multi pollers and race
+    // Shelly. Shelly's own systemd unit sets PI_MCP_CONFIG=~/.mcp.json (the
+    // full config WITH telegram) so Pi-Shelly can reply on Telegram.
+    const PI_MCP_CONFIG = process.env.PI_MCP_CONFIG
+      || process.env.WORKER_MCP_CONFIG
+      || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
+
     const proc = spawn(DEFAULT_PI_BIN, args, {
       cwd,
       env: {
         ...process.env,
         JOB_ID: jobId,
         AGENT_ROLE: agentRole,
+        PI_MCP_CONFIG,
         PATH: [
           join(process.env.HOME || '/home/deploy', '.npm-global/bin'),
           join(process.env.HOME || '/home/deploy', '.bun/bin'),
