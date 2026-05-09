@@ -552,12 +552,20 @@ export async function runAutomation({ jobData, result, startedAt }) {
     }),
     { critical: true });
 
-  // Terminal publisher: if this step is a `terminal: true` transition with
-  // status `done`, ship the result (push branch, open PR, mark Plane Done).
-  // The engine has already updated workflow_instance state; this only runs
-  // on the "happy path" and all side-effects are best-effort.
+  // Terminal publisher: only fires for the `work-item` workflow — the one that
+  // produces brand-new feature work that must be pushed + PR'd. Other workflows
+  // (`merge-coordinator`, `cycle-audit`, `replan`) also use `terminal: true`
+  // for engine state hygiene but MUST NOT re-open a PR — merge-coordinator
+  // already merges; running publishWorkItem after it would re-push the branch
+  // and open a fresh PR for the same head_sha, which is exactly the loop that
+  // produced 99 garbage PRs on 2026-05-09 (PRs #93–#192) until GitHub's
+  // 100-per-head_sha cap killed it.
   const flow = getFlows()[jobData.workflow];
-  if (flow && isTerminalDone({ flow, agent, status: result.status })) {
+  if (
+    flow &&
+    jobData.workflow === 'work-item' &&
+    isTerminalDone({ flow, agent, status: result.status })
+  ) {
     await publishWorkItem({ job_id, agent, jobData, result });
   }
 }
