@@ -68,12 +68,69 @@ EOF
   chmod 644 "$DRIVER_FILE"
 }
 
+# Wait for telegram-multi to fully release its long-poll connection to the
+# Telegram DCs before starting the new mode's child. If we don't wait, the
+# new mode's bun process boots, calls getUpdates with the same bot token the
+# previous (just-killed) child still holds open server-side, and Telegram
+# returns 409 Conflict. The watchdog then reads "deaf bot" and bounces the
+# new mode back. Telegram's long-poll dwell is ~50s, so we give it 60s max.
+#
+# After SIGTERM, telegram-multi's per-bot supervisors exit fast, but the
+# server-side long-poll only releases when the underlying TCP connection
+# closes — which happens on bun process exit, not on SIGTERM receipt. So we
+# (1) wait for systemctl stop to return (which already waits for ExecStop),
+# (2) kill any stragglers, (3) poll for absence of ESTABLISHED Telegram
+# sockets across all bun procs.
+release_telegram_long_polls() {
+  local timeout=60
+  local waited=0
+  # Belt-and-braces: kill any orphan bun procs that didn't exit with the
+  # parent unit (e.g. if shelly.service crashed without ExecStop).
+  pkill -TERM -f "bun.*server\.ts" 2>/dev/null || true
+  while [ "$waited" -lt "$timeout" ]; do
+    # Any remaining bun process with an ESTABLISHED socket to a Telegram DC?
+    # Telegram DCs: 149.154.160.0/20 (IPv4) + 2001:67c:4e8::/48 (IPv6) — same
+    # heuristic the watchdog uses (infra/shelly-watchdog.sh).
+    local has_socket=0
+    while read -r pid; do
+      [ -z "$pid" ] && continue
+      if /usr/bin/lsof -p "$pid" -nP 2>/dev/null \
+           | grep -E "ESTABLISHED" \
+           | grep -Eq "(149\.154\.1[0-9]+\.|\[2001:67c:4e8:)"; then
+        has_socket=1
+        break
+      fi
+    done < <(pgrep -f "bun.*server\.ts" 2>/dev/null || true)
+    if [ "$has_socket" -eq 0 ]; then
+      echo "→ telegram long-polls released after ${waited}s"
+      # Belt: also kill any lingering bun procs (no socket but still alive)
+      # so the new mode starts from a clean slate.
+      pkill -KILL -f "bun.*server\.ts" 2>/dev/null || true
+      sleep 1
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo "→ WARNING: timed out after ${timeout}s waiting for Telegram long-polls to release. Force-killing."
+  pkill -KILL -f "bun.*server\.ts" 2>/dev/null || true
+  sleep 1
+}
+
 switch_to_pi() {
   echo "→ stopping $SHELLY_CLAUDE"
   systemctl stop "$SHELLY_CLAUDE" || true
+  # shelly.service is `Type=oneshot RemainAfterExit=yes` so `stop` doesn't
+  # actually kill the spawned tmux/claude/bun tree. Disable+stop the unit,
+  # then nuke the tmux session so claude (and its bun MCP child) actually die.
+  systemctl disable "$SHELLY_CLAUDE" 2>/dev/null || true
+  /usr/bin/tmux -L deploy kill-session -t shelly 2>/dev/null || true
+  echo "→ waiting for telegram long-polls to release"
+  release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=pi"
   write_driver_default pi
-  echo "→ starting $SHELLY_PI"
+  echo "→ enabling + starting $SHELLY_PI"
+  systemctl enable "$SHELLY_PI" 2>/dev/null || true
   systemctl start "$SHELLY_PI"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=pi)"
   systemctl restart "$WORKER"
@@ -84,9 +141,13 @@ switch_to_pi() {
 switch_to_claude() {
   echo "→ stopping $SHELLY_PI"
   systemctl stop "$SHELLY_PI" || true
+  systemctl disable "$SHELLY_PI" 2>/dev/null || true
+  echo "→ waiting for telegram long-polls to release"
+  release_telegram_long_polls
   echo "→ writing DRIVER_DEFAULT=claude"
   write_driver_default claude
-  echo "→ starting $SHELLY_CLAUDE"
+  echo "→ enabling + starting $SHELLY_CLAUDE"
+  systemctl enable "$SHELLY_CLAUDE" 2>/dev/null || true
   systemctl start "$SHELLY_CLAUDE"
   echo "→ restarting $WORKER (so ephemerals pick up DRIVER_DEFAULT=claude)"
   systemctl restart "$WORKER"

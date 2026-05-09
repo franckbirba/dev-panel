@@ -104,11 +104,28 @@ if [ -z "$REASON" ]; then
   exit 0
 fi
 
-logger -t shelly-watchdog "$REASON — restarting shelly.service"
-echo "$(ts) restart reason=\"$REASON\"" >> "$LOG"
+# Mode-aware target: scripts/shelly-switch.sh writes /home/deploy/.driver-default
+# with `DRIVER_DEFAULT=pi` or `DRIVER_DEFAULT=claude`. When in pi mode, restart
+# shelly-pi.service — restarting shelly.service would auto-stop Pi-Shelly via
+# the systemd Conflicts= directive and silently revert the operator's mode
+# choice (we hit exactly that on the first 2026-05-09 flip, ≤60s after switch).
+TARGET_UNIT=shelly.service
+DRIVER_DEFAULT_FILE=/home/deploy/.driver-default
+if [ -f "$DRIVER_DEFAULT_FILE" ]; then
+  # Read DRIVER_DEFAULT without sourcing the file (defense against shell
+  # injection if the file ever gets corrupted). Match `DRIVER_DEFAULT=value`
+  # at the start of a line, capture the value verbatim.
+  CURRENT_DRIVER=$(awk -F= '/^DRIVER_DEFAULT=/{ print $2; exit }' "$DRIVER_DEFAULT_FILE" 2>/dev/null || true)
+  if [ "$CURRENT_DRIVER" = "pi" ]; then
+    TARGET_UNIT=shelly-pi.service
+  fi
+fi
 
-if ! /usr/bin/systemctl restart shelly.service; then
-  echo "$(ts) restart_failed reason=\"systemctl restart returned non-zero\"" >> "$LOG"
+logger -t shelly-watchdog "$REASON — restarting $TARGET_UNIT"
+echo "$(ts) restart reason=\"$REASON\" target=\"$TARGET_UNIT\"" >> "$LOG"
+
+if ! /usr/bin/systemctl restart "$TARGET_UNIT"; then
+  echo "$(ts) restart_failed reason=\"systemctl restart $TARGET_UNIT returned non-zero\"" >> "$LOG"
   exit 1
 fi
 
@@ -138,5 +155,5 @@ if [ "${RECENT:-0}" -lt 4 ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${CHAT_
   /usr/bin/curl -sS -o /dev/null --max-time 5 \
     -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     --data-urlencode "chat_id=${CHAT_ID}" \
-    --data-urlencode "text=shelly-watchdog: restarted Shelly (${REASON})" || true
+    --data-urlencode "text=shelly-watchdog: restarted ${TARGET_UNIT} (${REASON})" || true
 fi

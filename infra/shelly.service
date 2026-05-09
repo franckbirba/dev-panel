@@ -3,6 +3,12 @@ Description=Shelly — Claude Code + telegram plugin (tmux-backed)
 Documentation=file:///home/deploy/projects/dev-panel/CLAUDE.md
 After=network-online.target
 Wants=network-online.target
+# Symmetric Conflicts= with shelly-pi.service. Two pollers on the same bot
+# tokens means 409 Conflict on every getUpdates and double-replies on every
+# inbound. scripts/shelly-switch.sh is the supported flip path; this is the
+# safety net for stray `systemctl start shelly` (e.g. from a stale watchdog
+# tick that hasn't picked up the new mode yet).
+Conflicts=shelly-pi.service
 
 [Service]
 Type=oneshot
