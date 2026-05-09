@@ -190,28 +190,31 @@ install -o root -g root -m 0644 \
 # CRITICAL: shelly-switch.sh masks the off-mode unit by creating a symlink
 # /etc/systemd/system/<unit> → /dev/null. A naive `cp` would overwrite the
 # symlink with a real file, un-masking the unit and letting it be started.
-# Use a helper that respects mask state: leave the symlink in place if the
-# unit is currently masked.
-install_unit() {
-  local src=\$1
-  local name
-  name=\$(basename "\$src")
-  local dest=/etc/systemd/system/\$name
-  if [ -L "\$dest" ] && [ "\$(readlink "\$dest")" = "/dev/null" ]; then
-    echo "(skipping install of \$name — masked by shelly-switch.sh)"
-    return 0
+# Inline check before each cp: skip if the destination is currently a
+# symlink to /dev/null (mask).
+#
+# NOTE on heredoc escaping: this whole block runs inside the unquoted
+# heredoc on line 53 so it can interpolate \${PG_PASS} etc. Anything we
+# want evaluated on the REMOTE must be backslash-escaped. Originally I
+# tried a function with nested \$(readlink "\$dest") and macOS bash 3.2
+# choked on the nested double-quotes inside \$(); flat per-unit
+# conditionals avoid that whole class of trap.
+for unit in \\
+  /home/deploy/projects/dev-panel/infra/devpanel-worker.service \\
+  /home/deploy/projects/dev-panel/infra/shelly.service \\
+  /home/deploy/projects/dev-panel/infra/shelly-pi.service \\
+  /home/deploy/projects/dev-panel/infra/shelly-watchdog.service \\
+  /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer \\
+  /home/deploy/projects/dev-panel/infra/shelly-relay.service \\
+  /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service \\
+  /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer; do
+  dest=/etc/systemd/system/\$(basename \$unit)
+  if [ -L \$dest ] && [ \$(readlink \$dest) = /dev/null ]; then
+    echo "(skipping install of \$dest — masked by shelly-switch.sh)"
+    continue
   fi
-  cp "\$src" "\$dest"
-}
-
-install_unit /home/deploy/projects/dev-panel/infra/devpanel-worker.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly-pi.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly-watchdog.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly-watchdog.timer
-install_unit /home/deploy/projects/dev-panel/infra/shelly-relay.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly-daily-restart.service
-install_unit /home/deploy/projects/dev-panel/infra/shelly-daily-restart.timer
+  cp \$unit \$dest
+done
 
 # Quota-fallback switch script — Franck runs this when Claude Max is out.
 install -o deploy -g deploy -m 0755 \
@@ -232,25 +235,24 @@ install -o deploy -g deploy -m 0755 \
 systemctl daemon-reload
 
 # Mode-aware enable: shelly-switch.sh masks the off-mode shelly unit so a
-# stray systemctl-start can't bring it back. Trying to `enable` a masked
-# unit fails with non-zero, which would abort this deploy under set -e.
-# Enable each unit individually, skipping any that are masked.
+# stray systemctl-start can't bring it back. Trying to \`enable\` a masked
+# unit fails with non-zero. Loop individually, skipping masked. Same
+# heredoc-escape pattern as the install_unit block above (no nested
+# double-quotes inside \$()).
 for u in devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.service shelly-daily-restart.timer; do
-  state=\$(systemctl is-enabled "\$u" 2>&1 || true)
-  if [ "\$state" = "masked" ]; then
+  state=\$(systemctl is-enabled \$u 2>&1 || true)
+  if [ \$state = masked ]; then
     echo "(skipping enable of \$u — masked by shelly-switch.sh)"
     continue
   fi
-  systemctl enable "\$u" 2>/dev/null || true
+  systemctl enable \$u 2>/dev/null || true
 done
 
 systemctl restart devpanel-worker
 systemctl restart shelly-relay.service
-# Reload shelly only if it's running AND not masked; do not start a kill
-# cascade if a human is debugging by attaching to the tmux, and never try
-# to restart a unit shelly-switch.sh has masked (Pi mode).
-if [ "\$(systemctl is-enabled shelly.service 2>/dev/null || true)" != "masked" ] \
-   && systemctl is-active --quiet shelly.service; then
+# Reload shelly only if it's running AND not masked.
+shelly_state=\$(systemctl is-enabled shelly.service 2>/dev/null || true)
+if [ \$shelly_state != masked ] && systemctl is-active --quiet shelly.service; then
   systemctl reload-or-restart shelly.service || true
 fi
 systemctl restart shelly-watchdog.timer
