@@ -121,7 +121,7 @@ const reply = defineTool({
 	name: "reply",
 	label: "Telegram reply",
 	description:
-		"Send a Telegram message. Pass bot_label and chat_id from the inbound <channel> tag. Optional reply_to (message_id) for threading. Telegram caps a single message at 4096 chars; over that, the tool splits and sends multiple messages.",
+		"REQUIRED for every visible response to the user. Plain assistant text is INVISIBLE on Telegram — only text inside this tool's `text` parameter actually reaches the user's chat. If you forget to call this, the user sees nothing and thinks you're dead. Pass bot_label and chat_id from the inbound <channel> envelope's attributes. Optional reply_to (message_id) for quote-threading. Telegram caps a single message at 4096 chars; over that, the tool splits automatically.",
 	parameters: Type.Object({
 		bot_label: Type.String({
 			description:

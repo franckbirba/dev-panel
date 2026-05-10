@@ -174,9 +174,36 @@ function buildPrompt(row) {
 // Spawn pi for one message
 // ---------------------------------------------------------------------------
 
+// Imperative reminder injected at the END of the SOUL when running on Pi.
+// Qwen3 generated perfect text replies on the first canary inbound but
+// emitted them as plain assistant text and exited without any tool call —
+// the user saw nothing. SOUL.md says "Reply with the reply tool" but
+// Qwen3 reads it as advisory, not mandatory. Pi 0.74 puts custom-extension
+// tool descriptions further down the system prompt than the SOUL itself,
+// so the reminder needs to be the LAST thing the model sees before the
+// user message. This block is appended to --append-system-prompt.
+const PI_REPLY_IMPERATIVE = `
+
+---
+
+# CRITICAL — replying on Telegram (Pi mode)
+
+You are running on the Pi harness. The user is reading TELEGRAM, not your transcript. Plain text in your assistant message is invisible to them — it goes nowhere. **Every visible response MUST be a \`reply\` tool call.**
+
+For each inbound \`<channel ...>\` envelope:
+
+1. Extract \`bot_label\` and \`chat_id\` from the envelope's attributes.
+2. Call the \`reply\` tool: \`reply({ bot_label: "<from-envelope>", chat_id: <from-envelope>, text: "<your message>" })\`.
+3. The text inside \`reply({...})\` is what reaches the user. The text outside it does not.
+
+If you are confident no response is needed (extremely rare — only for non-actionable system events you are explicitly instructed to ignore), say so by calling \`reply\` with a one-line acknowledgment anyway. **Never end a turn without at least one \`reply\` call when the inbound came from a real user.**
+
+This is mechanical, not optional. If you forget, the user thinks you are dead.
+`;
+
 function runPiForMessage(row) {
   return new Promise((resolve) => {
-    const soul = readFileSync(SOUL_PATH, 'utf8');
+    const soul = readFileSync(SOUL_PATH, 'utf8') + PI_REPLY_IMPERATIVE;
     const prompt = buildPrompt(row);
     const args = [
       '--provider', PI_PROVIDER,
