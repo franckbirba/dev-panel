@@ -77,7 +77,12 @@ export const Assistant = () => {
       credentials: "include",
       headers: { "x-devpanl-provider": providerId },
     }),
-    initialMessages: seedMessages.length > 0 ? seedMessages : undefined,
+    // ChatInit shape from `ai` (Vercel AI SDK 6) uses `messages`, not
+    // `initialMessages`. The earlier name was silently ignored — runtime
+    // started empty, persistence worked turn-by-turn but never reloaded
+    // the prior conversation, and Qwen3 confabulated "I have access to
+    // your history" without actually having it.
+    messages: seedMessages.length > 0 ? seedMessages : undefined,
   });
 
   // Wait for history fetch to settle before mounting the runtime so we
