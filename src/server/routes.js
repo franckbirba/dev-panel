@@ -1025,6 +1025,105 @@ export function createRouter(config = {}) {
   });
 
   // ============================================================================
+  // ONBOARDING ADMIN — Shelly-callable endpoints for project + member creation.
+  //
+  // The originals (POST /projects/wizard, /api/team/members) are project-keyed,
+  // which means Shelly (admin-keyed only) can't call them today. These admin
+  // twins wrap the same logic so the chat's onboarding capabilities work end
+  // to end without Franck having to think about which API key to plumb.
+  // ============================================================================
+
+  // Admin twin of /projects/wizard. Same body, same response, no project-key
+  // requirement. Plane create/link logic identical.
+  router.post('/admin/projects/create', authenticateAdmin, async (req, res) => {
+    try {
+      const { github_url = '', plane_mode = 'skip', plane_project_id = null,
+              plane_name = null, name_override = null, description = null } = req.body || {};
+      const m = String(github_url).match(/(?:https?:\/\/)?github\.com\/([^/\s]+)\/([^/\s#?.]+)/);
+      if (!m) return res.status(400).json({ error: 'need a valid github.com URL' });
+      const owner = m[1];
+      const repo  = m[2].replace(/\.git$/, '');
+      const name  = (name_override || repo).replace(/[^a-zA-Z0-9._-]/g, '-');
+      if (getProjectByName(name)) {
+        return res.status(409).json({ error: `Project "${name}" already exists`, existing_name: name });
+      }
+      let resolved_plane_id = null;
+      let resolved_plane_slug = process.env.PLANE_WORKSPACE_SLUG || 'devpanl';
+      if (plane_mode === 'link') {
+        if (!plane_project_id) return res.status(400).json({ error: 'plane_mode=link requires plane_project_id' });
+        resolved_plane_id = plane_project_id;
+      } else if (plane_mode === 'create') {
+        const base = (process.env.PLANE_BASE_URL || 'https://plane.devpanl.dev').replace(/\/$/, '');
+        const key = process.env.PLANE_API_KEY;
+        if (!key) return res.status(500).json({ error: 'PLANE_API_KEY not set on server' });
+        try {
+          const r = await fetch(
+            `${base}/api/v1/workspaces/${resolved_plane_slug}/projects/`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+              body: JSON.stringify({
+                name: plane_name || repo,
+                identifier: (plane_name || repo).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || 'PROJ',
+                network: 2,
+              }),
+            }
+          );
+          if (!r.ok) {
+            const body = await r.text();
+            return res.status(502).json({ error: `Plane create failed: ${r.status}`, body: body.slice(0, 400) });
+          }
+          const plane = await r.json();
+          resolved_plane_id = plane.id;
+        } catch (e) {
+          return res.status(502).json({ error: `Plane create threw: ${e.message}` });
+        }
+      }
+      const created = createProject({
+        name, description,
+        github_owner: owner, github_repo: repo,
+        github_token: process.env.GITHUB_TOKEN || null,
+        plane_project_id: resolved_plane_id,
+        plane_workspace_slug: resolved_plane_id ? resolved_plane_slug : null,
+        default_branch: 'main',
+      });
+      initProjectDatabase(storagePath, created.id);
+      const row = getProjectById(created.id);
+      res.status(201).json({
+        project: row,
+        plane_project_id: resolved_plane_id,
+      });
+    } catch (err) {
+      console.error('[/admin/projects/create]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Studio members CRUD — admin-keyed twins of the project-keyed /team/members.
+  router.get('/admin/studio-members', authenticateAdmin, async (req, res) => {
+    try {
+      const mod = await import('./studio-members.js');
+      res.json({ members: await mod.listMembers() });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  router.post('/admin/studio-members', authenticateAdmin, async (req, res) => {
+    try {
+      const mod = await import('./studio-members.js');
+      const row = await mod.upsertMember(req.body || {});
+      res.status(201).json({ member: row });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  router.delete('/admin/studio-members/:tg_user_id', authenticateAdmin, async (req, res) => {
+    try {
+      const mod = await import('./studio-members.js');
+      await mod.removeMember(req.params.tg_user_id);
+      res.json({ deleted: req.params.tg_user_id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ============================================================================
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
   // a GitHub URL, optionally links/creates a Plane project, returns a fresh

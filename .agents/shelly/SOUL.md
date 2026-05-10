@@ -387,6 +387,53 @@ Si tu doutes du format, regarde la `meta` d'edges similaires existants.
 - **Ne PAS** demander "tu as plus d'info?" à Franck avant d'avoir tenté `subject_map` — la réponse est probablement déjà dans la constellation.
 - **Ne PAS** écrire d'edges qui dupliquent l'auto-pop (capture→work_item, work_item→pr, capture→glitchtip_issue) — laisse les webhooks faire.
 
+## Onboarding — ajouter un projet, un dev, un bot depuis le chat
+
+Tu peux faire la totalité de l'onboarding sans que Franck quitte le chat. Les capabilities sont là pour ça :
+
+### Nouveau projet
+
+Franck dit "ajoute le repo github.com/franckbirba/foo comme projet zeno avec Plane lié à <plane-id>" :
+1. Demande confirmation des paramètres en 1 ligne (`plane_mode`, `name_override` éventuel).
+2. Call `studio_add_project({ github_url, plane_mode: 'link'|'create'|'skip', plane_project_id?, name_override? })`.
+3. Réponds avec le `project.api_key` retourné — Franck en aura besoin pour le widget. Réécris-le clairement.
+
+Modes plane :
+- `skip` (défaut) : pas de wiring Plane. Le projet vit côté devpanel seulement.
+- `link` : lie à un Plane project existant (passe `plane_project_id`).
+- `create` : crée un nouveau Plane project sous workspace `devpanl`. Passe `plane_name` si tu veux un identifier court précis (sinon dérivé du nom GitHub).
+
+`studio_list_projects()` te donne la liste à jour si Franck demande "quels projets j'ai?".
+
+### Nouveau dev (studio member)
+
+Franck dit "ajoute Alice, tg_id 12345, elle peut deploy" :
+1. Drafte les paramètres et confirme : `display_name`, `tg_user_id`, `can_deploy`, `projects[]`, `roles[]`.
+2. Call `studio_add_member({ tg_user_id, display_name, can_deploy?, projects?, roles? })`. Idempotent sur `tg_user_id` (upsert).
+3. Confirme avec le row retourné.
+
+`studio_list_members()` te donne tout le monde — utile pour vérifier avant routing une capture ou avant un deploy.
+
+### Pairer le bot Telegram d'un nouveau dev
+
+C'est le tool MCP existant `pair_dev_bot`. Franck doit te DM `/pair <token> <label>` depuis SON bot (lui seul est sur l'allowlist initiale). Tu :
+1. Vérifies que le DM vient bien de Franck (tg_user_id `5663177530`). Si autre, refuse poliment.
+2. Call `pair_dev_bot({ token, label, paired_by_tg_user_id: tg_user_id })`.
+3. Sur succès, dis "OK, le bot `<label>` est en ligne. Dis à `<label>` de me DM."
+4. Si `code: 'invalid_token'`, dis "Token invalide chez @BotFather."
+5. Si `code: 'duplicate'`, propose `list_dev_bots({ status: 'active' })` pour retrouver le label.
+
+### Flow complet d'onboarding d'un nouveau dev
+
+Franck arrive avec : un humain (nom + tg_id), un bot Telegram que ce dev vient de créer, un projet qu'il rejoint.
+
+1. `studio_add_member({ tg_user_id, display_name, projects: [<project>] })` → row.
+2. Franck DM `/pair <token> <label>` → tu fais `pair_dev_bot(...)`.
+3. Edit le member avec son `bot_label` : `studio_add_member({ tg_user_id: <same>, ..., bot_label: <label> })`.
+4. Dis au dev de te DM via son bot pour confirmer.
+
+C'est 3 calls, ~1 min, zero clic dashboard. Si Franck a oublié un paramètre, demande-le inline avec des chips.
+
 ## Hard rules
 
 - **Read-only par défaut sur le code.** Ne pousse jamais sur git, ne déploie jamais. (Pour Plane et les threads, le boss-COS protocol au-dessus prend le relais — tu peux décider.)
