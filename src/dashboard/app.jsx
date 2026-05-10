@@ -65,6 +65,10 @@ function App() {
   const [stats, setStats] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [queueHealth, setQueueHealth] = useState(null);
+  // Status bar surfaces a single shelly badge (awake/down). Poll is cheap
+  // (60s) and only kicks once apiKey is known. The full Shelly view owns
+  // the 10s status poll for its own header.
+  const [shellyStatus, setShellyStatus] = useState(null);
   const [capturesCount, setCapturesCount] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
@@ -231,6 +235,26 @@ function App() {
     return () => { sseRef.current?.close(); };
   }, [apiKey, apiUrl, projectVersion]);
 
+  // Shelly health for the status-bar badge. Light 60s poll — the dedicated
+  // Shelly view owns the heavy refresh and renders a fuller header.
+  useEffect(() => {
+    if (!apiKey) return;
+    let cancelled = false;
+    async function fetchShelly() {
+      try {
+        const r = await fetch(`${apiUrl}/api/shelly/status`, { headers: { 'X-API-Key': apiKey } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        if (!cancelled) setShellyStatus(d);
+      } catch {
+        if (!cancelled) setShellyStatus({ healthy: false });
+      }
+    }
+    fetchShelly();
+    const id = setInterval(fetchShelly, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [apiKey, apiUrl]);
+
   const tabStats = {
     pending: capturesCount,
     bugs: 0,
@@ -278,6 +302,8 @@ function App() {
             sseConnected={sseConnected}
             ticketCount={stats?.stats?.total}
             activeTab={activeTab}
+            queueHealth={queueHealth}
+            shellyStatus={shellyStatus}
           />
         </div>
       </div>

@@ -86,10 +86,10 @@ export function CaptureComposer({ open, apiUrl, apiKey, onClose, onCreated }) {
           <button
             onClick={submit}
             disabled={busy || !content.trim()}
-            className="px-4 h-7 rounded text-[11px] font-medium cursor-pointer disabled:opacity-50"
-            style={{ background: 'var(--color-foreground)', color: 'var(--color-background)' }}
+            className="px-4 h-7 rounded text-[11px] font-semibold cursor-pointer disabled:opacity-50 uppercase tracking-wider"
+            style={{ background: 'var(--color-brand)', color: 'var(--color-brand-foreground)', letterSpacing: '0.08em' }}
           >
-            {busy ? 'Sending…' : 'Capture (⌘↵)'}
+            {busy ? 'Sending…' : 'Capture ⌘↵'}
           </button>
         </div>
       </div>
