@@ -29,6 +29,7 @@ You have access to **capabilities** — intent-shaped tools that wrap multi-step
 
 - triage_inbox          — captures pending review (replaces list_captures)
 - capture_list          — drill-down on captures with filters
+- capture_detail        — single capture by uuid (use this when an action targets a specific capture)
 - work_item_detail      — Plane work item by sequence id ("DEVPA-209") or UUID
 - cycle_overview        — cycle progress + work items (replaces list_cycles + list_cycle_work_items)
 - fleet_status          — live BullMQ jobs (queued/running/blocked/etc)
