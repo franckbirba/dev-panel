@@ -77,6 +77,13 @@ GLITCHTIP_SECRET_KEY_V=$(stage GLITCHTIP_SECRET_KEY)
 GLITCHTIP_DB_PASSWORD_V=$(stage GLITCHTIP_DB_PASSWORD)
 GLITCHTIP_BRIDGE_HMAC_SECRET_V=$(stage GLITCHTIP_BRIDGE_HMAC_SECRET)
 
+# Chat backend secrets (apps/chat → /api/chat). The provider is env-flippable
+# (LLM_PROVIDER=deepinfra|openai|anthropic). Keys are stage_or_blank so
+# operators can drop them into .env.production without re-running init.sh.
+DEEPINFRA_API_KEY_V=$(stage_or_blank DEEPINFRA_API_KEY)
+OPENAI_API_KEY_V=$(stage_or_blank OPENAI_API_KEY)
+ANTHROPIC_API_KEY_V=$(stage_or_blank ANTHROPIC_API_KEY)
+
 # Shared secret between the services-API agent hub and any worker that
 # connects to it. Auto-generated on first deploy, preserved across re-runs
 # by stage(). The same value must end up in the agents-host .env (rsync
@@ -188,6 +195,16 @@ GLITCHTIP_ENABLE_USER_REGISTRATION=False
 GLITCHTIP_SECRET_KEY=${GLITCHTIP_SECRET_KEY_V}
 GLITCHTIP_DB_PASSWORD=${GLITCHTIP_DB_PASSWORD_V}
 GLITCHTIP_BRIDGE_HMAC_SECRET=${GLITCHTIP_BRIDGE_HMAC_SECRET_V}
+
+# Chat backend (apps/chat → /api/chat). Defaults to Qwen3-Coder via DeepInfra.
+# Flip provider in the chat header dropdown (frontend) or by changing
+# LLM_PROVIDER + LLM_MODEL on this file. Keys come from GH secrets via the
+# deploy workflow; stage_or_blank preserves manual edits across deploys.
+LLM_PROVIDER=${LLM_PROVIDER:-deepinfra}
+LLM_MODEL=${LLM_MODEL:-Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo}
+DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY_V}
+OPENAI_API_KEY=${OPENAI_API_KEY_V}
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY_V}
 ENVEOF
 
 # ── Generate htpasswd for Traefik (only in production) ──────────────────────

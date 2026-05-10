@@ -78,6 +78,10 @@ jobs:
             export TRAEFIK_PASS="$TRAEFIK_PASS"
             export OAUTH2_PROXY_CLIENT_ID="$OAUTH2_PROXY_CLIENT_ID"
             export OAUTH2_PROXY_CLIENT_SECRET="$OAUTH2_PROXY_CLIENT_SECRET"
+            # Chat backend keys — passed through to init.sh so they survive deploys.
+            export DEEPINFRA_API_KEY="$DEEPINFRA_API_KEY"
+            export OPENAI_API_KEY="$OPENAI_API_KEY"
+            export ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
             # Private LAN IP for redis/postgres port binding (see docker-compose.yml)
             export LAN_HOST="10.0.0.2"
 
@@ -165,6 +169,11 @@ jobs:
           TRAEFIK_PASS: ${{ secrets.TRAEFIK_PASS }}
           OAUTH2_PROXY_CLIENT_ID: ${{ secrets.OAUTH2_PROXY_CLIENT_ID }}
           OAUTH2_PROXY_CLIENT_SECRET: ${{ secrets.OAUTH2_PROXY_CLIENT_SECRET }}
+          # Chat backend keys (apps/chat → /api/chat).
+          # Set whichever provider you want active in repo secrets.
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DEPLOY_SHA: ${{ github.sha }}
           DEPLOY_ACTOR: ${{ github.actor }}
 
