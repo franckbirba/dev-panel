@@ -15,6 +15,12 @@ import {
   listForJob as inboxListForJob,
 } from './job-inbox.js';
 import { updateInstance as updateWorkflowInstance } from './workflow-instances.js';
+import {
+  sendInboxQuestion as tgSendInboxQuestion,
+  confirmReply as tgConfirmReply,
+  resolveForceReply as tgResolveForceReply,
+  clearPendingReply as tgClearPendingReply,
+} from './telegram-hitl.js';
 
 async function safeQuery(sql, params) {
   try {
@@ -325,6 +331,15 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
           console.warn('[inbox/question] workflow flip failed (non-fatal):', e.message);
         }
       }
+      // Fire-and-forget Telegram send — must not block the agent's
+      // long-poll if Telegram is unreachable, and must not 500 the
+      // question post.
+      tgSendInboxQuestion({
+        job_id,
+        inbox_seq: row.seq,
+        kind,
+        content,
+      }).catch(err => console.warn('[inbox/question] telegram send failed (non-fatal):', err.message));
       res.status(201).json({ ok: true, question: row });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -337,7 +352,10 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
   // Body: { answer: string, callback_query_id?: string, source?: 'dashboard'|'telegram'|'shelly' }
   router.post('/jobs/:job_id/inbox/reply', authenticateProjectOrAdmin, async (req, res) => {
     const { job_id } = req.params;
-    const { answer, callback_query_id, source, work_item_id, workflow_name } = req.body || {};
+    const {
+      answer, callback_query_id, source, work_item_id, workflow_name,
+      tg_chat_id, tg_message_id, original_prompt,
+    } = req.body || {};
     if (!job_id) return res.status(400).json({ error: 'job_id required' });
     if (typeof answer !== 'string' || !answer.trim()) {
       return res.status(400).json({ error: 'answer string required' });
@@ -359,6 +377,20 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
         } catch (e) {
           console.warn('[inbox/reply] workflow flip failed (non-fatal):', e.message);
         }
+      }
+      // If the reply came from Telegram (tg_chat_id + tg_message_id
+      // provided), update the original message in-place to show the
+      // chosen answer, and drop any ForceReply pending-row.
+      if (!result.duplicate && tg_chat_id != null && tg_message_id != null) {
+        tgConfirmReply({
+          tg_chat_id,
+          tg_message_id,
+          original_prompt: original_prompt || null,
+          answer: answer.trim(),
+          source: source || 'telegram',
+        }).catch(err => console.warn('[inbox/reply] tg edit failed:', err.message));
+        tgClearPendingReply({ tg_chat_id, tg_message_id })
+          .catch(err => console.warn('[inbox/reply] tg clear failed:', err.message));
       }
       res.json({ ok: true, ...result });
     } catch (e) {
@@ -397,6 +429,31 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // GET /api/telegram/inbox/resolve?chat_id=&message_id=
+  // Plugin-side helper: resolve a Telegram message_id (the bot's outbound
+  // question) to its job_id + inbox_seq. Used by the ForceReply handler in
+  // plugins/telegram-multi/server.ts before POSTing to /inbox/reply.
+  // Admin-key only — this is plugin-internal plumbing, not a public surface.
+  router.get('/telegram/inbox/resolve', async (req, res) => {
+    if (!authenticateAdmin) {
+      return res.status(501).json({ error: 'admin auth not configured' });
+    }
+    authenticateAdmin(req, res, async () => {
+      const tg_chat_id = req.query.chat_id;
+      const tg_message_id = req.query.message_id;
+      if (!tg_chat_id || !tg_message_id) {
+        return res.status(400).json({ error: 'chat_id and message_id required' });
+      }
+      try {
+        const found = await tgResolveForceReply({ tg_chat_id, tg_message_id });
+        if (!found) return res.status(404).json({ error: 'not found' });
+        res.json({ ok: true, ...found });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
   });
 
   // POST /api/jobs/:job_id/inbox/cancel

@@ -885,7 +885,116 @@ function wireBotHandlers(bot: Bot, row: DevBotRow): void {
     }
   })
 
+  // HITL inbox callback handler — `inbox:<job_id>:<seq>:<idx|allow|deny>`.
+  // Different surface from `perm:` above: those are Claude Code permission
+  // prompts, these are agent-driven `await_human` questions persisted to
+  // job_inbox in Postgres. We POST the chosen answer back to the API at
+  // /api/jobs/:job_id/inbox/reply with X-Admin-Key auth.
+  bot.on('callback_query:data', async ctx => {
+    const data = ctx.callbackQuery.data
+    const m = /^inbox:([^:]+):(\d+):(.+)$/.exec(data)
+    if (!m) return // not ours — let other handlers (e.g. perm:) match
+    const [, job_id, seqStr, tail] = m
+
+    let answer: string
+    let label: string
+    if (tail === 'allow') { answer = 'allow'; label = '✅ Allowed' }
+    else if (tail === 'deny') { answer = 'deny'; label = '❌ Denied' }
+    else {
+      const idx = parseInt(tail, 10)
+      if (!Number.isFinite(idx)) {
+        await ctx.answerCallbackQuery({ text: 'Bad callback' }).catch(() => {})
+        return
+      }
+      // Read the option text out of the original message's button label —
+      // the button text IS the answer string.
+      const msg = ctx.callbackQuery.message
+      const kb = msg && 'reply_markup' in msg ? (msg as any).reply_markup : null
+      const buttons = kb?.inline_keyboard?.flat() ?? []
+      const btn = buttons.find((b: any) => b.callback_data === data)
+      answer = btn?.text ?? `option_${idx}`
+      label = `→ ${answer}`
+    }
+
+    const apiBase = process.env.API_BASE || 'https://devpanl.dev'
+    const adminKey = process.env.ADMIN_API_KEY
+    if (!adminKey) {
+      await ctx.answerCallbackQuery({ text: 'API not configured' }).catch(() => {})
+      return
+    }
+
+    try {
+      const r = await fetch(`${apiBase}/api/jobs/${encodeURIComponent(job_id)}/inbox/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+        body: JSON.stringify({
+          answer,
+          callback_query_id: ctx.callbackQuery.id,
+          source: 'telegram',
+        }),
+      })
+      if (!r.ok && r.status !== 409) {
+        const body = await r.text()
+        await ctx.answerCallbackQuery({ text: `API ${r.status}` }).catch(() => {})
+        console.warn(`[hitl] inbox reply ${r.status}: ${body}`)
+        return
+      }
+      // 409 = already consumed (someone else replied). Either way, ack.
+      await ctx.answerCallbackQuery({ text: r.status === 409 ? 'Déjà résolu' : '✓' }).catch(() => {})
+      const msg = ctx.callbackQuery.message
+      if (msg && 'text' in msg && msg.text) {
+        await ctx.editMessageText(`${msg.text}\n\n${label}`).catch(() => {})
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await ctx.answerCallbackQuery({ text: `Error: ${msg.slice(0, 50)}` }).catch(() => {})
+    }
+  })
+
   bot.on('message:text', async ctx => {
+    // ForceReply detection: if this text message replies to a bot message
+    // we registered as an HITL question, route the answer to /inbox/reply
+    // instead of the normal Shelly inbound flow.
+    const replyTo = ctx.message?.reply_to_message
+    if (replyTo?.from?.is_bot && replyTo.message_id) {
+      const apiBase = process.env.API_BASE || 'https://devpanl.dev'
+      const adminKey = process.env.ADMIN_API_KEY
+      if (adminKey) {
+        try {
+          const lookup = await fetch(
+            `${apiBase}/api/telegram/inbox/resolve?chat_id=${ctx.chat.id}&message_id=${replyTo.message_id}`,
+            { headers: { 'X-Admin-Key': adminKey } }
+          )
+          if (lookup.ok) {
+            const { job_id } = await lookup.json() as { job_id: string }
+            const post = await fetch(`${apiBase}/api/jobs/${encodeURIComponent(job_id)}/inbox/reply`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+              body: JSON.stringify({
+                answer: ctx.message.text,
+                source: 'telegram',
+                tg_chat_id: ctx.chat.id,
+                tg_message_id: replyTo.message_id,
+              }),
+            })
+            if (post.ok) {
+              await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: 'emoji', emoji: '✓' as any }]).catch(() => {})
+              return // handled, don't fall through to Shelly inbound
+            }
+            // 409 = race (already replied). Tell user.
+            if (post.status === 409) {
+              await ctx.reply('Déjà résolu — l\'agent a déjà repris.').catch(() => {})
+              return
+            }
+            console.warn(`[hitl] forcereply post ${post.status}`)
+          }
+          // 404 from resolve = not an HITL reply, fall through
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.warn(`[hitl] forcereply lookup failed: ${msg}`)
+        }
+      }
+    }
     await handleInbound(row, bot, ctx, ctx.message.text, undefined)
   })
 

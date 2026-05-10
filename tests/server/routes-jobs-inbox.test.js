@@ -185,6 +185,76 @@ d('routes-jobs-inbox', () => {
     expect(r.status).toBe(409);
   });
 
+  it('telegram resolve endpoint returns job_id+seq for a recorded message', async () => {
+    const { recordPendingReply } = await import('../../src/server/telegram-hitl.js');
+    await recordPendingReply({
+      tg_chat_id: 5663177530n,
+      tg_message_id: 8888n,
+      job_id: 'job-tg',
+      inbox_seq: 1,
+    });
+
+    const ok = await supertest(app)
+      .get('/api/telegram/inbox/resolve?chat_id=5663177530&message_id=8888')
+      .set('X-Admin-Key', adminKey);
+    expect(ok.status).toBe(200);
+    expect(ok.body.job_id).toBe('job-tg');
+    expect(ok.body.inbox_seq).toBe(1);
+
+    const missing = await supertest(app)
+      .get('/api/telegram/inbox/resolve?chat_id=5663177530&message_id=1')
+      .set('X-Admin-Key', adminKey);
+    expect(missing.status).toBe(404);
+
+    const unauthed = await supertest(app)
+      .get('/api/telegram/inbox/resolve?chat_id=5663177530&message_id=8888');
+    expect(unauthed.status).toBe(401);
+  });
+
+  it('reply with tg_chat_id+tg_message_id clears the pending row', async () => {
+    const { recordPendingReply, resolveForceReply } = await import('../../src/server/telegram-hitl.js');
+    // Mock fetch so the editMessageText call doesn't actually hit Telegram.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ ok: true }),
+      text: async () => '',
+    });
+    try {
+      await supertest(app)
+        .post('/api/jobs/j-tg/inbox/question')
+        .set('X-Admin-Key', adminKey)
+        .send({ kind: 'clarification', content: { prompt: 'q' } });
+      await recordPendingReply({
+        tg_chat_id: 5663177530n,
+        tg_message_id: 7777n,
+        job_id: 'j-tg',
+        inbox_seq: 1,
+      });
+      const r = await supertest(app)
+        .post('/api/jobs/j-tg/inbox/reply')
+        .set('X-Admin-Key', adminKey)
+        .send({
+          answer: 'go',
+          source: 'telegram',
+          tg_chat_id: 5663177530,
+          tg_message_id: 7777,
+          original_prompt: 'q',
+        });
+      expect(r.status).toBe(200);
+      // Pending row should be gone.
+      // The fire-and-forget cleanup may race — give it a tick.
+      await new Promise(res => setTimeout(res, 50));
+      const found = await resolveForceReply({
+        tg_chat_id: 5663177530n,
+        tg_message_id: 7777n,
+      });
+      expect(found).toBeNull();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('history returns messages in seq order', async () => {
     await supertest(app)
       .post('/api/jobs/j/inbox/question')
