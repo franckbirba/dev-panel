@@ -193,12 +193,16 @@ export async function notifyEvent({ kind, text, payload = {} }) {
   const studio = await getStudioMod();
 
   const dests = await routing.resolveDestinations({ kind, payload, studio });
-  if (dests.length === 0) {
+  const supergroup = routing.resolveSupergroupTopic({ kind, payload });
+
+  if (dests.length === 0 && !supergroup) {
     return { sent: 0 };
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
   let sent = 0, failed = 0;
+
+  // Per-destination DMs.
   await Promise.all(dests.map(async ({ chat_id, display_name }) => {
     try {
       const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -210,9 +214,31 @@ export async function notifyEvent({ kind, text, payload = {} }) {
       else failed += 1;
     } catch (err) {
       failed += 1;
-      console.warn(`[notifyEvent] send to ${display_name} (${chat_id}) failed:`, err.message);
+      console.warn(`[notifyEvent] DM to ${display_name} (${chat_id}) failed:`, err.message);
     }
   }));
+
+  // Supergroup post (Step 6) — same body, with message_thread_id pointing
+  // at the right topic. Only fires when SUPERGROUP_ENABLED=true and the
+  // topic resolves.
+  if (supergroup) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: String(supergroup.chat_id),
+          message_thread_id: supergroup.message_thread_id,
+          text,
+        }),
+      });
+      if (r.ok) sent += 1;
+      else failed += 1;
+    } catch (err) {
+      failed += 1;
+      console.warn(`[notifyEvent] supergroup ${supergroup.topic_name} failed:`, err.message);
+    }
+  }
 
   return { sent, failed };
 }

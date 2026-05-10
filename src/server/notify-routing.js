@@ -93,3 +93,35 @@ export async function resolveDestinations({ kind, payload, studio }) {
   }
   return out;
 }
+
+// resolveSupergroupTopic — picks the message_thread_id for an event when
+// SUPERGROUP_ENABLED=true. Returns null if the route has no topic, or
+// if SUPERGROUP_ENABLED is false. The caller (notifyEvent) does the
+// supergroup post side-by-side with DMs — it's not a replacement.
+//
+// Topic resolution:
+//   topic: '#<name>'   → SUPERGROUP_TOPIC_<NAME> env var (e.g. SUPERGROUP_TOPIC_DEPLOYS)
+//   topic: 'project'   → SUPERGROUP_TOPIC_<PAYLOAD.PROJECT> env var
+//   topic: null        → no supergroup write
+export function resolveSupergroupTopic({ kind, payload }) {
+  if (process.env.SUPERGROUP_ENABLED !== 'true') return null;
+  const route = ROUTES[kind];
+  if (!route?.topic) return null;
+  const topic = route.topic;
+  let envKey;
+  if (topic.startsWith('#')) {
+    envKey = `SUPERGROUP_TOPIC_${topic.slice(1).toUpperCase().replace(/[^A-Z0-9_]/g, '_')}`;
+  } else if (topic === 'project') {
+    if (!payload?.project) return null;
+    envKey = `SUPERGROUP_TOPIC_${String(payload.project).toUpperCase().replace(/[^A-Z0-9_]/g, '_')}`;
+  } else {
+    return null;
+  }
+  const threadId = process.env[envKey];
+  if (!threadId) return null;
+  return {
+    chat_id: process.env.SUPERGROUP_CHAT_ID,
+    message_thread_id: parseInt(threadId, 10),
+    topic_name: topic,
+  };
+}

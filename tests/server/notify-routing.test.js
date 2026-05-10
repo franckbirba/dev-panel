@@ -1,7 +1,7 @@
 // tests/server/notify-routing.test.js
 // Coverage for notify-routing config + resolver. Routes 6 event kinds
 // today; resolver picks recipient ids from studio_members.
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
 import { startPg, stopPg, truncateStudioMembers } from '../_helpers/pg.js';
 
@@ -113,5 +113,59 @@ d('notify-routing', () => {
     const byName = Object.fromEntries(dests.map(d => [d.display_name, d.chat_id]));
     expect(byName.Franck).toBe('1');
     expect(byName.Alex).toBe('3');
+  });
+
+  describe('resolveSupergroupTopic', () => {
+    afterEach(() => {
+      delete process.env.SUPERGROUP_ENABLED;
+      delete process.env.SUPERGROUP_CHAT_ID;
+      delete process.env.SUPERGROUP_TOPIC_DEPLOYS;
+      delete process.env.SUPERGROUP_TOPIC_DEVPA;
+    });
+
+    it('returns null when SUPERGROUP_ENABLED is unset', () => {
+      const r = routing.resolveSupergroupTopic({ kind: 'deploy', payload: {} });
+      expect(r).toBeNull();
+    });
+
+    it('returns null when route has no topic', () => {
+      process.env.SUPERGROUP_ENABLED = 'true';
+      process.env.SUPERGROUP_CHAT_ID = '-1009999';
+      const r = routing.resolveSupergroupTopic({ kind: 'await_human', payload: {} });
+      expect(r).toBeNull();
+    });
+
+    it('resolves a #-topic to its env var thread id', () => {
+      process.env.SUPERGROUP_ENABLED = 'true';
+      process.env.SUPERGROUP_CHAT_ID = '-1009999';
+      process.env.SUPERGROUP_TOPIC_DEPLOYS = '5';
+      const r = routing.resolveSupergroupTopic({ kind: 'deploy', payload: {} });
+      expect(r).toEqual({
+        chat_id: '-1009999',
+        message_thread_id: 5,
+        topic_name: '#deploys',
+      });
+    });
+
+    it('resolves a project topic from payload.project', () => {
+      process.env.SUPERGROUP_ENABLED = 'true';
+      process.env.SUPERGROUP_CHAT_ID = '-1009999';
+      process.env.SUPERGROUP_TOPIC_DEVPA = '7';
+      const r = routing.resolveSupergroupTopic({
+        kind: 'pr_shipped',
+        payload: { project: 'DEVPA' },
+      });
+      expect(r?.message_thread_id).toBe(7);
+    });
+
+    it('returns null when project topic env var is missing', () => {
+      process.env.SUPERGROUP_ENABLED = 'true';
+      process.env.SUPERGROUP_CHAT_ID = '-1009999';
+      const r = routing.resolveSupergroupTopic({
+        kind: 'pr_shipped',
+        payload: { project: 'GHOST' },
+      });
+      expect(r).toBeNull();
+    });
   });
 });

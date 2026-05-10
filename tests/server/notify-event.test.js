@@ -117,6 +117,24 @@ d('notifyEvent', () => {
     expect(result.sent).toBe(2);
   });
 
+  it('also posts to supergroup when SUPERGROUP_ENABLED=true', async () => {
+    process.env.SUPERGROUP_ENABLED = 'true';
+    process.env.SUPERGROUP_CHAT_ID = '-1001234';
+    process.env.SUPERGROUP_TOPIC_DEPLOYS = '5';
+    try {
+      await alerts.notifyEvent({ kind: 'deploy', text: 'main → prod' });
+      // 1 DM (Franck) + 1 supergroup post = 2 fetches
+      expect(calls).toHaveLength(2);
+      const supergroupCall = calls.find(c => c.body.chat_id === '-1001234');
+      expect(supergroupCall).toBeDefined();
+      expect(supergroupCall.body.message_thread_id).toBe(5);
+    } finally {
+      delete process.env.SUPERGROUP_ENABLED;
+      delete process.env.SUPERGROUP_CHAT_ID;
+      delete process.env.SUPERGROUP_TOPIC_DEPLOYS;
+    }
+  });
+
   it('survives partial Telegram failures', async () => {
     let n = 0;
     globalThis.fetch = vi.fn(async (url, opts = {}) => {
