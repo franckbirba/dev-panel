@@ -18,7 +18,9 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../../dist/dashboard',
+    // The legacy Vite SPA now ships at /dashboard?legacy=1.
+    // The new chat-first surface (apps/chat) owns dist/dashboard/.
+    outDir: '../../dist/dashboard-legacy',
     emptyOutDir: true,
   },
 });

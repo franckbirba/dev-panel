@@ -52,6 +52,7 @@ import { resolveProjectByName, projectFetch } from './projects.js';
 import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
 import { makeAwaitHuman, awaitHumanSchema } from './await-human.js';
+import { registerRuntimeTools } from './runtime.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -1766,6 +1767,13 @@ if (process.env.JOB_ID && ADMIN_API_KEY) {
     }
   );
 }
+
+// ============================================================================
+// RUNTIME TOOLS (DEVPA-201..203)
+// tail_log / run_remote / ssh_status — replace 5 of 9 tmux-cockpit windows.
+// ============================================================================
+
+registerRuntimeTools(server);
 
 // ============================================================================
 // START

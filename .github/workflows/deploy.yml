@@ -41,7 +41,7 @@ jobs:
           # dist/ is required because docker-compose mounts ./dist:/app/dist;
           # without uploading the freshly-built bundle the container serves
           # the stale dashboard from whatever shipped on the VPS last time.
-          source: "infra/*,infra/config/**,infra/nginx/**,infra/scripts/**,docker-compose.yml,Makefile,dist/dashboard/**,dist/widget.js"
+          source: "infra/*,infra/config/**,infra/nginx/**,infra/scripts/**,docker-compose.yml,Makefile,dist/dashboard/**,dist/dashboard-legacy/**,dist/widget.js"
           target: ~/dev-panel/
           strip_components: 0
       - uses: appleboy/ssh-action@v1
@@ -180,6 +180,19 @@ jobs:
       project-slug: devpanel
       stories-path: stories
       source-path: src/dashboard
+    secrets:
+      SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      SYNC_HOST: ${{ secrets.VPS_HOST }}
+
+  # v0.42 chat-first stories live in apps/chat/stories.
+  # Source aliased to apps/chat/components so .stories.tsx can `@/` import.
+  sync-devpanel-chat-stories:
+    needs: deploy-core
+    uses: ./.github/workflows/sync-stories.yml
+    with:
+      project-slug: devpanel-chat
+      stories-path: apps/chat/stories
+      source-path: apps/chat/components
     secrets:
       SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       SYNC_HOST: ${{ secrets.VPS_HOST }}

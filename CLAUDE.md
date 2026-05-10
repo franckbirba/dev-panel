@@ -61,6 +61,34 @@ The package has four layers with clean separation:
 
 Project config lives in `.devpanelrc.json` (template at `templates/.devpanelrc.json`). Contains project name, server port, GitHub credentials, sync settings, and storage path.
 
+## Chat is the App — v0.42 architecture (2026-05-10)
+
+Effective 2026-05-10, the canonical UI for `devpanl.dev/dashboard` is the chat-first surface in `apps/chat/` (Next 16 + assistant-ui + Vercel AI SDK 6 + remote MCP). The legacy Vite SPA at `src/dashboard/` is **frozen** and reachable as an escape hatch at `?legacy=1` until 2026-05-17, after which it gets deleted (DEVPA-208 acceptance).
+
+**The headline rule for any future agent (Shelly included):** when something looks broken or missing in the dashboard, *don't* go editing `src/dashboard/`. The answer is almost always:
+- A missing card → write a `apps/chat/components/devpanl/<X>Card.tsx` composed from shadcn primitives in `components/ui/`. Add a story under `apps/chat/stories/devpanl/`.
+- A missing tool → register it in `src/mcp/server.js` (or one of the modules it imports — `runtime.js`, `plane-pages.js`, etc.). The chat picks it up automatically via the remote MCP at `https://devpanl.dev/mcp`.
+- A missing render of an existing tool → wire `makeAssistantToolUI` in `apps/chat/app/assistant.tsx` to map the tool's name to a card.
+
+**Stack:**
+- `apps/chat/app/api/chat/route.ts` *(deleted)* → backend lives in `src/server/chat.js` because the deploy is a static export. The Express handler streams via `streamText` + `toUIMessageStreamResponse`, exposing the 50+ MCP tools as the AI SDK tool surface.
+- `apps/chat/components/ui/` → shadcn primitives, project-agnostic. They could move to `ui.devpanl.dev` as-is.
+- `apps/chat/components/devpanl/` → DevPanel composition. **The only place project-specific UI lives.** No `<style>` blocks; no inline visual `style={{}}` props (enforced by `apps/chat/scripts/check-design-rules.mjs`).
+- Tokens: `apps/chat/app/globals.css` is the source of truth, mirrored from `src/dashboard/app.css` (the legacy file). Keep them in sync until the legacy SPA dies.
+
+**Build/deploy:**
+- `npm run build:chat` → `apps/chat → out/ → dist/dashboard/` (committed; the deploy workflow rsyncs from git, no CI build — see `feedback_dashboard_dist_commit.md`).
+- `npm run build:dashboard-legacy` → Vite SPA into `dist/dashboard-legacy/`.
+- `npm run build` runs both + the widget.
+- The deploy workflow (`./.github/workflows/deploy.yml`) rsyncs `dist/dashboard/**`, `dist/dashboard-legacy/**`, `dist/widget.js`. Don't add CI build steps.
+
+**Provider routing (LLM choice for the chat itself, not for ephemeral agents):**
+- `LLM_PROVIDER` + `LLM_MODEL` on `devpanel-api` controls the default. Today: `deepinfra` + `Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo`.
+- Dropdown in the chat header (`apps/chat/components/devpanl/ProviderSwitcher.tsx`) lets the user override per-session via `localStorage`. Backend wiring of the user's choice is DEVPA-206 follow-up.
+- This is **independent** of `DRIVER_DEFAULT` / `DRIVER_<AGENT>` which govern the BullMQ workers.
+
+**One brain, two surfaces:** the dashboard chat is *another client of Shelly's persistent tmux session*, not a separate Claude. Submitting a message → POST `/api/threads/<subject>/<id>/messages` → Shelly's inbound web source consumes it → her reply broadcasts via socket.io to all subscribers of that thread. The Telegram + dashboard surfaces show the same conversation. (DEVPA-204 backend — partial; visible UI ships in v0.42, full Shelly bridge is the next push.)
+
 ## Deploy isolation — persistent services are off-limits on `git push`
 
 **Rule:** a push to `main` refreshes *only* the `devpanel` container. Everything else on the services VPS — Plane, Penpot, Affine, traefik, redis, postgres, bull-board, uptime-kuma — is **persistent team infrastructure** that must survive every deploy. It holds user data (work items, design files, notes, memory). `.github/workflows/deploy.yml` reflects this: it runs `docker compose up -d --no-deps devpanel` and nothing else. Don't add `docker compose --profile plane|penpot|monitoring up -d` back into CI.

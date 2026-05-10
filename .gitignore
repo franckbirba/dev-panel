@@ -14,3 +14,9 @@ client_secret_*.json
 *.zip
 .claude/scheduled_tasks.lock
 .env.oauth2-proxy
+
+# apps/chat — Next.js artifacts. dist/dashboard/ is committed (deploy
+# rsyncs from git, no CI build), but the intermediate `out/` is just a
+# staging step before `mv out → dist/dashboard`.
+apps/chat/out/
+apps/chat/.next/
