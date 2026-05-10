@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ConsoleBuffer, NetworkInterceptor, PerfMetrics, captureViaDisplayMedia, takeDOMSnapshot } from './captureUtils.js';
 import { SessionRecorder } from './sessionRecorder.js';
 import { InspectOverlay } from './InspectOverlay.jsx';
@@ -8,7 +8,6 @@ import { BugReportPanel } from './BugReportPanel.jsx';
 import { FeaturePanel } from './FeaturePanel.jsx';
 import { postCapture as postCaptureFlow } from './captureFlow.js';
 import { ChatDrawer } from './chat/ChatDrawer.jsx';
-import { getOrCreateSessionId } from './chat/sessionId.js';
 
 const ANIMATIONS = `
   @keyframes devpanel-fade-in {
@@ -126,8 +125,6 @@ export function DevPanel({
       postCaptureFlow({ apiUrl, apiKey, user, environment, kind, content, metadata, category: cat }),
     [apiUrl, apiKey, user, environment],
   );
-
-  const chatSessionId = useMemo(() => (chat ? getOrCreateSessionId() : null), [chat]);
 
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);
@@ -415,11 +412,10 @@ export function DevPanel({
       )}
 
       {/* Persistent chat drawer (opt-in via `chat` prop) */}
-      {chat && chatSessionId && (
+      {chat && (
         <ChatDrawer
           apiUrl={apiUrl}
           apiKey={apiKey}
-          sessionId={chatSessionId}
           user={user}
           environment={environment}
           position={position}

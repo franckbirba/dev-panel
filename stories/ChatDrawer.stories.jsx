@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { ChatDrawer } from '../src/react/chat/ChatDrawer.jsx';
+import { SESSION_STORAGE_KEY } from '../src/react/chat/sessionId.js';
 
 // Mock SSE: lets stories drive the drawer without a backend. Each instance is
 // captured in `instances[]` so the story body can push messages from outside.
@@ -18,13 +19,20 @@ function makeMockSSE(instances) {
   };
 }
 
-function clearStoryStorage(sessionId) {
+// Pre-seed a session so the drawer skips POST /api/widget/sessions.
+function seedSession(sessionId) {
   if (typeof localStorage === 'undefined') return;
-  try { localStorage.removeItem(`devpanel.widget.chat.${sessionId}`); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      session_id: sessionId,
+      session_token: 'sb_token',
+      thread_id: 1,
+      token_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    }));
+    localStorage.removeItem(`devpanel.widget.chat.${sessionId}`);
+  } catch { /* ignore */ }
 }
 
-// Stub fetch — Storybook stories shouldn't hit any real backend even if the
-// user clicks "Reporter un bug". We swap fetch in/out per-render.
 function withStubFetch(handler) {
   const original = globalThis.fetch;
   globalThis.fetch = handler;
@@ -37,13 +45,12 @@ export default {
 };
 
 export const Empty = () => {
-  useEffect(() => clearStoryStorage('sb_empty'), []);
+  useEffect(() => { seedSession('sb_empty'); }, []);
   const instances = [];
   return (
     <ChatDrawer
       apiUrl="http://mock.local"
       apiKey="sb_key"
-      sessionId="sb_empty"
       EventSource={makeMockSSE(instances)}
     />
   );
@@ -54,7 +61,7 @@ export const WithGreeting = () => {
   const SSE = makeMockSSE(instances);
 
   useEffect(() => {
-    clearStoryStorage('sb_greeting');
+    seedSession('sb_greeting');
     const restoreFetch = withStubFetch(async () => ({ ok: true, status: 201, json: async () => ({ id: 'cap_demo' }) }));
 
     const t1 = setTimeout(() => {
@@ -91,7 +98,6 @@ export const WithGreeting = () => {
     <ChatDrawer
       apiUrl="http://mock.local"
       apiKey="sb_key"
-      sessionId="sb_greeting"
       EventSource={SSE}
     />
   );
@@ -99,9 +105,6 @@ export const WithGreeting = () => {
 
 export const Reconnecting = () => {
   const instances = [];
-  // EventSource that fires onerror right after construction → drawer goes
-  // through the reconnect path so the status pill in the header reads
-  // "reconnecting".
   class FlakySSE {
     constructor(url) {
       this.url = url; this.onopen = null; this.onmessage = null; this.onerror = null;
@@ -111,13 +114,12 @@ export const Reconnecting = () => {
     close() { /* no-op */ }
   }
 
-  useEffect(() => clearStoryStorage('sb_reconnect'), []);
+  useEffect(() => { seedSession('sb_reconnect'); }, []);
 
   return (
     <ChatDrawer
       apiUrl="http://mock.local"
       apiKey="sb_key"
-      sessionId="sb_reconnect"
       EventSource={FlakySSE}
     />
   );

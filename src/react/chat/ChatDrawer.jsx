@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createChatStore } from './chatStore.js';
 import { ChatSSEClient } from './ChatSSEClient.js';
+import { bootstrapWidgetSession, clearStoredSession } from './sessionId.js';
 import { postCapture } from '../captureFlow.js';
 
 const BUG_TEMPLATE = 'Bug : \nÉtapes : \nRésultat : \nAttendu : ';
@@ -8,15 +9,53 @@ const BUG_TEMPLATE = 'Bug : \nÉtapes : \nRésultat : \nAttendu : ';
 export function ChatDrawer({
   apiUrl,
   apiKey,
-  sessionId,
   EventSource: EventSourceImpl,
   user = null,
   environment = null,
   getCaptureContext = null,
   position = 'bottom-right',
 }) {
-  // One store per (mount, sessionId). The ref keeps the same hook reference
-  // across renders; sessionId changes are rare but we honour them.
+  const [session, setSession] = useState(null);
+
+  useEffect(() => {
+    if (!apiUrl || !apiKey) return undefined;
+    let cancelled = false;
+    bootstrapWidgetSession({ apiUrl, apiKey })
+      .then((s) => { if (!cancelled) setSession(s); })
+      .catch(() => { /* drawer will stay disabled until next mount retries */ });
+    return () => { cancelled = true; };
+  }, [apiUrl, apiKey]);
+
+  if (!session) return null;
+
+  return (
+    <ConnectedChatDrawer
+      apiUrl={apiUrl}
+      apiKey={apiKey}
+      session={session}
+      onSessionInvalidated={() => { clearStoredSession(); setSession(null); }}
+      EventSource={EventSourceImpl}
+      user={user}
+      environment={environment}
+      getCaptureContext={getCaptureContext}
+      position={position}
+    />
+  );
+}
+
+function ConnectedChatDrawer({
+  apiUrl,
+  apiKey,
+  session,
+  onSessionInvalidated,
+  EventSource: EventSourceImpl,
+  user,
+  environment,
+  getCaptureContext,
+  position,
+}) {
+  const sessionId = session.session_id;
+
   const storeRef = useRef(null);
   if (!storeRef.current || storeRef.current.__sid !== sessionId) {
     storeRef.current = createChatStore(sessionId);
@@ -31,14 +70,13 @@ export function ChatDrawer({
   const typing = useStore((s) => s.typing);
   const connectionStatus = useStore((s) => s.connectionStatus);
 
-  // Open drawer ⇒ open SSE stream. Close drawer ⇒ tear it down.
   useEffect(() => {
-    if (!isOpen || !apiUrl || !sessionId) return undefined;
+    if (!isOpen || !apiUrl) return undefined;
     const ESImpl = EventSourceImpl
       ?? (typeof window !== 'undefined' ? window.EventSource : null);
     if (!ESImpl) return undefined;
 
-    const url = `${apiUrl}/api/widget/sessions/${encodeURIComponent(sessionId)}/stream`;
+    const url = `${apiUrl}/api/widget/sessions/${encodeURIComponent(sessionId)}/stream?token=${encodeURIComponent(session.session_token)}`;
     const client = new ChatSSEClient({
       url,
       EventSource: ESImpl,
@@ -67,7 +105,7 @@ export function ChatDrawer({
     });
     client.connect();
     return () => client.disconnect();
-  }, [isOpen, apiUrl, sessionId, EventSourceImpl, useStore]);
+  }, [isOpen, apiUrl, sessionId, session.session_token, EventSourceImpl, useStore]);
 
   const send = async () => {
     const st = useStore.getState();
@@ -110,13 +148,19 @@ export function ChatDrawer({
       return;
     }
 
-    // Conversational message — fire-and-forget; SSE delivers Shelly's reply.
+    // Conversational message — POST with the per-session bearer; SSE delivers
+    // Shelly's reply. On 401 the cached token is stale: drop it so the next
+    // mount re-bootstraps cleanly.
     try {
-      await fetch(`${apiUrl}/api/widget/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      const res = await fetch(`${apiUrl}/api/widget/sessions/${encodeURIComponent(sessionId)}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.session_token}`,
+        },
         body: JSON.stringify({ id: localId, content: text, ts }),
       });
+      if (res.status === 401) onSessionInvalidated();
     } catch {
       // Offline / network blip — user will retry; SSE reconnect handles the rest.
     }
