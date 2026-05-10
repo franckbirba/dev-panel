@@ -61,11 +61,22 @@ function useCaptureActionHandler() {
 //     (memory_write, enqueue_job, raw plumbing), we don't register here —
 //     the assistant-ui ToolFallback handles them as collapsible JSON.
 
+// Tool results arrive in two shapes:
+//   - MCP wire format: { content: [{ type: 'text', text: '<json>' }], isError? }
+//     (every capability today, served via experimental_createMCPClient).
+//   - AI SDK structured shape: the object the tool's `execute` returned
+//     directly (no `content` array). Invisible today since all tools go
+//     through MCP, but keep the path so a future server-side AI SDK tool
+//     ({ tool({...}) }) renders instead of falling through to ToolFallback.
+//     (DEVPA-214)
 function parseToolText(result: unknown): unknown | null {
   if (!result || typeof result !== "object") return null;
-  const r = result as { content?: Array<{ type: string; text?: string }>; isError?: boolean };
+  const r = result as { content?: unknown; isError?: boolean };
+  // No MCP envelope keys → treat as AI SDK structured result.
+  if (!("content" in r) && !("isError" in r)) return r;
   if (r.isError) return null;
-  const text = r.content?.[0]?.text;
+  const content = r.content as Array<{ type: string; text?: string }> | undefined;
+  const text = content?.[0]?.text;
   if (typeof text !== "string") return null;
   try {
     return JSON.parse(text);

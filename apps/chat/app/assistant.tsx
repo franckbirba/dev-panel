@@ -6,7 +6,6 @@ import {
   useChatRuntime,
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -76,8 +75,11 @@ function ThreadView({
     };
   }, [n]);
 
+  // Server-side stopWhen: stepCountIs(8) is the single bound on the
+  // tool-chain loop (see src/server/routes-dashboard-chat.js). Don't stack
+  // a client-side sendAutomaticallyWhen on top — it would let one user
+  // message produce two server turns of 8 steps each. (DEVPA-212)
   const runtime = useChatRuntime({
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     transport: new AssistantChatTransport({
       api: `/api/dashboard/chat/turn?n=${n}`,
       credentials: "include",
