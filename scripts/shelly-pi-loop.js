@@ -214,6 +214,7 @@ function runPiForMessage(row) {
       '--no-skills',
       '--no-prompt-templates',
       '--extension', join(PI_EXTENSIONS_ROOT, 'mcp-bridge'),
+      '--extension', join(PI_EXTENSIONS_ROOT, 'work-items'),
       '--extension', join(PI_EXTENSIONS_ROOT, 'telegram-out'),
       '--extension', join(PI_EXTENSIONS_ROOT, 'github'),
       '--extension', join(PI_EXTENSIONS_ROOT, 'loop-guard'),

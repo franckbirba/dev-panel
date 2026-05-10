@@ -69,6 +69,11 @@ const PI_EXTENSIONS_ROOT = process.env.PI_EXTENSIONS_ROOT
   || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
 const DEFAULT_PI_EXTENSIONS = [
   join(PI_EXTENSIONS_ROOT, 'mcp-bridge'),
+  // Composite extensions — purpose-shaped Pi tools that hide chatty
+  // upstream MCP primitives behind one-call verbs. Each composite
+  // extension's package.json declares pi.compositeReplaces so mcp-bridge
+  // skips the raw equivalents (no two surfaces for the same capability).
+  join(PI_EXTENSIONS_ROOT, 'work-items'),
   join(PI_EXTENSIONS_ROOT, 'github'),
   join(PI_EXTENSIONS_ROOT, 'loop-guard')
 ];

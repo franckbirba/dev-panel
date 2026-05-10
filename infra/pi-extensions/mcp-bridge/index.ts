@@ -49,9 +49,10 @@
  *   PI_MCP_BRIDGE_TIMEOUT  — per-call timeout in ms (default 120000)
  *   PI_MCP_BRIDGE_DEBUG    — if "1", log bridge lifecycle to stderr
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Type } from "typebox";
@@ -83,6 +84,63 @@ function debug(...args: unknown[]) {
 function resolveConfigPath(): string {
 	if (process.env.PI_MCP_CONFIG) return process.env.PI_MCP_CONFIG;
 	return join(homedir(), ".mcp-worker.json");
+}
+
+/**
+ * Mechanical de-dup: scan sibling pi-extensions/*/package.json for
+ * `pi.compositeReplaces` arrays. Each composite extension declares which
+ * raw `mcp__<server>__<tool>` proxies it replaces; mcp-bridge skips
+ * registering those, so Qwen3 sees only the composite — no two surfaces
+ * for the same capability (per franck-architect 2026-05-10).
+ *
+ * The scan walks UP from this file's directory until it finds the
+ * `pi-extensions/` parent, then enumerates siblings. Robust to being
+ * loaded via jiti from any cwd. Falls back gracefully (returns empty
+ * set) if anything's off — composites missing their declaration just
+ * means duplicate tools, not a crash.
+ */
+function loadCompositeReplaces(): Set<string> {
+	const replaced = new Set<string>();
+	try {
+		const here = dirname(fileURLToPath(import.meta.url));
+		// here = .../infra/pi-extensions/mcp-bridge — parent is pi-extensions/
+		const piExtRoot = dirname(here);
+		if (!existsSync(piExtRoot)) return replaced;
+		for (const entry of readdirSync(piExtRoot)) {
+			if (entry === "mcp-bridge") continue;
+			const pkgPath = join(piExtRoot, entry, "package.json");
+			if (!existsSync(pkgPath)) continue;
+			try {
+				const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+					pi?: { compositeReplaces?: string[] };
+				};
+				const list = pkg?.pi?.compositeReplaces;
+				if (Array.isArray(list)) {
+					for (const t of list) {
+						if (typeof t === "string") replaced.add(t);
+					}
+					debug(`composite-replaces from ${entry}: ${list.length} tools`);
+				}
+			} catch (err) {
+				console.error(
+					`[mcp-bridge] failed to read composite manifest at ${pkgPath}: ${(err as Error).message}`,
+				);
+			}
+		}
+		// Surface to console so deploys see it without DEBUG.
+		if (replaced.size > 0) {
+			console.error(
+				`[mcp-bridge] de-dup: ${replaced.size} raw tool(s) skipped because composites cover them`,
+			);
+		}
+	} catch (err) {
+		console.error(
+			`[mcp-bridge] composite-replaces scan failed: ${(err as Error).message}`,
+		);
+	}
+	// Suppress unused-import warning for statSync (kept for future use).
+	void statSync;
+	return replaced;
 }
 
 function loadMcpConfig(path: string): Record<string, McpServerConfig> {
@@ -369,21 +427,35 @@ export default async function (pi: ExtensionAPI) {
 		}),
 	);
 
+	// Composites declared by sibling extensions take precedence — skip
+	// registering raw tools they cover. See loadCompositeReplaces().
+	const replacedByComposite = loadCompositeReplaces();
+
 	const clients: Client[] = [];
 	let totalTools = 0;
+	let skippedByComposite = 0;
 	for (const { name, got } of settled) {
 		if (!got) continue;
 		clients.push(got.client);
 		// Track whether we've already attached the per-server guidelines so
 		// they only land once even though Pi de-duplicates them anyway.
-		let firstForServer = true;
+		// We attach to the first NON-skipped tool so guidelines aren't
+		// orphaned on a tool that ends up replaced by a composite.
+		let attachedGuidelines = false;
 		for (const tool of got.tools) {
-			pi.registerTool(buildPiTool(name, tool, got.client, firstForServer));
-			firstForServer = false;
+			const piName = `mcp__${name}__${tool.name}`;
+			if (replacedByComposite.has(piName)) {
+				skippedByComposite++;
+				continue;
+			}
+			pi.registerTool(buildPiTool(name, tool, got.client, !attachedGuidelines));
+			attachedGuidelines = true;
 			totalTools++;
 		}
 	}
-	debug(`registered ${totalTools} tools across ${clients.length} servers`);
+	debug(
+		`registered ${totalTools} tools across ${clients.length} servers (${skippedByComposite} skipped by composite-replaces)`,
+	);
 
 	// Cleanup. Two paths because we can't trust either alone:
 	//   - session_shutdown is the graceful pi exit path (Ctrl-C in interactive,

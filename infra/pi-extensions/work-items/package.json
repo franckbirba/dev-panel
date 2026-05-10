@@ -1,0 +1,22 @@
+{
+  "name": "@dev-panel/pi-ext-work-items",
+  "version": "0.1.0",
+  "description": "Composite Pi tools for work-item workflows. Hides chatty Plane-MCP primitives behind one-call verbs (work_items_list, etc). Pi/Qwen3 fumbles 5-tool stitching; Claude doesn't. This extension is the studio's opinionated DSL on top of plane-mcp.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"],
+    "compositeReplaces": [
+      "mcp__plane-mcp__list_projects",
+      "mcp__plane-mcp__list_cycles",
+      "mcp__plane-mcp__list_cycle_work_items",
+      "mcp__plane-mcp__list_work_items",
+      "mcp__plane-mcp__list_states"
+    ]
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "typebox": "^1.1.38"
+  }
+}

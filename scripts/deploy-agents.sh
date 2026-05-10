@@ -172,9 +172,11 @@ chmod 600 /home/deploy/.mcp-shelly-pi.json
 # instead of on the remote. Backslash-escape every shell var so it
 # survives the heredoc and gets evaluated on hetzner-vps. Same convention
 # as the `for v in PG_PASS …` loop above (which uses indirect ${!v}).
-for ext in mcp-bridge telegram-out github loop-guard; do
-  ext_dir=/home/deploy/projects/dev-panel/infra/pi-extensions/\$ext
-  if [ -d "\$ext_dir" ] && [ -f "\$ext_dir/package.json" ]; then
+# Discover extensions from the filesystem instead of hardcoding the list,
+# so adding a new pi-extensions/<name>/ doesn't require a deploy-script
+# edit. Same heredoc-escape pattern as elsewhere in this block.
+for ext_dir in /home/deploy/projects/dev-panel/infra/pi-extensions/*/; do
+  if [ -f "\$ext_dir/package.json" ]; then
     su - deploy -c "cd \$ext_dir && /usr/bin/npm install --no-audit --no-fund --silent"
   fi
 done
