@@ -15,10 +15,13 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:dashboard": "vite build",
+    "build:dashboard-legacy": "vite build",
+    "build:chat": "cd apps/chat && npm install --no-audit --no-fund --silent && npm run build && cd ../.. && rm -rf dist/dashboard && mv apps/chat/out dist/dashboard",
+    "build:dashboard": "npm run build:chat && npm run build:dashboard-legacy",
     "build:widget": "vite build --config vite.widget.config.js",
     "build": "npm run build:dashboard && npm run build:widget",
-    "dev:dashboard": "vite --config vite.config.js"
+    "dev:dashboard": "vite --config vite.config.js",
+    "dev:chat": "cd apps/chat && npm run dev"
   },
   "keywords": [
     "bug-tracking",
@@ -43,7 +46,10 @@
     "react": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.41",
+    "@ai-sdk/openai": "^3.0.63",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "ai": "^6.0.177",
     "arctic": "^3.7.0",
     "better-sqlite3": "^11.0.0",
     "bullmq": "^5.0.0",

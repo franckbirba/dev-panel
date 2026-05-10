@@ -8,6 +8,7 @@ import { createRouter } from './routes.js';
 import { mountDevBotsRoutes } from './routes-dev-bots.js';
 import { mountGitHubWebhook } from './webhooks-github.js';
 import { mountGlitchTipWebhook } from './webhooks-glitchtip.js';
+import { mountChat } from './chat.js';
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
@@ -77,10 +78,15 @@ export function createServer(storagePath = './storage') {
   // Routes
   app.use('/api', createRouter(config));
   mountDevBotsRoutes(app);
+  // /api/chat — streaming LLM proxy + MCP tool surface for apps/chat
+  mountChat(app);
 
   // Dashboard SPA
+  // - dist/dashboard/        → new chat-first surface (apps/chat, Next static export)
+  // - dist/dashboard-legacy/ → old Vite SPA, served when `?legacy=1` is on the URL
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const dashboardDistDir = path.join(__dirname, '..', '..', 'dist', 'dashboard');
+  const dashboardLegacyDir = path.join(__dirname, '..', '..', 'dist', 'dashboard-legacy');
 
   // Standalone DevPanel widget bundle — served at /widget.js so any staff
   // site can embed with a single <script> tag. 5-minute cache so bumps
@@ -101,37 +107,54 @@ export function createServer(storagePath = './storage') {
     });
   });
 
-  // Serve built dashboard assets with fallthrough.
-  // Cache strategy:
-  //   - Hashed bundles in /dashboard/assets/index-<hash>.{js,css} are
-  //     content-addressed (Vite changes the hash on every build), so they
-  //     can be cached for a year with `immutable`. Cloudflare honors this.
-  //   - Everything else under /dashboard (notably index.html) MUST NOT be
-  //     cached, otherwise Cloudflare keeps serving an index.html that
-  //     references a bundle hash we've already replaced — the symptom is
-  //     "I deployed but I still see the old version" even after a hard
-  //     refresh. Fixed 2026-05-10.
+  // Cache headers for dashboard assets — same strategy on both surfaces:
+  //   - Hashed bundles (Vite `assets/index-<hash>.{js,css}` and Next
+  //     `_next/static/<hash>/...`) are content-addressed, immutable forever.
+  //   - Everything else (notably index.html) MUST NOT be cached, otherwise
+  //     Cloudflare keeps serving an index.html that references a bundle hash
+  //     we've already replaced ("I deployed but I still see the old version").
+  //     Fixed 2026-05-10.
+  function dashboardSetHeaders(res, filePath) {
+    if (
+      /\/assets\/index-[A-Za-z0-9_-]+\.(js|css)$/.test(filePath) ||
+      /\/_next\/static\//.test(filePath)
+    ) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+
+  // Static asset serving — try the new chat dir first, then the legacy dir.
+  // `?legacy=1` only controls which `index.html` the SPA fallback returns;
+  // hashed assets are content-addressed and live in distinct paths
+  // (`_next/static/...` vs `assets/...`) so cross-fallback is safe.
+  // `index: false` prevents express.static from auto-serving index.html on
+  // bare directory hits — that needs to flow through `sendDashboardIndex`
+  // which honors `?legacy=1`.
   app.use('/dashboard', express.static(dashboardDistDir, {
     fallthrough: true,
-    setHeaders: (res, filePath) => {
-      if (/\/assets\/index-[A-Za-z0-9_-]+\.(js|css)$/.test(filePath)) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      } else {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      }
-    },
+    index: false,
+    setHeaders: dashboardSetHeaders,
+  }));
+  app.use('/dashboard', express.static(dashboardLegacyDir, {
+    fallthrough: true,
+    index: false,
+    setHeaders: dashboardSetHeaders,
   }));
 
   // SPA fallback — serve index.html for all /dashboard/* routes and root.
-  // Force no-cache so CF and browsers re-fetch every navigation. The file
-  // is small; the asset bundles it references are immutable + forever-
+  // Force no-cache so CF and browsers re-fetch on every navigation; the file
+  // is small and the asset bundles it references are immutable + forever-
   // cacheable, so this is cheap.
-  function sendDashboardIndex(_req, res) {
+  function sendDashboardIndex(req, res) {
+    const dir = req.query.legacy === '1' ? dashboardLegacyDir : dashboardDistDir;
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    res.sendFile(path.join(dashboardDistDir, 'index.html'));
+    res.sendFile(path.join(dir, 'index.html'));
   }
+  app.get('/dashboard', sendDashboardIndex);
   app.get('/dashboard/*', sendDashboardIndex);
   app.get('/', sendDashboardIndex);
 
