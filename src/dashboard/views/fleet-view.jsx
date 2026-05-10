@@ -57,6 +57,59 @@ function FleetRow({ row, active, onClick }) {
   );
 }
 
+// Totals strip — derived from the same `agents[]` already in state, so it
+// stays in sync with the row list without an extra fetch. Each cell is a
+// large tabular number over a small mono caption; color cues the state.
+function FleetTotals({ counts }) {
+  const cells = [
+    { n: counts.running, label: 'running',  color: 'var(--color-brand-glow)' },
+    { n: counts.waiting, label: 'waiting',  color: 'var(--color-warning)' },
+    { n: counts.blocked, label: 'stuck',    color: 'var(--color-error)' },
+    { n: counts.done,    label: 'done',     color: 'var(--color-success)' },
+  ];
+  return (
+    <div
+      className="flex shrink-0 border-b border-[var(--color-border-subtle)]"
+      style={{ background: 'var(--color-surface-1)' }}
+    >
+      {cells.map((c, i) => (
+        <div
+          key={c.label}
+          className="flex-1 flex flex-col gap-1 px-5 py-3"
+          style={{
+            borderRight: i < cells.length - 1 ? '1px solid var(--color-border-subtle)' : 'none',
+          }}
+        >
+          <span
+            className="font-mono"
+            style={{
+              color: c.color,
+              fontSize: 26,
+              lineHeight: 1,
+              fontWeight: 500,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            {c.n}
+          </span>
+          <span
+            className="uppercase font-mono"
+            style={{
+              color: 'var(--color-foreground-faint)',
+              fontSize: 10,
+              fontWeight: 500,
+              letterSpacing: '0.14em',
+            }}
+          >
+            {c.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FleetHeader() {
   return (
     <div
@@ -370,6 +423,8 @@ export function FleetView({ apiUrl, apiKey }) {
             <IconRefresh width={12} height={12} className="mx-auto" />
           </button>
         </div>
+
+        <FleetTotals counts={counts} />
 
         <div className="flex-1 overflow-auto">
           <div style={{ minWidth: 720 }}>
