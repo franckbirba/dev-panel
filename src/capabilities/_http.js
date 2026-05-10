@@ -24,6 +24,21 @@ export async function adminGet(path) {
   return r.json();
 }
 
+export async function adminPost(path, body) {
+  if (!ADMIN_API_KEY) throw new Error('ADMIN_API_KEY not configured');
+  const r = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'X-Admin-Key': ADMIN_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: T(),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => '');
+    throw new Error(`POST ${path} → ${r.status}${t ? ': ' + t.slice(0, 200) : ''}`);
+  }
+  return r.json();
+}
+
 export async function adminPatch(path, body) {
   if (!ADMIN_API_KEY) throw new Error('ADMIN_API_KEY not configured');
   const r = await fetch(`${API_BASE}${path}`, {

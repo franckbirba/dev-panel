@@ -28,3 +28,5 @@ export {
   DashboardThreadList,
   type DashboardThread,
 } from "./DashboardThreadList";
+export { AutoDecisionsPanel, type AutoDecision } from "./AutoDecisionsPanel";
+export { MessageChips } from "./MessageChips";

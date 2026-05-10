@@ -18,6 +18,7 @@ import {
 } from "@/components/assistant-ui/tool-group";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { MessageChips } from "@/components/devpanl/MessageChips";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -285,6 +286,10 @@ const AssistantMessage: FC = () => {
           }}
         </MessagePrimitive.GroupedParts>
         <MessageError />
+        {/* Boss-COS chips — renders 1-tap response buttons when Shelly's
+            message ends with a fenced ```chips block. SOUL.md "Suggestions
+            inline" describes the protocol. No-op on messages without it. */}
+        <MessageChips />
       </div>
 
       <div
