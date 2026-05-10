@@ -234,6 +234,7 @@
     width: 2px;
     border-radius: 0 2px 2px 0;
     background: var(--color-brand);
+    box-shadow: 0 0 8px var(--color-brand);
   }
   .sidebar-item .sidebar-icon {
     width: 16px;
