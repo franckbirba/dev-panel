@@ -27,7 +27,7 @@ import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, appendFileSync, openSync } from 'fs'
 import { homedir } from 'os'
 import { join, extname, sep } from 'path'
-import { loadActiveBots, loadAllowlist, addToAllowlist, markRevoked, touchInbound, updateOwner, recordTranscript, type DevBotRow } from './src/loader.ts'
+import { loadActiveBots, loadAllowlist, loadStudioMembers, addToAllowlist, markRevoked, touchInbound, updateOwner, recordTranscript, type DevBotRow } from './src/loader.ts'
 import { BotRegistry } from './src/registry.ts'
 import { pollRetryDelayMs } from './src/supervisor.ts'
 
@@ -35,6 +35,12 @@ import { pollRetryDelayMs } from './src/supervisor.ts'
 // every reconcile tick (30s). The gate() reads this set as well as the
 // file-based access.json allowFrom — either path admits a sender.
 let dbAllowlist: Set<string> = new Set()
+// Studio members — eligibility set for the adapter whitelist filter (Step 4
+// of agent interactivity v2). At headcount=5 we cannot rely on prompt
+// discipline alone — a topic full of human chatter would otherwise poison
+// Shelly's context and burn tokens. Drop unknown senders here, before the
+// LLM ever sees them.
+let studioMembers: Set<string> = new Set()
 
 // Stderr is connected to Claude's MCP transport — writes vanish into the
 // JSON-RPC framing buffer and never surface in any log. Mirror everything
@@ -242,7 +248,15 @@ function gate(ctx: Context, botUsername: string): GateResult {
   const senderId = String(from.id)
   const chatType = ctx.chat?.type
 
+  // Studio member fast-path: if the sender is in studio_members, they're
+  // a known peer of Franck (paired dev) and we always deliver from a DM,
+  // and pass groups/supergroups through to the existing gate logic
+  // (mention / reply checks still apply there to filter chatter).
+  // Spec: docs/superpowers/specs/2026-05-09-agent-interactivity-v2-design.md (Step 4)
+  const isStudioMember = studioMembers.has(senderId)
+
   if (chatType === 'private') {
+    if (isStudioMember) return { action: 'deliver', access }
     if (access.allowFrom.includes(senderId)) return { action: 'deliver', access }
     if (dbAllowlist.has(senderId)) return { action: 'deliver', access }
     if (access.dmPolicy === 'allowlist') return { action: 'drop' }
@@ -277,13 +291,25 @@ function gate(ctx: Context, botUsername: string): GateResult {
     const groupId = String(ctx.chat!.id)
     const policy = access.groups[groupId]
     if (!policy) return { action: 'drop' }
+
+    // In group chats, studio_members are eligible by default — but we
+    // still require mention/reply addressing to avoid Shelly chiming
+    // in on every team conversation. Per spec: "default-ignore in
+    // topics unless addressed (@shelly, reply-to-her, or [thread:…]
+    // tag matches in-flight subject)."
     const groupAllowFrom = policy.allowFrom ?? []
+    const memberCanPass = isStudioMember || groupAllowFrom.length === 0 || groupAllowFrom.includes(senderId)
+    if (!memberCanPass) return { action: 'drop' }
+
     const requireMention = policy.requireMention ?? true
-    if (groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) {
-      return { action: 'drop' }
-    }
-    if (requireMention && !isMentioned(ctx, botUsername, access.mentionPatterns)) {
-      return { action: 'drop' }
+    if (requireMention) {
+      const hasMention = isMentioned(ctx, botUsername, access.mentionPatterns)
+      const isReplyToBot = ctx.message?.reply_to_message?.from?.is_bot === true
+      const text = ctx.message?.text ?? ctx.message?.caption ?? ''
+      const hasThreadTag = /^\[thread:[a-z_-]+\/[^\]\s]+\]/i.test(text)
+      if (!hasMention && !isReplyToBot && !hasThreadTag) {
+        return { action: 'drop' }
+      }
     }
     return { action: 'deliver', access }
   }
@@ -1323,9 +1349,12 @@ const registry = new BotRegistry({
 
 async function reconcileLoop(): Promise<void> {
   try {
-    const [next, allow] = await Promise.all([loadActiveBots(), loadAllowlist()])
+    const [next, allow, studio] = await Promise.all([
+      loadActiveBots(), loadAllowlist(), loadStudioMembers(),
+    ])
     await registry.reconcile(next)
     dbAllowlist = allow
+    studioMembers = studio
   } catch (err) {
     log(`telegram-multi: reconcile failed: ${err}`)
   }
