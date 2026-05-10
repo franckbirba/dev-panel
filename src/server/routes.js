@@ -1162,7 +1162,7 @@ export function createRouter(config = {}) {
   defineTeamRoutes(router, authenticateProject);
   defineInboxRoutes(router, authenticateProject);
   defineMemoryRoutes(router, authenticateProject);
-  defineFleetRoutes(router, authenticateProject);
+  defineFleetRoutes(router, authenticateProject, authenticateAdmin);
   defineCommandRoutes(router, authenticateProject);
   defineWidgetRoutes(router);
   defineWidgetBridgeRoutes(router, authenticateProject);

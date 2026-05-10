@@ -51,6 +51,7 @@ import {
 import { resolveProjectByName, projectFetch } from './projects.js';
 import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
+import { makeAwaitHuman, awaitHumanSchema } from './await-human.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -1729,6 +1730,42 @@ server.tool(
     }
   }
 );
+
+// ============================================================================
+// HITL — agent asks a human a question and waits for the answer.
+// Spec: docs/superpowers/specs/2026-05-09-agent-interactivity-v2-design.md
+// ============================================================================
+
+// JOB_ID is injected by the worker at spawn time (src/worker/index.js:203).
+// Without it the tool can't know which job's inbox to write to, so we
+// register it conditionally — agents running outside a worker context (e.g.
+// human-driven Shelly sessions) won't see this tool.
+if (process.env.JOB_ID && ADMIN_API_KEY) {
+  const awaitHumanImpl = makeAwaitHuman({
+    apiBase: API_BASE,
+    adminKey: ADMIN_API_KEY,
+    jobId: process.env.JOB_ID,
+    workItemId: process.env.WORK_ITEM_ID || null,
+    workflowName: process.env.WORKFLOW_NAME || null,
+  });
+
+  server.tool(
+    'await_human',
+    'Pause and ask the human a question. The agent blocks here until a reply lands (via dashboard or Telegram), or until timeout. Use for: ambiguity you cannot resolve safely, decisions outside your authority (deploy, prod schema), confirmations before destructive ops. Return is { answer, source } — answer is the human\'s text, source is "human" or "timeout-default". One question per call. Be specific in the prompt.',
+    awaitHumanSchema(),
+    async (args) => {
+      try {
+        const result = await awaitHumanImpl(args);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `await_human failed: ${err.message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
 
 // ============================================================================
 // START

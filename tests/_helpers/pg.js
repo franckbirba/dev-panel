@@ -21,6 +21,7 @@ const MIGRATIONS = [
   resolve(__dirname, '../../infra/migrations/004-dev-bots.sql'),
   resolve(__dirname, '../../infra/migrations/005-dev-bot-allowlist.sql'),
   resolve(__dirname, '../../infra/migrations/006-team-routing.sql'),
+  resolve(__dirname, '../../infra/migrations/010-job-inbox.sql'),
 ];
 
 let containerId = null;
@@ -97,7 +98,7 @@ export async function stopPg() {
 export async function truncateOrchestration() {
   if (!poolRef) throw new Error('startPg() must be called first');
   await poolRef.query(
-    `TRUNCATE workflow_instances, agent_job_log, agent_job_events, agent_memory_writes RESTART IDENTITY`
+    `TRUNCATE workflow_instances, agent_job_log, agent_job_events, agent_memory_writes, job_inbox RESTART IDENTITY`
   );
 }
 
