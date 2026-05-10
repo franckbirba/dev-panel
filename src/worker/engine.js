@@ -1,5 +1,5 @@
 // src/worker/engine.js
-import { readdirSync, readFileSync } from 'fs';
+import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseYAML } from 'yaml';
@@ -10,6 +10,52 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WORKFLOW_DIR = join(__dirname, 'workflows');
+
+// In-process cache for loaded workflows, keyed by dir. Tracks the newest YAML
+// mtime seen at load time and reloads whenever any YAML on disk is newer.
+//
+// Why: pre-2026-05-09 the worker cached `loadWorkflows()` result for the
+// process lifetime. A deploy that updated merge-coordinator.yaml (e.g. PR #67
+// adding `next: builder` for conflict bails) was effectively invisible until
+// somebody manually `systemctl restart devpanel-worker.service`. PR #17 / #18
+// burned ~30h of merge-coordinator → "blocked terminal" loops because of this
+// alone. mtime check is one statSync per YAML per call, negligible.
+const _cache = new Map(); // dir -> { flows, mtimeMs }
+
+function newestMtime(dir) {
+  const files = readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+  let max = 0;
+  for (const f of files) {
+    const m = statSync(join(dir, f)).mtimeMs;
+    if (m > max) max = m;
+  }
+  return max;
+}
+
+/**
+ * Cached loadWorkflows(): reuses the parsed flows when no YAML on disk has
+ * changed since the last call. Use this from the hot path (dispatch.js,
+ * automation.js); call loadWorkflows() directly only if a fresh, never-cached
+ * read is required (tests).
+ */
+export function getCachedWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
+  const cached = _cache.get(dir);
+  let mtime;
+  try { mtime = newestMtime(dir); }
+  catch (e) {
+    // Workflow dir gone / unreadable. If we have a cached copy fall back to
+    // it — better than crashing the engine on a transient FS hiccup.
+    if (cached) return cached.flows;
+    throw e;
+  }
+  if (cached && cached.mtimeMs >= mtime) return cached.flows;
+  const flows = loadWorkflows(dir);
+  _cache.set(dir, { flows, mtimeMs: mtime });
+  return flows;
+}
+
+// Test seam: clear the cache between cases that fiddle with workflow YAMLs.
+export function __resetWorkflowCacheForTests() { _cache.clear(); }
 
 export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
   const files = readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));

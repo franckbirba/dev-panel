@@ -65,6 +65,7 @@ async function loadAutomation() {
   }));
   vi.doMock('../../src/worker/engine.js', () => ({
     loadWorkflows: vi.fn(() => ({})),
+    getCachedWorkflows: vi.fn(() => ({})),
     triggerNext: vi.fn(async () => ({ action: 'no-workflow' }))
   }));
   vi.doMock('../../src/server/bullmq.js', () => ({
@@ -225,6 +226,7 @@ describe('verifyDiffOrDowngrade — exposed via runAutomation', () => {
     vi.doMock('../../src/server/alerts.js', () => ({ notifyJob: vi.fn(async () => {}) }));
     vi.doMock('../../src/worker/engine.js', () => ({
       loadWorkflows: vi.fn(() => ({})),
+      getCachedWorkflows: vi.fn(() => ({})),
       triggerNext: vi.fn(async () => ({ action: 'no-workflow' }))
     }));
     vi.doMock('../../src/server/bullmq.js', () => ({
@@ -281,6 +283,7 @@ describe('verifyDiffOrDowngrade — exposed via runAutomation', () => {
     vi.doMock('../../src/server/alerts.js', () => ({ notifyJob: vi.fn(async () => {}) }));
     vi.doMock('../../src/worker/engine.js', () => ({
       loadWorkflows: vi.fn(() => ({})),
+      getCachedWorkflows: vi.fn(() => ({})),
       triggerNext: vi.fn(async () => ({ action: 'no-workflow' }))
     }));
     vi.doMock('../../src/server/bullmq.js', () => ({
@@ -342,7 +345,7 @@ describe('verifyDiffOrDowngrade — exposed via runAutomation', () => {
     }));
     vi.doMock('../../src/server/alerts.js', () => ({ notifyJob: vi.fn(async () => {}) }));
     vi.doMock('../../src/worker/engine.js', () => ({
-      loadWorkflows: vi.fn(() => ({})), triggerNext: vi.fn(async () => ({}))
+      loadWorkflows: vi.fn(() => ({})), getCachedWorkflows: vi.fn(() => ({})), triggerNext: vi.fn(async () => ({}))
     }));
     vi.doMock('../../src/server/bullmq.js', () => ({
       getQueue: vi.fn(() => ({ add: vi.fn() })),
@@ -394,6 +397,7 @@ describe('verifyDiffOrDowngrade — exposed via runAutomation', () => {
     vi.doMock('../../src/server/alerts.js', () => ({ notifyJob: vi.fn(async () => {}) }));
     vi.doMock('../../src/worker/engine.js', () => ({
       loadWorkflows: vi.fn(() => ({})),
+      getCachedWorkflows: vi.fn(() => ({})),
       triggerNext: vi.fn(async () => ({ action: 'no-workflow' }))
     }));
     vi.doMock('../../src/server/bullmq.js', () => ({
