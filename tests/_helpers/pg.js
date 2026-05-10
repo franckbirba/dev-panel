@@ -23,6 +23,7 @@ const MIGRATIONS = [
   resolve(__dirname, '../../infra/migrations/006-team-routing.sql'),
   resolve(__dirname, '../../infra/migrations/010-job-inbox.sql'),
   resolve(__dirname, '../../infra/migrations/011-telegram-pending-replies.sql'),
+  resolve(__dirname, '../../infra/migrations/012-studio-members.sql'),
 ];
 
 let containerId = null;
@@ -108,6 +109,11 @@ export async function truncateTeam() {
   await poolRef.query(
     `TRUNCATE team_routing, team_members, dev_bot_allowlist, dev_bots RESTART IDENTITY CASCADE`
   );
+}
+
+export async function truncateStudioMembers() {
+  if (!poolRef) throw new Error('startPg() must be called first');
+  await poolRef.query(`TRUNCATE studio_members RESTART IDENTITY`);
 }
 
 export function getPool() {
