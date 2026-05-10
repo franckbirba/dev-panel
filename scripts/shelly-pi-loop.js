@@ -231,7 +231,15 @@ function runPiForMessage(row) {
         // extension instead, which uses the HTTP Bot API directly.
         PI_MCP_CONFIG: process.env.SHELLY_MCP_CONFIG || join(homedir(), '.mcp-shelly-pi.json'),
         SHELLY_MODE: 'pi',
-        INBOUND_TRANSCRIPT_ID: String(row.id)
+        INBOUND_TRANSCRIPT_ID: String(row.id),
+        // Safety-net context for the telegram-out extension's reply-fallback
+        // hook. If Qwen3 emits text but forgets to call reply (chronic
+        // failure mode on Qwen3-Coder), the hook synthesizes the call from
+        // the assistant text using these values. Without them the safety
+        // net silently degrades to no-op.
+        INBOUND_BOT_LABEL: row.bot_label || '',
+        INBOUND_CHAT_ID: String(row.tg_chat_id || ''),
+        INBOUND_MESSAGE_ID: String(row.tg_message_id || '')
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });

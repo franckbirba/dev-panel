@@ -298,11 +298,91 @@ const downloadAttachment = defineTool({
 // keep readFileSync imported in case future tools (sendDocument, sendPhoto) need it.
 void readFileSync;
 
+/**
+ * Reply-fallback safety net.
+ *
+ * Qwen3-Coder chronically generates user-facing answers as plain assistant
+ * text instead of calling the `reply` tool — even with a hardened
+ * imperative in the system prompt and a "REQUIRED" tool description.
+ * Observed across multiple Telegram inbounds 2026-05-10 (e.g. "Do you see
+ * your tools?" → 200-token plain-text response, no tool call, user saw
+ * nothing).
+ *
+ * This hook runs at `turn_end`. If the assistant's final message:
+ *   - has visible text content, AND
+ *   - made NO `reply` tool call this turn, AND
+ *   - we have INBOUND_BOT_LABEL + INBOUND_CHAT_ID env (set by
+ *     shelly-pi-loop.js per-message), THEN
+ * we send the text to Telegram ourselves via the same HTTP Bot API the
+ * `reply` tool uses. The user gets the answer; the model gets a free pass
+ * on the missing tool call.
+ *
+ * Tunable via PI_REPLY_FALLBACK=off to disable (e.g. for the worker path
+ * where there's no Telegram surface and INBOUND_* are unset anyway).
+ */
+function attachReplyFallback(pi: ExtensionAPI) {
+	if (process.env.PI_REPLY_FALLBACK === "off") return;
+	const botLabel = process.env.INBOUND_BOT_LABEL || "";
+	const chatId = process.env.INBOUND_CHAT_ID || "";
+	if (!botLabel || !chatId) return; // not running in a Telegram context
+
+	pi.on("turn_end", async (event) => {
+		const msg = event.message;
+		if (!msg || msg.role !== "assistant") return;
+		const content = (msg.content || []) as Array<{
+			type?: string;
+			text?: string;
+			name?: string;
+		}>;
+
+		// Did the model already call `reply`? If yes, we're done.
+		const calledReply = content.some(
+			(c) => (c?.type === "toolCall" || c?.type === "tool_use") && c?.name === "reply",
+		);
+		if (calledReply) return;
+
+		// Collect any plain text it emitted instead.
+		const plainText = content
+			.filter((c) => c?.type === "text" && typeof c.text === "string")
+			.map((c) => c.text as string)
+			.join("\n")
+			.trim();
+		if (!plainText) return; // nothing to deliver
+
+		// Best-effort send. Don't throw — we don't want to crash the harness
+		// if a transient Telegram error happens during cleanup.
+		try {
+			const token = await tokenFor(botLabel);
+			const chunks: string[] = [];
+			let s = plainText;
+			while (s.length > 4096) {
+				chunks.push(s.slice(0, 4096));
+				s = s.slice(4096);
+			}
+			chunks.push(s);
+			for (const chunk of chunks) {
+				await tgCall(token, "sendMessage", {
+					chat_id: chatId,
+					text: chunk,
+				});
+			}
+			console.error(
+				`[telegram-out] reply-fallback delivered ${plainText.length} chars to bot=${botLabel} chat=${chatId} (Qwen3 forgot to call reply)`,
+			);
+		} catch (err) {
+			console.error(
+				`[telegram-out] reply-fallback FAILED: ${(err as Error).message} — message lost`,
+			);
+		}
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool(reply);
 	pi.registerTool(react);
 	pi.registerTool(editMessage);
 	pi.registerTool(downloadAttachment);
+	attachReplyFallback(pi);
 	process.on("exit", () => {
 		void pool.end().catch(() => undefined);
 	});
