@@ -101,16 +101,39 @@ export function createServer(storagePath = './storage') {
     });
   });
 
-  // Serve built dashboard assets with fallthrough
-  app.use('/dashboard', express.static(dashboardDistDir, { fallthrough: true }));
+  // Serve built dashboard assets with fallthrough.
+  // Cache strategy:
+  //   - Hashed bundles in /dashboard/assets/index-<hash>.{js,css} are
+  //     content-addressed (Vite changes the hash on every build), so they
+  //     can be cached for a year with `immutable`. Cloudflare honors this.
+  //   - Everything else under /dashboard (notably index.html) MUST NOT be
+  //     cached, otherwise Cloudflare keeps serving an index.html that
+  //     references a bundle hash we've already replaced — the symptom is
+  //     "I deployed but I still see the old version" even after a hard
+  //     refresh. Fixed 2026-05-10.
+  app.use('/dashboard', express.static(dashboardDistDir, {
+    fallthrough: true,
+    setHeaders: (res, filePath) => {
+      if (/\/assets\/index-[A-Za-z0-9_-]+\.(js|css)$/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+    },
+  }));
 
-  // SPA fallback — serve index.html for all /dashboard/* routes and root
-  app.get('/dashboard/*', (req, res) => {
+  // SPA fallback — serve index.html for all /dashboard/* routes and root.
+  // Force no-cache so CF and browsers re-fetch every navigation. The file
+  // is small; the asset bundles it references are immutable + forever-
+  // cacheable, so this is cheap.
+  function sendDashboardIndex(_req, res) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(dashboardDistDir, 'index.html'));
-  });
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(dashboardDistDir, 'index.html'));
-  });
+  }
+  app.get('/dashboard/*', sendDashboardIndex);
+  app.get('/', sendDashboardIndex);
 
   return { app, config };
 }
