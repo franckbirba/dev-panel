@@ -1168,6 +1168,36 @@ export function createRouter(config = {}) {
   defineWidgetBridgeRoutes(router, authenticateProject);
 
   // ============================================================================
+  // TRANSCRIPT RECENT — last N minutes of Shelly's verbatim Telegram log.
+  // Powers the dashboard's fleet-live phone-mirror panel: the user wants
+  // to see the same conversation Telegram shows, without leaving the
+  // dashboard. Project-keyed because it's UI-bound, not admin tooling.
+  // ============================================================================
+  router.get('/transcript/recent', authenticateProject, async (req, res) => {
+    const minutes = Math.max(5, Math.min(1440, parseInt(req.query.minutes, 10) || 240));
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    try {
+      const { transcriptRange } = await import('./pg.js');
+      const rows = await transcriptRange({ since, limit });
+      // Reverse so callers can render in chronological order without sorting.
+      const messages = rows.slice().sort((a, b) => new Date(a.ts) - new Date(b.ts)).map(r => ({
+        id: r.id,
+        created_at: r.ts,
+        bot_label: r.bot_label,
+        direction: r.direction,
+        role: r.role,
+        thread_subject: r.thread_subject,
+        content: r.content,
+      }));
+      res.json({ messages });
+    } catch (e) {
+      console.warn('[transcript/recent]', e.message);
+      res.json({ messages: [], degraded: true, error: e.message });
+    }
+  });
+
+  // ============================================================================
   // TODAY VIEW — single actionable feed across the whole team.
   // Aggregates from three sources: workflow_instances (engine state),
   // BullMQ agents queue (job-level failures), and per-project tickets.
