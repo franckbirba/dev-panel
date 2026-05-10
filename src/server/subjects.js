@@ -6,7 +6,11 @@
 import { getMasterDatabase } from './db.js';
 
 const VALID_PRIORITIES = new Set(['now', 'today', 'later', null]);
-const VALID_SUBJECT_TYPES = new Set(['work_item', 'capture', 'ticket', 'pr', 'deploy', 'job', 'widget_session']);
+// 'dashboard' is the synthetic per-SSO-user subject for the chat-first
+// dashboard's freeform thread (DEVPA-204 part 1). Each dashboard subject
+// row is keyed by the user's email, has no project_id, and exists only
+// to satisfy the threads.subject_id FK.
+const VALID_SUBJECT_TYPES = new Set(['work_item', 'capture', 'ticket', 'pr', 'deploy', 'job', 'widget_session', 'dashboard']);
 
 export function upsertSubject({ subject_type, subject_id, project_id, title }) {
   if (!VALID_SUBJECT_TYPES.has(subject_type)) {

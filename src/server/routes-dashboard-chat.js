@@ -31,7 +31,33 @@ import {
   listMessages,
   appendMessage,
 } from './threads.js';
+import { upsertSubject } from './subjects.js';
+import { getProjectByName } from './db.js';
 import { requireForwardedUser } from './middleware/require-forwarded-user.js';
+
+// Dashboard subjects are synthetic — one per SSO user. The schema's
+// project_id NOT NULL FK forces a real project, so we anchor every
+// dashboard subject on the `dev-panel` project itself (the chat is
+// part of devpanel-the-product). ensureDashboardSubject is idempotent.
+let cachedDevPanelProjectId = null;
+function getDevPanelProjectId() {
+  if (cachedDevPanelProjectId) return cachedDevPanelProjectId;
+  const proj = getProjectByName('dev-panel');
+  if (!proj) {
+    throw new Error('dev-panel project not found in projects table');
+  }
+  cachedDevPanelProjectId = proj.id;
+  return cachedDevPanelProjectId;
+}
+
+function ensureDashboardSubject(email) {
+  upsertSubject({
+    subject_type: 'dashboard',
+    subject_id: email,
+    project_id: getDevPanelProjectId(),
+    title: email,
+  });
+}
 
 const PROVIDER = process.env.LLM_PROVIDER ?? 'deepinfra';
 const MODEL = process.env.LLM_MODEL ?? (PROVIDER === 'openai'
@@ -140,6 +166,7 @@ export function mountDashboardChat(app) {
   router.get('/chat/history', requireForwardedUser, (req, res) => {
     try {
       const subjectId = req.user.email;
+      ensureDashboardSubject(subjectId);
       const thread = getOrCreateThread('dashboard', subjectId);
       const rows = listMessages(thread.thread_id);
       const messages = rowsToUIMessages(rows);
@@ -156,6 +183,7 @@ export function mountDashboardChat(app) {
   router.post('/chat/turn', requireForwardedUser, async (req, res) => {
     try {
       const subjectId = req.user.email;
+      ensureDashboardSubject(subjectId);
       const thread = getOrCreateThread('dashboard', subjectId);
       const { messages, system, tools } = req.body ?? {};
 
