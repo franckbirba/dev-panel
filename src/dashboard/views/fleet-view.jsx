@@ -119,6 +119,7 @@ function FleetTotals({ counts }) {
 const STATE_NARRATION = {
   running:           { prefix: 'now',     fg: 'var(--color-brand-glow)' },
   awaiting_approval: { prefix: 'waiting', fg: 'var(--color-warning)'    },
+  awaiting_input:    { prefix: 'asking',  fg: 'var(--color-info)'       },
   blocked:           { prefix: 'stuck',   fg: 'var(--color-error)'      },
   exhausted:         { prefix: 'stuck',   fg: 'var(--color-error)'      },
   done:              { prefix: 'done',    fg: 'var(--color-success)'    },
@@ -148,13 +149,14 @@ function ProgressBar({ status }) {
       </div>
     );
   }
-  if (status === 'awaiting_approval') {
+  if (status === 'awaiting_approval' || status === 'awaiting_input') {
+    const tone = status === 'awaiting_input' ? 'var(--color-info)' : 'var(--color-warning)';
     return (
       <div style={baseStyle}>
         <div style={{
           position: 'absolute', inset: 0,
-          background: 'var(--color-warning)',
-          boxShadow: '0 0 10px var(--color-warning)',
+          background: tone,
+          boxShadow: `0 0 10px ${tone}`,
         }} />
       </div>
     );
@@ -173,10 +175,11 @@ function ProgressBar({ status }) {
 function FleetCard({ row, active, onClick, onAction }) {
   const tone = STATUS_TONE[row.status] || STATUS_TONE.cancelled;
   const narr = STATE_NARRATION[row.status] || STATE_NARRATION.cancelled;
-  const isWaiting = row.status === 'awaiting_approval';
-  const isBlocked = ['blocked', 'exhausted'].includes(row.status);
-  const isRunning = row.status === 'running';
-  const isTerminal = ['done', 'cancelled'].includes(row.status);
+  const isWaiting       = row.status === 'awaiting_approval';
+  const isAwaitingInput = row.status === 'awaiting_input';
+  const isBlocked       = ['blocked', 'exhausted'].includes(row.status);
+  const isRunning       = row.status === 'running';
+  const isTerminal      = ['done', 'cancelled'].includes(row.status);
 
   // Pick the most informative narration: current_step is the live "what".
   // Fall back to last_step_error for blocked rows since the error is the
@@ -258,10 +261,11 @@ function FleetCard({ row, active, onClick, onAction }) {
       </div>
 
       <div className="flex flex-col gap-1.5 items-end">
-        {isWaiting  && btn('Approve', 'go',     () => onAction(row, 'approve'))}
-        {isBlocked  && btn('Retry',   'go',     () => onAction(row, 'retry'))}
-        {isRunning  && btn('Tail',    'ghost',  () => onAction(row, 'tail'))}
-        {isWaiting  && btn('Tail',    'ghost',  () => onAction(row, 'tail'))}
+        {isWaiting       && btn('Approve', 'go',    () => onAction(row, 'approve'))}
+        {isAwaitingInput && btn('Reply',   'go',    () => onAction(row, 'tail'))}
+        {isBlocked       && btn('Retry',   'go',    () => onAction(row, 'retry'))}
+        {isRunning       && btn('Tail',    'ghost', () => onAction(row, 'tail'))}
+        {isWaiting       && btn('Tail',    'ghost', () => onAction(row, 'tail'))}
         {!isTerminal && btn('Cancel', 'danger', () => onAction(row, 'cancel'))}
       </div>
     </div>
