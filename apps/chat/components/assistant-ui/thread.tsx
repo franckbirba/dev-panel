@@ -265,7 +265,7 @@ const AssistantMessage: FC = () => {
               }
               case "group-tool":
                 return (
-                  <ToolGroupRoot>
+                  <ToolGroupRoot defaultOpen={true}>
                     <ToolGroupTrigger
                       count={part.indices.length}
                       active={part.status.type === "running"}
