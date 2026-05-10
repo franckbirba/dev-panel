@@ -9,6 +9,7 @@ import { mountDevBotsRoutes } from './routes-dev-bots.js';
 import { mountGitHubWebhook } from './webhooks-github.js';
 import { mountGlitchTipWebhook } from './webhooks-glitchtip.js';
 import { mountChat } from './chat.js';
+import { mountDashboardChat } from './routes-dashboard-chat.js';
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
@@ -80,6 +81,8 @@ export function createServer(storagePath = './storage') {
   mountDevBotsRoutes(app);
   // /api/chat — streaming LLM proxy + MCP tool surface for apps/chat
   mountChat(app);
+  // /api/dashboard/chat/* — SSO-gated thread persistence for the browser chat
+  mountDashboardChat(app);
 
   // Dashboard SPA
   // - dist/dashboard/        → new chat-first surface (apps/chat, Next static export)

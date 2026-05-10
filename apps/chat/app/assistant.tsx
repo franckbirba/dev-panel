@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   useChatRuntime,
@@ -28,22 +28,70 @@ const INITIAL_USAGE: UsageSnapshot = {
   provider: "Qwen3-Coder · DeepInfra",
 };
 
+type HistoryMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  parts: Array<{ type: "text"; text: string }>;
+};
+
 export const Assistant = () => {
   const [providerId, setProviderId] = useState<string>(
     "deepinfra:Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
   );
   const [usage] = useState<UsageSnapshot>(INITIAL_USAGE);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [seedMessages, setSeedMessages] = useState<HistoryMessage[]>([]);
+
+  // Load the persisted thread once on boot. SSO-gated; if the user is
+  // signed in via Google (Traefik forwards X-Forwarded-User), the server
+  // returns the freeform `dashboard/<email>` thread. On 401 (logged-out
+  // / dev-localhost) we fall through to in-memory.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/dashboard/chat/history", { credentials: "include" })
+      .then(async (r) => {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.messages?.length) {
+          setSeedMessages(data.messages as HistoryMessage[]);
+        }
+        setHistoryLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const runtime = useChatRuntime({
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // Each turn POSTs the full transcript; the server persists the latest
+    // user msg + the assistant reply on stream finish.
     transport: new AssistantChatTransport({
-      api: "/api/chat",
-      // The /api/chat route reads LLM_PROVIDER + LLM_MODEL server-side;
-      // forwarding the user's choice as a body field is the next step
-      // (DEVPA-206 backend). The dropdown ships the visible primitive now.
+      api: "/api/dashboard/chat/turn",
+      credentials: "include",
       headers: { "x-devpanl-provider": providerId },
     }),
+    initialMessages: seedMessages.length > 0 ? seedMessages : undefined,
   });
+
+  // Wait for history fetch to settle before mounting the runtime so we
+  // don't show an empty thread, then have it suddenly populate. If the
+  // request fails or returns nothing, mount with an empty initial state.
+  if (!historyLoaded) {
+    return (
+      <div className="flex h-dvh items-center justify-center">
+        <p className="font-mono text-[11px] text-[var(--color-foreground-faint)]">
+          loading thread…
+        </p>
+      </div>
+    );
+  }
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
