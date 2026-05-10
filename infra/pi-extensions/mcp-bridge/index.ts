@@ -87,17 +87,22 @@ function resolveConfigPath(): string {
 }
 
 /**
- * Mechanical de-dup: scan sibling pi-extensions/*/package.json for
- * `pi.compositeReplaces` arrays. Each composite extension declares which
- * raw `mcp__<server>__<tool>` proxies it replaces; mcp-bridge skips
- * registering those, so Qwen3 sees only the composite — no two surfaces
- * for the same capability (per franck-architect 2026-05-10).
+ * Mechanical de-dup: scan sibling pi-extensions sub-directories for
+ * `package.json` files containing `pi.compositeReplaces` arrays. Each
+ * composite extension declares which raw `mcp__<server>__<tool>` proxies
+ * it replaces; mcp-bridge skips registering those, so Qwen3 sees only
+ * the composite — no two surfaces for the same capability (per
+ * franck-architect 2026-05-10).
  *
  * The scan walks UP from this file's directory until it finds the
- * `pi-extensions/` parent, then enumerates siblings. Robust to being
+ * `pi-extensions` parent, then enumerates siblings. Robust to being
  * loaded via jiti from any cwd. Falls back gracefully (returns empty
  * set) if anything's off — composites missing their declaration just
  * means duplicate tools, not a crash.
+ *
+ * (note: avoid writing the literal glob pattern "pi-extensions slash
+ * star slash package dot json" in this comment — the embedded star slash
+ * closes JSDoc and makes jiti parse "package" as code, ParseError.)
  */
 function loadCompositeReplaces(): Set<string> {
 	const replaced = new Set<string>();
