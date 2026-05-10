@@ -27,10 +27,13 @@ function useCaptureActionHandler() {
   const runtime = useThreadRuntime();
   return (action: "approve" | "defer" | "promote" | "talk", id: string) => {
     const prompts: Record<typeof action, string> = {
-      talk: `Let's dig into capture ${id}. Pull the full content + thread history if any, suggest the next move.`,
-      promote: `Promote capture ${id} to a Plane work item. Draft title/description/priority first, then ask me before creating.`,
-      approve: `Approve capture ${id} as-is — mark it triaged, no work item needed yet.`,
-      defer: `Defer capture ${id}. Mark it as not-now, brief reason if obvious.`,
+      // Explicit tool nudges so the LLM doesn't fish through the wrong
+      // capability — capture_detail is the by-id read; promote_capture is
+      // the stitched create+patch verb.
+      talk: `Use capture_detail with capture_id="${id}" to load the full capture, then suggest the next move in one short sentence (don't restate the card content).`,
+      promote: `Use capture_detail with capture_id="${id}" first to read the full content. Then draft a Plane work-item title/description/priority and ask me before calling promote_capture.`,
+      approve: `Approve capture ${id} as-is — confirm the action briefly without restating the capture content.`,
+      defer: `Defer capture ${id}. One-line reason if obvious; otherwise ask me.`,
     };
     runtime.append({
       role: "user",
@@ -129,6 +132,27 @@ const CaptureListUI = makeAssistantToolUI<unknown, unknown>({
     if (!data || status.type === "running")
       return <ToolFallback toolName="capture_list" args={args} result={result} status={status} />;
     return <CaptureListView captures={data.captures ?? []} />;
+  },
+});
+
+function CaptureDetailView({ capture }: { capture: Parameters<typeof CaptureCard>[0]["capture"] }) {
+  const onAction = useCaptureActionHandler();
+  return (
+    <div className="my-2">
+      <CaptureCard capture={capture} onAction={onAction} />
+    </div>
+  );
+}
+
+const CaptureDetailUI = makeAssistantToolUI<unknown, unknown>({
+  toolName: "capture_detail",
+  render: ({ result, args, status }) => {
+    const data = parseToolText(result) as
+      | Parameters<typeof CaptureCard>[0]["capture"]
+      | null;
+    if (!data || status.type === "running")
+      return <ToolFallback toolName="capture_detail" args={args} result={result} status={status} />;
+    return <CaptureDetailView capture={data} />;
   },
 });
 
@@ -333,6 +357,7 @@ export function ToolUIRegistry() {
     <>
       <TriageInboxUI />
       <CaptureListUI />
+      <CaptureDetailUI />
       <WorkItemDetailUI />
       <CycleOverviewUI />
       <FleetStatusUI />

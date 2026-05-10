@@ -30,6 +30,7 @@ import { cycleOverview } from './cycle-overview.js';
 import { workItemDetail } from './work-item-detail.js';
 import { fleetStatus } from './fleet-status.js';
 import { captureList } from './capture-list.js';
+import { captureDetail } from './capture-detail.js';
 import { dispatchWorkItem } from './dispatch-work-item.js';
 import { tailLogSnapshot } from './tail-log-snapshot.js';
 import { runRemoteCheck } from './run-remote-check.js';
@@ -41,6 +42,7 @@ export const CAPABILITIES = [
   workItemDetail,
   fleetStatus,
   captureList,
+  captureDetail,
   promoteCapture,
   dispatchWorkItem,
   tailLogSnapshot,

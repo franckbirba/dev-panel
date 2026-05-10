@@ -825,6 +825,19 @@ export function createRouter(config = {}) {
     }
   });
 
+  // Admin per-capture detail. The project-keyed /captures/:id requires the
+  // project's API key, which the chat handler doesn't carry — admin path
+  // lets the `capture_detail` capability look up by uuid alone.
+  router.get('/admin/captures/:id', authenticateAdmin, (req, res) => {
+    try {
+      const cap = getCapture(req.params.id);
+      if (!cap) return res.status(404).json({ error: 'capture not found' });
+      res.json({ capture: cap });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ============================================================================
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
