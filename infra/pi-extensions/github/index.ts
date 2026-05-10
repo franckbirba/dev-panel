@@ -320,7 +320,7 @@ const ghPrMerge = defineTool({
 	name: "gh_pr_merge",
 	label: "GitHub PR merge",
 	description:
-		"Merge a PR. Default method is 'squash'. For builders this is rarely the right tool — the merge-coordinator workflow handles merges. Surface this only if explicitly asked.",
+		"Merge a PR. Default method is 'squash'. For builders this is rarely the right tool — the merge-coordinator workflow handles merges. Surface this only if explicitly asked. Supports --match-head-commit for race-safe merges (aborts if a new push raced in) and an optional commit body that is passed via --body-file (no shell escaping).",
 	parameters: Type.Object({
 		number: Type.Number({ description: "PR number" }),
 		method: Type.Optional(
@@ -332,16 +332,49 @@ const ghPrMerge = defineTool({
 		delete_branch: Type.Optional(
 			Type.Boolean({ description: "Delete branch after merge (default: true)" }),
 		),
+		match_head_commit: Type.Optional(
+			Type.String({
+				description:
+					"SHA of the head commit you observed via gh_pr_view. If the PR's head has moved since you checked, the merge aborts (gh exits non-zero) — race-safe pattern for the merge-coordinator. Omit for non-race-sensitive merges.",
+			}),
+		),
+		body: Type.String({
+			description:
+				"Optional merge commit body (markdown). Passed via --body-file so quotes/newlines/apostrophes are safe. Leave empty for the default behavior (gh uses the PR title/body).",
+			default: "",
+		}),
 	}),
 	async execute(_id, params, signal, _onUpdate, ctx) {
 		const method = params.method ?? "squash";
 		const args = ["pr", "merge", String(params.number), `--${method}`];
 		if (params.delete_branch !== false) args.push("--delete-branch");
-		const r = await runGh(args, ctx.cwd, signal);
-		if (r.exitCode !== 0) {
-			return err("gh pr merge", r.exitCode, r.stderr);
+		if (params.match_head_commit) {
+			args.push("--match-head-commit", params.match_head_commit);
 		}
-		return ok({ ok: true, output: r.stdout.trim() });
+		let bodyFile: string | null = null;
+		try {
+			if (params.body && params.body.length > 0) {
+				bodyFile = writeTempFile("pr-merge-body", params.body);
+				args.push("--body-file", bodyFile);
+			}
+			const r = await runGh(args, ctx.cwd, signal);
+			if (r.exitCode !== 0) {
+				const isHeadMoved = /head.*commit.*does not match|head ref oid|HEAD has changed/i.test(
+					r.stderr,
+				);
+				return err(
+					"gh pr merge",
+					r.exitCode,
+					r.stderr,
+					isHeadMoved
+						? "PR head moved since you observed it (race) — re-run gh_pr_view and decide whether to retry or block"
+						: undefined,
+				);
+			}
+			return ok({ ok: true, output: r.stdout.trim() });
+		} finally {
+			if (bodyFile) cleanupTempFile(bodyFile);
+		}
 	},
 });
 

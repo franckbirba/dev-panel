@@ -1,0 +1,10 @@
+{
+  "name": "@dev-panel/pi-ext-bash",
+  "version": "0.1.0",
+  "description": "Pi extension: bash_exec tool — general-purpose shell escape hatch for tasks not covered by structured tools (git, jq ad-hoc, system inspection). Captures stdout+stderr, enforces a timeout, refuses suspicious patterns. Without this, Pi has no shell at all and roles whose prompts say 'use bash to ...' silently no-op.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
