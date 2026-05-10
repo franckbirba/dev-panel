@@ -23,9 +23,9 @@
 // the widget path stateless and gives the browser its own durable lane.
 
 import express from 'express';
-import { createOpenAI } from '@ai-sdk/openai';
 import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
+import { resolveChatModel } from './chat-providers.js';
 import {
   getOrCreateThread,
   listMessages,
@@ -120,19 +120,10 @@ function resolveSubjectFromN(email, n) {
   return n === 1 ? email : `${email}:${n}`;
 }
 
-const PROVIDER = process.env.LLM_PROVIDER ?? 'deepinfra';
-const MODEL = process.env.LLM_MODEL ?? (PROVIDER === 'openai'
-  ? 'gpt-4o'
-  : 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo');
-
-const provider = createOpenAI({
-  apiKey: PROVIDER === 'deepinfra'
-    ? (process.env.DEEPINFRA_API_KEY ?? process.env.OPENAI_API_KEY)
-    : process.env.OPENAI_API_KEY,
-  baseURL: PROVIDER === 'deepinfra'
-    ? 'https://api.deepinfra.com/v1/openai'
-    : undefined,
-});
+// Per-request provider resolution lives in `./chat-providers.js`
+// (shared with /api/chat). Reads `x-devpanl-provider` per turn,
+// validates against an allowlist, falls back to env defaults.
+// (DEVPA-213)
 
 // Reuse the same DEFAULT_SYSTEM as /api/chat. Duplicated rather than
 // imported so this module can evolve its prompt independently if Franck
@@ -325,31 +316,52 @@ export function mountDashboardChat(app) {
       }
 
       const mcpTools = await getMCPTools();
+      const { model } = resolveChatModel(req.get('x-devpanl-provider'));
 
       const result = streamText({
-        model: provider.chat(MODEL),
+        model,
         messages: await convertToModelMessages(messages ?? []),
         system: system ?? DEFAULT_SYSTEM,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
       });
 
-      // Capture the assistant's full UIMessage (parts + tool calls + tool
-      // results) via toUIMessageStreamResponse's onFinish. We store both:
+      // Persist the assistant reply *inside* onFinish, before res.end().
+      // onFinish fires when the model has produced its final UIMessage —
+      // synchronous to the stream's drain on the server side, so the
+      // appendMessage commits before the reader-loop below ever sees
+      // `done: true`. If the Node process restarts after res.end(), the
+      // reply is already durably stored. (DEVPA-215)
+      //
+      // Stored shape:
       //   - content: text-only join, for legacy readers (Telegram bridge,
       //     `transcript_replay_recent` MCP tool, etc).
       //   - metadata.parts: the full UIMessagePart[] so reloads can
       //     re-render tool-call cards via the makeAssistantToolUI registry.
-      let finalUIMessage = null;
       const response = result.toUIMessageStreamResponse({
         sendReasoning: true,
         onFinish: ({ messages: outMessages }) => {
-          // outMessages is the *assistant* messages produced this turn.
-          // Pick the last one (multi-step tool loops can produce several).
           const last = Array.isArray(outMessages)
             ? outMessages[outMessages.length - 1]
             : null;
-          if (last) finalUIMessage = last;
+          if (!last || !Array.isArray(last.parts)) return;
+          const textOnly = last.parts
+            .filter((p) => p?.type === 'text' && typeof p.text === 'string')
+            .map((p) => p.text)
+            .join('\n')
+            .trim();
+          try {
+            appendMessage({
+              thread_id: thread.thread_id,
+              role: 'shelly',
+              source: 'web',
+              content: textOnly || '(tool calls only — see metadata.parts)',
+              metadata: { parts: last.parts },
+            });
+          } catch (e) {
+            // Best-effort — a transient DB blip must not break the stream.
+            console.warn('[dashboard-chat] persist assistant msg failed:', e.message);
+          }
         },
       });
 
@@ -364,29 +376,6 @@ export function mountDashboardChat(app) {
         res.write(Buffer.from(value));
       }
       res.end();
-
-      // Persist assistant reply *after* the stream finishes. Done after
-      // res.end() so a slow DB write can't stall the user-visible stream.
-      // Best-effort — losing one row to a transient pg blip is preferable
-      // to blocking the chat.
-      if (finalUIMessage && Array.isArray(finalUIMessage.parts)) {
-        const textOnly = finalUIMessage.parts
-          .filter((p) => p?.type === 'text' && typeof p.text === 'string')
-          .map((p) => p.text)
-          .join('\n')
-          .trim();
-        try {
-          appendMessage({
-            thread_id: thread.thread_id,
-            role: 'shelly',
-            source: 'web',
-            content: textOnly || '(tool calls only — see metadata.parts)',
-            metadata: { parts: finalUIMessage.parts },
-          });
-        } catch (e) {
-          console.warn('[dashboard-chat] persist assistant msg failed:', e.message);
-        }
-      }
     } catch (err) {
       console.error('[dashboard-chat] turn handler error:', err);
       if (!res.headersSent) res.status(500).json({ error: err.message });

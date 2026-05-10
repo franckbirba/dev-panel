@@ -51,7 +51,12 @@ export const captureDetail = {
     return {
       id: c.id,
       project_name: c.project_name,
+      // Devpanel's project_id (FK to projects.id). NOT the Plane id.
       project_id: c.project_id,
+      // Plane project UUID — required by promote_capture to create the
+      // work item in the right Plane project. May be null if this devpanel
+      // project isn't linked to a Plane project. (DEVPA-217)
+      plane_project_id: c.plane_project_id ?? null,
       kind: c.kind,
       status: c.status,
       content: c.content,

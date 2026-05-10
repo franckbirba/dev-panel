@@ -1,20 +1,6 @@
-import { createOpenAI } from '@ai-sdk/openai';
 import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
-
-const PROVIDER = process.env.LLM_PROVIDER ?? 'deepinfra';
-const MODEL = process.env.LLM_MODEL ?? (PROVIDER === 'openai'
-  ? 'gpt-4o'
-  : 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo');
-
-const provider = createOpenAI({
-  apiKey: PROVIDER === 'deepinfra'
-    ? (process.env.DEEPINFRA_API_KEY ?? process.env.OPENAI_API_KEY)
-    : process.env.OPENAI_API_KEY,
-  baseURL: PROVIDER === 'deepinfra'
-    ? 'https://api.deepinfra.com/v1/openai'
-    : undefined,
-});
+import { resolveChatModel } from './chat-providers.js';
 
 // Default system prompt — nudges the LLM toward intent-shaped capability
 // tools (the ones in `src/capabilities/`) rather than fishing through the
@@ -77,9 +63,10 @@ export function mountChat(app) {
     try {
       const { messages, system, tools } = req.body ?? {};
       const mcpTools = await getMCPTools();
+      const { model } = resolveChatModel(req.get('x-devpanl-provider'));
 
       const result = streamText({
-        model: provider.chat(MODEL),
+        model,
         messages: await convertToModelMessages(messages ?? []),
         system: system ?? DEFAULT_SYSTEM,
         tools: { ...mcpTools },

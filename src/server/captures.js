@@ -145,7 +145,17 @@ function normalizeReporter(reporter) {
 
 export function getCapture(id) {
   const db = getMasterDatabase();
-  const capture = db.prepare(`SELECT * FROM captures WHERE id = ?`).get(id);
+  // JOIN projects to surface plane_project_id + project_name. Without the
+  // plane_project_id, the chat's promote_capture capability has no way to
+  // know which Plane project to create the work item in — see DEVPA-217.
+  const capture = db.prepare(
+    `SELECT c.*,
+            p.name AS project_name,
+            p.plane_project_id AS plane_project_id
+       FROM captures c
+       JOIN projects p ON p.id = c.project_id
+      WHERE c.id = ?`
+  ).get(id);
   if (!capture) return null;
   const thread = db.prepare(
     `SELECT thread_id FROM threads WHERE subject_type='capture' AND subject_id=?`
@@ -241,8 +251,10 @@ export function listPendingForAllProjects({ limit = 50 } = {}) {
 // agents host where there is no per-project api_key.
 export function listCapturesAdmin({ project_id = null, status = null, kind = null, limit = 50 } = {}) {
   const db = getMasterDatabase();
+  // p.plane_project_id surfaced so triage_inbox / capture_detail can hand
+  // it to promote_capture without an extra round-trip. (DEVPA-217)
   let sql = `
-    SELECT c.*, p.name AS project_name
+    SELECT c.*, p.name AS project_name, p.plane_project_id AS plane_project_id
       FROM captures c
       JOIN projects p ON p.id = c.project_id
      WHERE 1=1

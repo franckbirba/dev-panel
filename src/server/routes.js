@@ -838,6 +838,22 @@ export function createRouter(config = {}) {
     }
   });
 
+  // Admin twin of PATCH /captures/:id — same allowed fields, no project-key
+  // tenancy check (admin key already gates the route). Used by the
+  // `promote_capture` capability to mark a capture promoted with the new
+  // plane_work_item_id + plane_sequence_id after the Plane WI is created.
+  // (DEVPA-217 — closes the half-baked behavior described in
+  // src/capabilities/promote-capture.js's deferred-patch comment.)
+  router.patch('/admin/captures/:id', authenticateAdmin, (req, res) => {
+    try {
+      const cap = getCapture(req.params.id);
+      if (!cap) return res.status(404).json({ error: 'capture not found' });
+      res.json(updateCapture(req.params.id, req.body || {}));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ============================================================================
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
