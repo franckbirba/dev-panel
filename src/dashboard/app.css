@@ -33,13 +33,18 @@
   --color-border: #26262e;           /* visible card borders      */
   --color-border-subtle: #1f1f26;    /* row dividers              */
   --color-input: #1c1c22;
-  --color-ring: #7c5cff;
+  --color-ring: #c8a052;
 
-  /* ── Brand (single accent, used sparingly) ─────────────── */
-  --color-brand: #7c5cff;
-  --color-brand-foreground: #ffffff;
-  --color-brand-soft: rgba(124, 92, 255, 0.12);
-  --color-brand-border: rgba(124, 92, 255, 0.32);
+  /* ── Brand (single accent, used sparingly) ───────────────
+     Brass/gilt — pulled from the Claude Design "scriptorium"
+     wireframes. Yellow-on-black reads warmer and less generic
+     than indigo, and the dark foreground is required because
+     brass at 200,160,82 doesn't carry white text legibly.    */
+  --color-brand: #c8a052;
+  --color-brand-foreground: #0a0a0b;
+  --color-brand-soft: rgba(200, 160, 82, 0.12);
+  --color-brand-border: rgba(200, 160, 82, 0.32);
+  --color-brand-glow: #e8c074;
 
   /* ── Status palette ──────────────────────────────────────
      Pure colors. Soft/border variants for tinted surfaces.     */
