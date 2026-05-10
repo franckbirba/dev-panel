@@ -202,6 +202,43 @@ export function initMasterDatabase(storagePath = './storage') {
     CREATE INDEX IF NOT EXISTS auto_decisions_recent ON auto_decisions(ts DESC);
     CREATE INDEX IF NOT EXISTS auto_decisions_project ON auto_decisions(project_id, ts DESC);
 
+    -- Universal subject graph. The studio's data lives in 11+ silos
+    -- (captures, plane work items, plane pages, AFFiNE docs, GitHub PRs +
+    -- commits, GlitchTip issues, fleet jobs, threads, memories, deploys).
+    -- subject_links is the typed-edge join table that lets Shelly traverse
+    -- between them without re-stitching by hand on every query.
+    --
+    -- Subject types (canonical): capture | work_item | plane_page |
+    --   affine_doc | pr | commit | glitchtip_issue | fleet_job | thread |
+    --   memory | auto_decision | deploy.
+    -- Subject ids: opaque strings. UUIDs for capture/work_item/etc.;
+    --   "<owner>/<repo>#<number>" for pr; "<owner>/<repo>@<sha>" for commit;
+    --   "<workspace>/<doc-id>" for affine_doc; numeric for fleet_job /
+    --   glitchtip_issue / memory / auto_decision / thread.
+    --
+    -- Edge rel (the verb): promoted_to | reports | fixed_by | implements |
+    --   ran_as | merged_as | documented_in | references | blocks | duplicate_of |
+    --   regressed_by | retroed_in | decided_in.
+    --
+    -- All edges are directed but the unified-map query reads both ways.
+    -- Idempotency via UNIQUE(from,to,rel) — the auto-population webhooks
+    -- can fire many times for the same fact without piling up duplicates.
+    CREATE TABLE IF NOT EXISTS subject_links (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_type   TEXT NOT NULL,
+      from_id     TEXT NOT NULL,
+      to_type     TEXT NOT NULL,
+      to_id       TEXT NOT NULL,
+      rel         TEXT NOT NULL,
+      source      TEXT,                        -- 'shelly' | 'webhook' | 'manual' | 'agent' | 'auto'
+      meta        TEXT,                        -- JSON sidecar for free-form context
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(from_type, from_id, to_type, to_id, rel)
+    );
+    CREATE INDEX IF NOT EXISTS subject_links_from ON subject_links(from_type, from_id);
+    CREATE INDEX IF NOT EXISTS subject_links_to ON subject_links(to_type, to_id);
+    CREATE INDEX IF NOT EXISTS subject_links_rel ON subject_links(rel, created_at DESC);
+
     -- Widget chat sessions — one row per browser-tab conversation surfaced
     -- through the embedded DevPanel widget. session_token is the opaque
     -- handle the widget passes back; thread_id binds the session to its
@@ -454,6 +491,26 @@ export function getMasterDatabase() {
     throw new Error('Master database not initialized. Call initMasterDatabase() first.');
   }
   return masterDb;
+}
+
+// Write a subject-graph edge directly. Idempotent via the UNIQUE constraint
+// on (from, to, rel) — duplicate writes from idempotent webhooks become
+// no-ops. NEVER throws — the studio's hot paths (webhooks, capability
+// handlers) don't want a graph-write failure to break a real action.
+// Returns { inserted: true|false, id?: number, error?: string }.
+export function writeSubjectLink({ from_type, from_id, to_type, to_id, rel, source = 'auto', meta = null }) {
+  if (!from_type || !from_id || !to_type || !to_id || !rel) return { inserted: false };
+  try {
+    const db = getMasterDatabase();
+    const r = db.prepare(
+      `INSERT OR IGNORE INTO subject_links (from_type, from_id, to_type, to_id, rel, source, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(from_type, String(from_id), to_type, String(to_id), rel, source, meta ? JSON.stringify(meta) : null);
+    return { inserted: r.changes > 0, id: r.lastInsertRowid };
+  } catch (e) {
+    console.warn('[subject-graph] writeSubjectLink failed:', e.message);
+    return { inserted: false, error: e.message };
+  }
 }
 
 // ============================================================================

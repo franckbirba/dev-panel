@@ -929,6 +929,102 @@ export function createRouter(config = {}) {
   });
 
   // ============================================================================
+  // SUBJECT GRAPH — universal join key across the studio's 11+ silos.
+  //
+  // The threads table already keys conversations by (subject_type, subject_id).
+  // subject_links extends that to typed edges between subjects, so Shelly can
+  // navigate from a capture → its promoted work item → linked PRs → fleet runs
+  // → memories → glitchtip issues, in one round-trip.
+  //
+  // Edge writers: webhooks (merge-coordinator, glitchtip bridge), capabilities
+  // (promote_capture writes capture→work_item), and Shelly herself when she
+  // creates an AFFiNE doc / Plane Page about a subject (subject_link MCP tool).
+  // Edge readers: subject_map MCP tool (and the SubjectConstellationCard).
+  // ============================================================================
+
+  router.get('/admin/subject-links', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const { from_type, from_id, to_type, to_id, rel } = req.query;
+      const direction = req.query.direction || 'any'; // 'from' | 'to' | 'any'
+      const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+      const clauses = [];
+      const params = [];
+      if (from_type && from_id && (direction === 'from' || direction === 'any')) {
+        clauses.push('(from_type = ? AND from_id = ?)');
+        params.push(from_type, from_id);
+      }
+      if (to_type && to_id && (direction === 'to' || direction === 'any')) {
+        if (clauses.length) {
+          clauses[clauses.length - 1] = '(' + clauses[clauses.length - 1] + ' OR (to_type = ? AND to_id = ?))';
+        } else {
+          clauses.push('(to_type = ? AND to_id = ?)');
+        }
+        params.push(to_type, to_id);
+      }
+      // If only one side given, simplify.
+      if (clauses.length === 0 && from_type && from_id) {
+        clauses.push('(from_type = ? AND from_id = ?)');
+        params.push(from_type, from_id);
+      }
+      if (clauses.length === 0 && to_type && to_id) {
+        clauses.push('(to_type = ? AND to_id = ?)');
+        params.push(to_type, to_id);
+      }
+      if (rel) { clauses.push('rel = ?'); params.push(rel); }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
+      const rows = db.prepare(
+        `SELECT id, from_type, from_id, to_type, to_id, rel, source, meta, created_at
+           FROM subject_links${where}
+          ORDER BY created_at DESC
+          LIMIT ?`
+      ).all(...params, limit).map(r => ({
+        ...r,
+        meta: r.meta ? safeJSON(r.meta) : null,
+      }));
+      res.json({ links: rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/admin/subject-links', authenticateAdmin, (req, res) => {
+    try {
+      const { from_type, from_id, to_type, to_id, rel, source = 'manual', meta = null } = req.body || {};
+      if (!from_type || !from_id || !to_type || !to_id || !rel) {
+        return res.status(400).json({ error: 'from_type, from_id, to_type, to_id, rel required' });
+      }
+      const db = getMasterDatabase();
+      // INSERT OR IGNORE so duplicate edges from idempotent webhooks don't
+      // pile up — the UNIQUE constraint catches them, we surface the
+      // existing row's id either way.
+      const stmt = db.prepare(
+        `INSERT OR IGNORE INTO subject_links (from_type, from_id, to_type, to_id, rel, source, meta)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      stmt.run(from_type, from_id, to_type, to_id, rel, source, meta ? JSON.stringify(meta) : null);
+      const row = db.prepare(
+        `SELECT id FROM subject_links
+          WHERE from_type=? AND from_id=? AND to_type=? AND to_id=? AND rel=?`
+      ).get(from_type, from_id, to_type, to_id, rel);
+      res.json({ id: row?.id, from_type, from_id, to_type, to_id, rel });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete('/admin/subject-links/:id', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const r = db.prepare('DELETE FROM subject_links WHERE id = ?').run(req.params.id);
+      if (r.changes === 0) return res.status(404).json({ error: 'not found' });
+      res.json({ deleted: Number(req.params.id) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================================
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
   // a GitHub URL, optionally links/creates a Plane project, returns a fresh

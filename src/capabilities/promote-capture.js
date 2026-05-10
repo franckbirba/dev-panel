@@ -78,6 +78,27 @@ export const promoteCapture = {
       patchError = e.message;
     }
 
+    // Subject-graph edge: capture --[promoted_to]--> work_item.
+    // Best-effort — graph write failure must not break the user-visible
+    // success of the promotion. Logged in adminPost on failure.
+    try {
+      const { adminPost } = await import('./_http.js');
+      await adminPost('/api/admin/subject-links', {
+        from_type: 'capture',
+        from_id: capture_id,
+        to_type: 'work_item',
+        to_id: created.id,
+        rel: 'promoted_to',
+        source: 'auto',
+        meta: {
+          plane_sequence_id: created.sequence_id,
+          plane_project_id: targetPlaneProject,
+        },
+      });
+    } catch (e) {
+      console.warn('[promote_capture] subject-link write failed:', e.message);
+    }
+
     return {
       // Shape matches WorkItemCard's expectations.
       id: created.id,

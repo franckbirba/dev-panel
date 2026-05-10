@@ -30,3 +30,9 @@ export {
 } from "./DashboardThreadList";
 export { AutoDecisionsPanel, type AutoDecision } from "./AutoDecisionsPanel";
 export { MessageChips } from "./MessageChips";
+export {
+  SubjectConstellationCard,
+  type Constellation,
+  type ConstellationCenter,
+  type ConstellationEdge,
+} from "./SubjectConstellationCard";
