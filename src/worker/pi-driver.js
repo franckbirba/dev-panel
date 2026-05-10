@@ -62,6 +62,11 @@ const DEFAULT_PI_BIN = process.env.PI_BIN
 //     model never has to escape strings through bash (ZENO-339 canary
 //     showed Qwen3 burning 24 retries on French apostrophes in `gh pr
 //     create`).
+//   - bash: bash_exec escape hatch. Pi 0.74 has no shell tool — without
+//     this, every role whose prompt says "use bash to ..." silently emits
+//     empty content (caught on merge-coordinator job 3029, 2026-05-10).
+//     Prefer the structured github / work-items / mcp-bridge tools first;
+//     this is the catch-all for git/jq/test commands not covered above.
 //   - loop-guard: blocks identical tool calls repeated > N times, accepts
 //     a closing-protocol marker for clean termination. Same structural
 //     fix mini-swe-agent provides via its yaml.
@@ -75,6 +80,7 @@ const DEFAULT_PI_EXTENSIONS = [
   // skips the raw equivalents (no two surfaces for the same capability).
   join(PI_EXTENSIONS_ROOT, 'work-items'),
   join(PI_EXTENSIONS_ROOT, 'github'),
+  join(PI_EXTENSIONS_ROOT, 'bash'),
   join(PI_EXTENSIONS_ROOT, 'loop-guard')
 ];
 
