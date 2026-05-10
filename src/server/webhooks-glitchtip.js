@@ -248,6 +248,28 @@ export function mountGlitchTipWebhook(app) {
           environment: issue.metadata?.environment || null
         });
 
+        // Subject-graph: capture --[reports]--> glitchtip_issue.
+        // Best-effort. The id is whatever GlitchTip sent; we coerce to
+        // string. If issue.id is missing we fall back to fingerprint so
+        // there's still a navigable handle.
+        if (result?.capture?.id) {
+          const { writeSubjectLink } = await import('./db.js');
+          const issueRef = issue.id != null ? String(issue.id) : `fp:${fingerprint}`;
+          writeSubjectLink({
+            from_type: 'capture',
+            from_id: result.capture.id,
+            to_type: 'glitchtip_issue',
+            to_id: issueRef,
+            rel: 'reports',
+            source: 'webhook',
+            meta: {
+              action,
+              permalink: issue.permalink || null,
+              environment: issue.metadata?.environment || null,
+            },
+          });
+        }
+
         return res.status(result.deduped ? 200 : 201).json({
           ok: true,
           action,

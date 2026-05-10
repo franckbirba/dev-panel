@@ -4,7 +4,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import { pool } from './pg.js';
-import { getProjectByGithubRepo } from './db.js';
+import { getProjectByGithubRepo, writeSubjectLink } from './db.js';
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 
@@ -139,9 +139,23 @@ export function mountGitHubWebhook(app) {
           return res.status(400).json({ error: 'missing repo or pr number' });
         }
 
-        // Closed + merged → release-note broadcast, never dispatch merge-coordinator.
+        // Closed + merged → release-note broadcast + record the merge edge,
+        // never dispatch merge-coordinator on closed.
         if (payload.action === 'closed') {
           if (!pr.merged) return res.status(204).end();
+          // Subject-graph: pr --[merged_as]--> commit
+          // Best-effort, ignore failure.
+          if (pr.merge_commit_sha) {
+            writeSubjectLink({
+              from_type: 'pr',
+              from_id: `${repo}#${prNumber}`,
+              to_type: 'commit',
+              to_id: `${repo}@${pr.merge_commit_sha}`,
+              rel: 'merged_as',
+              source: 'webhook',
+              meta: { merged_at: pr.merged_at, merged_by: pr.merged_by?.login || null },
+            });
+          }
           const { broadcastRelease } = await import('./release-notes.js');
           const result = await broadcastRelease({ repo, pr });
           return res.status(result.broadcast ? 202 : 204).end();
@@ -165,6 +179,27 @@ export function mountGitHubWebhook(app) {
 
         // Try to match PR to a Plane work item
         const planeRef = extractPlaneRef(branch, prTitle);
+
+        // Subject-graph: when the branch/title resolves to a Plane work
+        // item, record the work_item --[fixed_by]--> pr edge. Best-effort,
+        // never blocks the dispatch.
+        if (planeRef) {
+          // We have either a UUID directly or a sequence id like "DEVPA-217".
+          // Both go into the graph as work_item subject ids — the
+          // subject_map fan-out resolves the rest.
+          const workItemSubjectId = planeRef.type === 'uuid'
+            ? planeRef.value
+            : `${planeRef.project}-${planeRef.number}`;
+          writeSubjectLink({
+            from_type: 'work_item',
+            from_id: workItemSubjectId,
+            to_type: 'pr',
+            to_id: `${repo}#${prNumber}`,
+            rel: 'fixed_by',
+            source: 'webhook',
+            meta: { branch, title: prTitle },
+          });
+        }
 
         // Always use synthetic ID for webhook-dispatched merge-coordinators
         // so idempotence works via the unique partial index.

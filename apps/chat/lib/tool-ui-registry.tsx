@@ -7,6 +7,8 @@ import {
   FleetRowCard,
   RuntimeConsoleCard,
   SprintProgressCard,
+  SubjectConstellationCard,
+  type Constellation,
 } from "@/components/devpanl";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 
@@ -361,6 +363,16 @@ const HostStatusUI = makeAssistantToolUI<unknown, unknown>({
   },
 });
 
+const SubjectMapUI = makeAssistantToolUI<unknown, unknown>({
+  toolName: "subject_map",
+  render: ({ result, args, status }) => {
+    const data = parseToolText(result) as Constellation | null;
+    if (!data || status.type === "running" || !data.center)
+      return <ToolFallback toolName="subject_map" args={args} result={result} status={status} />;
+    return <SubjectConstellationCard data={data} />;
+  },
+});
+
 // ─── Mounted as a React tree under <ToolUIRegistry /> in app/assistant.tsx ───
 
 export function ToolUIRegistry() {
@@ -377,6 +389,7 @@ export function ToolUIRegistry() {
       <TailLogSnapshotUI />
       <RunRemoteCheckUI />
       <HostStatusUI />
+      <SubjectMapUI />
     </>
   );
 }
