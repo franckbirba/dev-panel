@@ -222,24 +222,85 @@ function toPiResult(mcpResult: {
 }
 
 /**
+ * Per-server guidelines attached to ONE tool per server (the first registered).
+ * Pi de-duplicates guideline strings, so attaching them once is enough — but
+ * we don't know which tool will be first until enumeration time. This map is
+ * consulted in `attachServerGuidelines` below; if the server has guidelines,
+ * they're spliced onto the first tool registered for that server.
+ *
+ * Why this matters: Qwen3 sees `mcp__plane-mcp__list_projects` as an opaque
+ * function name. Without these guidelines, it doesn't know "plane = Plane the
+ * work-item tracker", "use plane_dispatch_work_item to start a job", etc.
+ * Tool descriptions explain individual tools; these guidelines give Qwen3 the
+ * orchestration story across them.
+ */
+const SERVER_GUIDELINES: Record<string, string[]> = {
+	"plane-mcp": [
+		"Plane is the work-item tracker (`plane.devpanl.dev` workspace `devpanl`). Use `mcp__plane-mcp__*` tools when the user asks about work items, sprints, cycles, projects. Sequence IDs are short like `DEVPA-93` / `ZENO-42` / `EDMS-17`; UUIDs are accepted everywhere a sequence works.",
+	],
+	"devpanel-mcp": [
+		"DevPanel MCP carries every studio-internal capability: `memory_search` / `memory_write` (pgvector long-term memory shared across sessions), `enqueue_job` / `cancel_job` (BullMQ dispatch to ephemeral coding agents), `plane_dispatch_work_item` (the canonical way to start a job from a Plane sequence ID), `list_captures` / `route_capture` (triage inbox), `transcript_replay_recent` (rebuild context after restart), `glitchtip_get_issue` / `glitchtip_resolve_issue`, `thread_append`, etc.",
+		"Before a non-trivial decision (dispatching a job, dropping a capture, answering 'what did we decide on X'), call `mcp__devpanel-mcp__memory_search` with a query that summarizes intent. After a decision worth surviving the session (triage, dispatch override, retro), call `mcp__devpanel-mcp__memory_write` with kind=decision/handoff/retrospective.",
+	],
+	"affine-zeno": [
+		"AFFiNE workspace for the Zeno product. Use for long-form docs (specs, retros, runbooks). For quick work-item-attached notes prefer Plane Pages instead.",
+	],
+	"affine-devpanl": [
+		"AFFiNE workspace for the DevPanel studio (internal docs, architecture, ops runbooks). Same long-form-docs rule as the other AFFiNE workspaces.",
+	],
+	"affine-edms": [
+		"AFFiNE workspace for EDMS. Same long-form-docs rule as the other AFFiNE workspaces.",
+	],
+	"github-mcp": [
+		"GitHub MCP for issue/repo metadata reads. For PR creation/review prefer the dedicated `gh_pr_create` / `gh_pr_view` / `gh_pr_comment` tools (from the github extension) — they avoid shell quoting failures on titles with apostrophes.",
+	],
+	"playwright": [
+		"Playwright MCP for browser automation. Use only when the user asks for a UI check that can't be answered any other way; cold-start is ~5s and each page eats memory.",
+	],
+};
+
+/**
+ * Per-tool snippet derived from the upstream MCP description. Truncates to
+ * one line so pi's "Available tools:" section stays scannable; falls back to
+ * a generic placeholder if the upstream tool has no description.
+ */
+function deriveSnippet(serverName: string, tool: McpToolInfo): string {
+	const desc = (tool.description || "").trim();
+	if (!desc) return `Proxy to ${serverName}.${tool.name} (no upstream description).`;
+	// Take the first sentence or 140 chars, whichever is shorter.
+	const firstLine = desc.split(/[\n.]/)[0].trim();
+	const trimmed = firstLine.length > 140 ? firstLine.slice(0, 137) + "..." : firstLine;
+	return trimmed || `Proxy to ${serverName}.${tool.name}.`;
+}
+
+/**
  * Build a Pi tool that proxies to a single MCP tool on a single client.
  * The MCP tool's `inputSchema` is JSON Schema; we wrap with Type.Unsafe so
  * it satisfies pi's TSchema constraint without TypeBox actually validating
  * it (pi doesn't validate at runtime — see header comment).
+ *
+ * `firstForServer` flag controls whether the per-server guidelines are
+ * attached. We attach them to the FIRST tool of each server (alphabetical
+ * order on the upstream listTools result) so they appear once in pi's
+ * Guidelines section even if the model only enables some tools.
  */
 function buildPiTool(
 	serverName: string,
 	tool: McpToolInfo,
 	client: Client,
+	firstForServer: boolean,
 ) {
 	const piName = `mcp__${serverName}__${tool.name}`;
 	const schema = (tool.inputSchema as Record<string, unknown> | undefined) || {
 		type: "object",
 		properties: {},
 	};
+	const guidelines = firstForServer ? SERVER_GUIDELINES[serverName] : undefined;
 	return defineTool({
 		name: piName,
 		label: `${serverName}.${tool.name}`,
+		promptSnippet: deriveSnippet(serverName, tool),
+		...(guidelines && guidelines.length > 0 ? { promptGuidelines: guidelines } : {}),
 		description:
 			tool.description ||
 			`Proxy to MCP server "${serverName}" tool "${tool.name}". See the server's docs for argument shape.`,
@@ -313,8 +374,12 @@ export default async function (pi: ExtensionAPI) {
 	for (const { name, got } of settled) {
 		if (!got) continue;
 		clients.push(got.client);
+		// Track whether we've already attached the per-server guidelines so
+		// they only land once even though Pi de-duplicates them anyway.
+		let firstForServer = true;
 		for (const tool of got.tools) {
-			pi.registerTool(buildPiTool(name, tool, got.client));
+			pi.registerTool(buildPiTool(name, tool, got.client, firstForServer));
+			firstForServer = false;
 			totalTools++;
 		}
 	}

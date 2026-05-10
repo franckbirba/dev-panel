@@ -120,6 +120,14 @@ function asError(stage: string, message: string) {
 const reply = defineTool({
 	name: "reply",
 	label: "Telegram reply",
+	promptSnippet:
+		"Send a Telegram message to the user (REQUIRED for any visible response — plain assistant text is invisible on Telegram).",
+	promptGuidelines: [
+		"You are talking to the user on TELEGRAM, not in a transcript. Your assistant text never reaches them — only the `text` field of a `reply` tool call does.",
+		"After every inbound `<channel>` envelope, you MUST end your turn with at least one `reply` tool call. Tool results from `mcp__plane-mcp__*`, `memory_search`, etc. do NOT count as a reply.",
+		"Pass `bot_label` and `chat_id` taken verbatim from the inbound `<channel>` envelope's attributes. Use `reply_to: <message_id>` only when threading under an earlier message.",
+		"Multi-turn pattern: explore with MCP tools first (memory_search, plane_*, etc.), THEN call `reply` with your synthesized answer. Don't reply mid-exploration; don't forget to reply at the end.",
+	],
 	description:
 		"REQUIRED for every visible response to the user. Plain assistant text is INVISIBLE on Telegram — only text inside this tool's `text` parameter actually reaches the user's chat. If you forget to call this, the user sees nothing and thinks you're dead. Pass bot_label and chat_id from the inbound <channel> envelope's attributes. Optional reply_to (message_id) for quote-threading. Telegram caps a single message at 4096 chars; over that, the tool splits automatically.",
 	parameters: Type.Object({
@@ -177,8 +185,10 @@ const reply = defineTool({
 const react = defineTool({
 	name: "react",
 	label: "Telegram react",
+	promptSnippet:
+		"Add an emoji reaction to an inbound message (acknowledgement; not a substitute for `reply`).",
 	description:
-		"Add an emoji reaction to a message. Telegram only allows a small whitelist of emojis as reactions — see Bot API docs.",
+		"Add an emoji reaction to a message. Telegram only allows a small whitelist of emojis as reactions — see Bot API docs. Reactions are silent acknowledgements, NOT substitutes for `reply` — if the user asked a question, you still need to call `reply`.",
 	parameters: Type.Object({
 		bot_label: Type.String(),
 		chat_id: Type.Union([Type.Number(), Type.String()]),
@@ -216,8 +226,10 @@ const react = defineTool({
 const editMessage = defineTool({
 	name: "edit_message",
 	label: "Telegram edit message",
+	promptSnippet:
+		"Edit a message you previously sent (interim progress updates; doesn't trigger push notifications).",
 	description:
-		"Edit the text of a previously-sent message. Only messages the bot itself sent can be edited.",
+		"Edit the text of a previously-sent message. Only messages the bot itself sent can be edited. Useful for interim progress updates on long-running tasks. Edits don't trigger push notifications — when work completes, send a fresh `reply` so the user's device pings.",
 	parameters: Type.Object({
 		bot_label: Type.String(),
 		chat_id: Type.Union([Type.Number(), Type.String()]),
@@ -249,8 +261,10 @@ const editMessage = defineTool({
 const downloadAttachment = defineTool({
 	name: "download_attachment",
 	label: "Telegram download attachment",
+	promptSnippet:
+		"Fetch a Telegram file attachment (photo/document/voice) — call when inbound `<channel>` has `attachment_file_id`.",
 	description:
-		"Fetch a Telegram file attachment by file_id and save it to the local inbox. Returns the absolute path; the caller should Read it. Telegram caps bot downloads at 20MB.",
+		"Fetch a Telegram file attachment by file_id and save it to the local inbox. Returns the absolute path; the caller should `read` it next. Telegram caps bot downloads at 20MB. Trigger when the inbound `<channel>` envelope has an `attachment_file_id` attribute.",
 	parameters: Type.Object({
 		bot_label: Type.String(),
 		file_id: Type.String({
