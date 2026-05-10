@@ -11,9 +11,10 @@ import {
 // 10-tab grid lives in a demoted "Legacy" group below the divider during the
 // transition; phase 5 of the migration plan removes it.
 const PRIMARY = [
-  { id: 'inbox',  label: 'Inbox',  icon: IconInbox, badgeKey: 'pending' },
-  { id: 'fleet',  label: 'Fleet',  icon: IconFleet  },
-  { id: 'memory', label: 'Memory', icon: IconBrain  },
+  { id: 'inbox',      label: 'Inbox',      icon: IconInbox, badgeKey: 'pending' },
+  { id: 'fleet',      label: 'Fleet',      icon: IconFleet  },
+  { id: 'fleet-live', label: 'Fleet · live', icon: IconFleet },
+  { id: 'memory',     label: 'Memory',     icon: IconBrain  },
 ];
 const LEGACY = [
   { id: 'captures',   label: 'Captures',   icon: IconInbox    },

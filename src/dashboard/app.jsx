@@ -22,6 +22,7 @@ import { AgentsView } from "@/views/agents-view";
 import { WorkItemsView } from "@/views/work-items-view";
 import { InboxView } from "@/views/inbox-view";
 import { FleetView } from "@/views/fleet-view";
+import { FleetLiveView } from "@/views/fleet-live-view";
 import { MemoryView } from "@/views/memory-view";
 import { IconLogo } from "@/components/icons";
 import {
@@ -284,6 +285,7 @@ function App() {
             {/* Flight-deck — 4 primary surfaces */}
             {activeTab === "inbox" && <InboxView apiUrl={apiUrl} apiKey={apiKey} refreshKey={refreshKey} />}
             {activeTab === "fleet" && <FleetView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
+            {activeTab === "fleet-live" && <FleetLiveView apiUrl={apiUrl} apiKey={apiKey} sseConnected={sseConnected} projectName={stats?.project || currentProject?.name} />}
             {activeTab === "memory" && <MemoryView apiUrl={apiUrl} apiKey={apiKey} />}
             {/* Legacy views — kept mountable during the transition */}
             {activeTab === "signals" && <SignalsView apiUrl={apiUrl} apiKey={apiKey} adminKey={getAdminKey()} />}
