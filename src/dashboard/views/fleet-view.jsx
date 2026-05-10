@@ -486,7 +486,10 @@ export function FleetView({ apiUrl, apiKey }) {
   const counts = useMemo(() => ({
     total: agents.length,
     running: agents.filter(a => a.status === 'running').length,
-    waiting: agents.filter(a => a.status === 'awaiting_approval').length,
+    // 'waiting' rolls up both human-gated states: awaiting_approval (pause-on-blocker)
+    // and awaiting_input (await_human MCP tool from DEVPA-185). Both mean
+    // "agent is paused for a human decision."
+    waiting: agents.filter(a => ['awaiting_approval', 'awaiting_input'].includes(a.status)).length,
     blocked: agents.filter(a => ['blocked', 'exhausted'].includes(a.status)).length,
     done: agents.filter(a => a.status === 'done').length,
   }), [agents]);
