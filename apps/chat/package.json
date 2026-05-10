@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "biome check .",
+    "lint:design": "node scripts/check-design-rules.mjs",
+    "lint": "biome check . && npm run lint:design",
     "format": "biome format .",
     "format:fix": "biome format --write .",
     "lint:fix": "biome check --write ."
