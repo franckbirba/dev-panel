@@ -40,17 +40,29 @@ function InboxRow({ item, active, onClick, onAction }) {
   return (
     <div
       onClick={onClick}
-      className={`group flex items-center gap-2 h-8 px-3 cursor-pointer border-l-2 ${active ? 'bg-[var(--color-surface-2)] border-l-[var(--color-foreground)]' : 'border-l-transparent hover:bg-[var(--color-surface-2)]'}`}
+      className={`group flex items-center gap-2 h-8 pl-0 pr-3 cursor-pointer relative ${active ? 'bg-[var(--color-surface-2)]' : 'hover:bg-[var(--color-surface-2)]'}`}
       style={{ fontSize: 12, lineHeight: '14px' }}
       data-active={active ? '1' : '0'}
     >
+      {/* Priority rail — full-height side bar tinted to the row's type. The
+          wireframe uses this instead of a left border to give the row an
+          unmistakable "this is REVIEW / QUESTION / NOTIFY" cue without
+          burning horizontal space on a wide chip. Active state stacks a
+          subtle inset highlight on top of the rail. */}
       <span
-        className="inline-flex items-center justify-center w-[68px] shrink-0 px-1.5 py-0.5 rounded-sm font-mono uppercase tracking-wider"
-        style={{ color: style.fg, background: style.bg, fontSize: 9, fontWeight: 600 }}
+        className="shrink-0 self-stretch"
+        style={{ width: 3, background: style.fg, boxShadow: active ? `0 0 8px ${style.fg}` : 'none' }}
+      />
+      <span className="w-2 shrink-0" />
+      {/* Origin glyph in a colored tile — much more legible than the bare
+          icon-against-row treatment. Uses the same type tone so the rail
+          and tile read as one unit. */}
+      <span
+        className="inline-flex items-center justify-center shrink-0 rounded-sm"
+        style={{ width: 20, height: 20, background: style.bg, color: style.fg }}
       >
-        {style.label}
+        <Icon width={11} height={11} />
       </span>
-      <Icon width={12} height={12} className="shrink-0 text-[var(--color-foreground-faint)]" />
       <span className="text-[var(--color-foreground-faint)] uppercase tracking-wide font-mono shrink-0" style={{ fontSize: 10 }}>
         {item.origin}
       </span>
@@ -86,14 +98,25 @@ function GroupHeader({ label, count, color }) {
     <div
       className="flex items-center gap-2 px-3 h-7 sticky top-0 z-10"
       style={{
-        background: 'var(--color-surface)',
+        background: 'var(--color-surface-1)',
         borderBottom: '1px solid var(--color-border-subtle)',
         fontSize: 10,
         fontWeight: 600,
-        letterSpacing: '0.08em',
+        letterSpacing: '0.14em',
         color: color || 'var(--color-foreground-muted)',
       }}
     >
+      {/* Tone dot — same color as the row rail so the section reads as one
+          visual unit. Drawn as an outline + inner fill for legibility on
+          the surface-1 band. */}
+      <span
+        className="shrink-0"
+        style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: color || 'var(--color-foreground-faint)',
+          boxShadow: color ? `0 0 6px ${color}` : 'none',
+        }}
+      />
       <span className="uppercase">{label}</span>
       <span className="font-mono" style={{ color: 'var(--color-foreground-faint)' }}>{count}</span>
     </div>
