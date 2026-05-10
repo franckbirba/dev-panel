@@ -26,6 +26,10 @@ export const triageInbox = {
       captures: list.slice(0, limit).map((c) => ({
         id: c.id,
         project_name: c.project_name,
+        // Plane project UUID — surfaced so promote_capture can be called
+        // without an extra capture_detail round-trip. May be null when the
+        // devpanel project isn't linked to a Plane project. (DEVPA-217)
+        plane_project_id: c.plane_project_id ?? null,
         kind: c.kind,
         status: c.status,
         content: c.content,
