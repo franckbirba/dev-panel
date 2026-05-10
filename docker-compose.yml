@@ -185,7 +185,7 @@ services:
       # injects X-Forwarded-User; the Express middleware then trusts it
       # (TRUST_FORWARDED_USER=true). Without this, the SPA's first call
       # after Google sign-in 401s and the user sees no projects.
-      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`))"
+      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`))"
       - "traefik.http.routers.devpanel-api-spa.entrypoints=websecure"
       - "traefik.http.routers.devpanel-api-spa.tls=true"
       - "traefik.http.routers.devpanel-api-spa.tls.certresolver=letsencrypt"
