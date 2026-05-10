@@ -1,6 +1,6 @@
 "use client";
 
-import { makeAssistantToolUI } from "@assistant-ui/react";
+import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
 import {
   WorkItemCard,
   CaptureCard,
@@ -9,6 +9,35 @@ import {
   SprintProgressCard,
 } from "@/components/devpanl";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+
+// ─── Action wiring — turn card button clicks into chat turns ────────────────
+//
+// Each capability card accepts an `onAction` callback. The wrapper here
+// translates the action into a fresh user message in the same thread, so
+// Shelly picks it up via the next `streamText` round and either:
+//   - calls another capability (Promote → promote_capture; Talk about it →
+//     work_item_detail / capture follow-up; Defer → patch capture status), or
+//   - asks Franck a clarifying question, or
+//   - just drafts the next move in prose.
+//
+// This is the cheapest way to make cards interactive without rewiring chat
+// state — every action becomes a user turn the LLM sees.
+
+function useCaptureActionHandler() {
+  const runtime = useThreadRuntime();
+  return (action: "approve" | "defer" | "promote" | "talk", id: string) => {
+    const prompts: Record<typeof action, string> = {
+      talk: `Let's dig into capture ${id}. Pull the full content + thread history if any, suggest the next move.`,
+      promote: `Promote capture ${id} to a Plane work item. Draft title/description/priority first, then ask me before creating.`,
+      approve: `Approve capture ${id} as-is — mark it triaged, no work item needed yet.`,
+      defer: `Defer capture ${id}. Mark it as not-now, brief reason if obvious.`,
+    };
+    runtime.append({
+      role: "user",
+      content: [{ type: "text", text: prompts[action] }],
+    });
+  };
+}
 
 // ─── Registry — one entry per capability ────────────────────────────────────
 //
@@ -44,6 +73,26 @@ function parseToolText(result: unknown): unknown | null {
 
 // ─── Capability renderers ────────────────────────────────────────────────────
 
+function TriageInboxView({ data }: { data: { total_new?: number; by_project?: Record<string, number>; captures?: Array<Parameters<typeof CaptureCard>[0]["capture"]> } }) {
+  const onAction = useCaptureActionHandler();
+  return (
+    <div className="my-2 flex w-full flex-col gap-2">
+      <div className="flex items-center gap-3 text-[11.5px] text-[var(--color-foreground-muted)]">
+        <span className="font-mono">{data.total_new ?? 0} pending</span>
+        {data.by_project &&
+          Object.entries(data.by_project).map(([k, v]) => (
+            <span key={k} className="font-mono">
+              {k}: {v}
+            </span>
+          ))}
+      </div>
+      {(data.captures ?? []).map((c) => (
+        <CaptureCard key={c.id} capture={c} onAction={onAction} />
+      ))}
+    </div>
+  );
+}
+
 const TriageInboxUI = makeAssistantToolUI<unknown, unknown>({
   toolName: "triage_inbox",
   render: ({ result, args, status }) => {
@@ -56,24 +105,20 @@ const TriageInboxUI = makeAssistantToolUI<unknown, unknown>({
       | null;
     if (!data || status.type === "running")
       return <ToolFallback toolName="triage_inbox" args={args} result={result} status={status} />;
-    return (
-      <div className="my-2 flex w-full flex-col gap-2">
-        <div className="flex items-center gap-3 text-[11.5px] text-[var(--color-foreground-muted)]">
-          <span className="font-mono">{data.total_new ?? 0} pending</span>
-          {data.by_project &&
-            Object.entries(data.by_project).map(([k, v]) => (
-              <span key={k} className="font-mono">
-                {k}: {v}
-              </span>
-            ))}
-        </div>
-        {(data.captures ?? []).map((c) => (
-          <CaptureCard key={c.id} capture={c} />
-        ))}
-      </div>
-    );
+    return <TriageInboxView data={data} />;
   },
 });
+
+function CaptureListView({ captures }: { captures: Array<Parameters<typeof CaptureCard>[0]["capture"]> }) {
+  const onAction = useCaptureActionHandler();
+  return (
+    <div className="my-2 flex w-full flex-col gap-2">
+      {captures.map((c) => (
+        <CaptureCard key={c.id} capture={c} onAction={onAction} />
+      ))}
+    </div>
+  );
+}
 
 const CaptureListUI = makeAssistantToolUI<unknown, unknown>({
   toolName: "capture_list",
@@ -83,13 +128,7 @@ const CaptureListUI = makeAssistantToolUI<unknown, unknown>({
       | null;
     if (!data || status.type === "running")
       return <ToolFallback toolName="capture_list" args={args} result={result} status={status} />;
-    return (
-      <div className="my-2 flex w-full flex-col gap-2">
-        {(data.captures ?? []).map((c) => (
-          <CaptureCard key={c.id} capture={c} />
-        ))}
-      </div>
-    );
+    return <CaptureListView captures={data.captures ?? []} />;
   },
 });
 
