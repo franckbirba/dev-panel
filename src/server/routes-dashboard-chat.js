@@ -124,23 +124,44 @@ async function getMCPTools() {
   }
 }
 
-// Map our DB-row shape to assistant-ui's UIMessage shape. Stored
-// `content` is plain text (no parts). The runtime expects parts; we wrap
-// each row as a single text part. role is normalized:
+// Map our DB-row shape to assistant-ui's UIMessage shape.
+//
+// Two storage formats coexist:
+//   - Legacy rows: `metadata` is null, `content` is plain text → wrap as
+//     a single text part. This is how user messages are stored, and how
+//     pre-DEVPA-204-part-2 assistant replies were stored.
+//   - Rich rows: `metadata.parts` is the full UIMessagePart[] (text +
+//     tool-call + tool-result, etc). On reload, the registry's
+//     `makeAssistantToolUI` hooks see the tool-call parts and re-render
+//     the cards inline. This is what unlocks "reload still shows cards".
+//
+// role normalization:
 //   - 'user'   → 'user'
 //   - 'shelly' → 'assistant'  (the chat presents Shelly as the assistant)
-//   - other    → 'system'      (system / tool — not surfaced for now)
+//   - other    → 'system'
 function rowsToUIMessages(rows) {
-  return rows.map((row) => ({
-    id: String(row.id),
-    role:
+  return rows.map((row) => {
+    const role =
       row.role === 'user'
         ? 'user'
         : row.role === 'shelly' || row.role === 'agent'
           ? 'assistant'
-          : 'system',
-    parts: [{ type: 'text', text: row.content || '' }],
-  }));
+          : 'system';
+    // Try the rich path first.
+    if (row.metadata && Array.isArray(row.metadata.parts)) {
+      return {
+        id: String(row.id),
+        role,
+        parts: row.metadata.parts,
+      };
+    }
+    // Fallback — legacy row, single text part.
+    return {
+      id: String(row.id),
+      role,
+      parts: [{ type: 'text', text: row.content || '' }],
+    };
+  });
 }
 
 // Extract the last *user* message text from an assistant-ui UIMessage[].
@@ -205,25 +226,35 @@ export function mountDashboardChat(app) {
 
       const mcpTools = await getMCPTools();
 
-      // Capture the assistant's text + any reasoning so we can persist a
-      // clean string after the stream finishes. AI SDK 6's `onFinish`
-      // gives us the full final text in `text`.
-      let finalAssistantText = '';
-
       const result = streamText({
         model: provider.chat(MODEL),
         messages: await convertToModelMessages(messages ?? []),
         system: system ?? DEFAULT_SYSTEM,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
-        onFinish: ({ text }) => {
-          finalAssistantText = text || '';
+      });
+
+      // Capture the assistant's full UIMessage (parts + tool calls + tool
+      // results) via toUIMessageStreamResponse's onFinish. We store both:
+      //   - content: text-only join, for legacy readers (Telegram bridge,
+      //     `transcript_replay_recent` MCP tool, etc).
+      //   - metadata.parts: the full UIMessagePart[] so reloads can
+      //     re-render tool-call cards via the makeAssistantToolUI registry.
+      let finalUIMessage = null;
+      const response = result.toUIMessageStreamResponse({
+        sendReasoning: true,
+        onFinish: ({ messages: outMessages }) => {
+          // outMessages is the *assistant* messages produced this turn.
+          // Pick the last one (multi-step tool loops can produce several).
+          const last = Array.isArray(outMessages)
+            ? outMessages[outMessages.length - 1]
+            : null;
+          if (last) finalUIMessage = last;
         },
       });
 
       // Pipe AI SDK Data Stream Protocol response to Express. Same shape
       // as /api/chat — assistant-ui consumes it identically.
-      const response = result.toUIMessageStreamResponse({ sendReasoning: true });
       res.status(response.status);
       response.headers.forEach((v, k) => res.setHeader(k, v));
       const reader = response.body.getReader();
@@ -238,13 +269,19 @@ export function mountDashboardChat(app) {
       // res.end() so a slow DB write can't stall the user-visible stream.
       // Best-effort — losing one row to a transient pg blip is preferable
       // to blocking the chat.
-      if (finalAssistantText.trim()) {
+      if (finalUIMessage && Array.isArray(finalUIMessage.parts)) {
+        const textOnly = finalUIMessage.parts
+          .filter((p) => p?.type === 'text' && typeof p.text === 'string')
+          .map((p) => p.text)
+          .join('\n')
+          .trim();
         try {
           appendMessage({
             thread_id: thread.thread_id,
             role: 'shelly',
             source: 'web',
-            content: finalAssistantText.trim(),
+            content: textOnly || '(tool calls only — see metadata.parts)',
+            metadata: { parts: finalUIMessage.parts },
           });
         } catch (e) {
           console.warn('[dashboard-chat] persist assistant msg failed:', e.message);
