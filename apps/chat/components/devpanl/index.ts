@@ -24,3 +24,7 @@ export {
   type ProviderOption,
 } from "./ProviderSwitcher";
 export { StatusBar, type UsageSnapshot } from "./StatusBar";
+export {
+  DashboardThreadList,
+  type DashboardThread,
+} from "./DashboardThreadList";

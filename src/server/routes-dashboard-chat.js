@@ -32,7 +32,7 @@ import {
   appendMessage,
 } from './threads.js';
 import { upsertSubject } from './subjects.js';
-import { getProjectByName } from './db.js';
+import { getProjectByName, getMasterDatabase } from './db.js';
 import { requireForwardedUser } from './middleware/require-forwarded-user.js';
 
 // Dashboard subjects are synthetic — one per SSO user. The schema's
@@ -57,6 +57,67 @@ function ensureDashboardSubject(email) {
     project_id: getDevPanelProjectId(),
     title: email,
   });
+}
+
+// Multi-thread support — DEVPA-204 phase 2.
+//
+// Subject id convention: `<email>` for the freeform thread (legacy, the
+// only one before this PR), `<email>:<n>` for additional threads created
+// via the "New Thread" sidebar button. n starts at 2; n=1 maps to the
+// freeform thread for compatibility.
+//
+// Why subject_id encoding instead of a separate `chat_threads` table:
+// the existing threads table is already keyed by (subject_type,
+// subject_id) and powers Telegram + the dashboard side-by-side. Adding
+// another table forks the truth-source. Sticking to subject_id keeps
+// one place threads live.
+
+function ensureDashboardThreadSubject(email, n) {
+  const subjectId = n === 1 ? email : `${email}:${n}`;
+  upsertSubject({
+    subject_type: 'dashboard',
+    subject_id: subjectId,
+    project_id: getDevPanelProjectId(),
+    title: n === 1 ? email : `${email} (thread ${n})`,
+  });
+  return subjectId;
+}
+
+function listDashboardThreadsForUser(email) {
+  // Pull every threads row whose subject_id is the user's email or starts
+  // with `<email>:`. Cheap because subject_type filters first.
+  const db = getMasterDatabase();
+  const rows = db.prepare(
+    `SELECT t.thread_id, t.subject_id, t.last_message_at, t.created_at,
+            (SELECT content FROM thread_messages
+              WHERE thread_id = t.thread_id AND role='user'
+              ORDER BY id ASC LIMIT 1) AS first_user_text
+       FROM threads t
+      WHERE t.subject_type = 'dashboard'
+        AND (t.subject_id = ? OR t.subject_id LIKE ?)
+      ORDER BY COALESCE(t.last_message_at, t.created_at) DESC`
+  ).all(email, `${email}:%`);
+  return rows.map((r) => ({
+    thread_id: r.thread_id,
+    subject_id: r.subject_id,
+    n: r.subject_id === email ? 1 : Number(r.subject_id.split(':').pop()),
+    last_message_at: r.last_message_at,
+    created_at: r.created_at,
+    title: r.first_user_text
+      ? r.first_user_text.slice(0, 60).replace(/\s+/g, ' ').trim()
+      : '(empty)',
+  }));
+}
+
+function nextThreadN(email) {
+  const existing = listDashboardThreadsForUser(email);
+  if (existing.length === 0) return 1;
+  const maxN = Math.max(...existing.map((t) => t.n));
+  return maxN + 1;
+}
+
+function resolveSubjectFromN(email, n) {
+  return n === 1 ? email : `${email}:${n}`;
 }
 
 const PROVIDER = process.env.LLM_PROVIDER ?? 'deepinfra';
@@ -182,16 +243,54 @@ function extractLatestUserText(uiMessages) {
 export function mountDashboardChat(app) {
   const router = express.Router();
 
-  // GET /api/dashboard/chat/history — returns the user's freeform thread
-  // messages so the frontend can seed useChatRuntime on boot.
+  // GET /api/dashboard/chat/threads — list this user's dashboard threads.
+  router.get('/chat/threads', requireForwardedUser, (req, res) => {
+    try {
+      // Ensure the freeform thread exists so a brand-new user always has
+      // at least one row to switch into.
+      ensureDashboardThreadSubject(req.user.email, 1);
+      getOrCreateThread('dashboard', req.user.email);
+      const threads = listDashboardThreadsForUser(req.user.email);
+      res.json({ threads });
+    } catch (err) {
+      console.error('[dashboard-chat] list threads failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/dashboard/chat/threads — create a new dashboard thread.
+  // Returns the new thread's `n` (sidebar uses this as the routing key).
+  router.post('/chat/threads', requireForwardedUser, (req, res) => {
+    try {
+      const email = req.user.email;
+      const n = nextThreadN(email);
+      const subjectId = ensureDashboardThreadSubject(email, n);
+      const thread = getOrCreateThread('dashboard', subjectId);
+      res.json({
+        thread_id: thread.thread_id,
+        subject_id: subjectId,
+        n,
+        title: '(empty)',
+        last_message_at: null,
+        created_at: thread.created_at,
+      });
+    } catch (err) {
+      console.error('[dashboard-chat] create thread failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/dashboard/chat/history?n=<index> — messages for a specific
+  // thread. Defaults to n=1 (the freeform thread) for backward-compat.
   router.get('/chat/history', requireForwardedUser, (req, res) => {
     try {
-      const subjectId = req.user.email;
-      ensureDashboardSubject(subjectId);
+      const email = req.user.email;
+      const n = Math.max(1, parseInt(req.query.n, 10) || 1);
+      const subjectId = ensureDashboardThreadSubject(email, n);
       const thread = getOrCreateThread('dashboard', subjectId);
       const rows = listMessages(thread.thread_id);
       const messages = rowsToUIMessages(rows);
-      res.json({ thread_id: thread.thread_id, subject_id: subjectId, messages });
+      res.json({ thread_id: thread.thread_id, subject_id: subjectId, n, messages });
     } catch (err) {
       console.error('[dashboard-chat] history failed:', err);
       res.status(500).json({ error: err.message });
@@ -203,8 +302,9 @@ export function mountDashboardChat(app) {
   // stream finish and writes it to the same thread.
   router.post('/chat/turn', requireForwardedUser, async (req, res) => {
     try {
-      const subjectId = req.user.email;
-      ensureDashboardSubject(subjectId);
+      const email = req.user.email;
+      const n = Math.max(1, parseInt(req.query.n, 10) || 1);
+      const subjectId = ensureDashboardThreadSubject(email, n);
       const thread = getOrCreateThread('dashboard', subjectId);
       const { messages, system, tools } = req.body ?? {};
 
