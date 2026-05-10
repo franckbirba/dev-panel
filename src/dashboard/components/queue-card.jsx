@@ -64,6 +64,38 @@ export function QueueCard({ queue, selected, onSelect, apiUrl, adminKey }) {
         )}
       </div>
 
+      {/* Proportional 5-segment bar — borrowed from the Claude Design queue
+          card. Each segment's flex value is its raw count, so the bar shows
+          true proportions (a queue with 128 done + 3 wait reads as mostly
+          green). Empty queues get a thin neutral bar so the row doesn't jump
+          when the first job lands. */}
+      {(() => {
+        const total = COUNT_KEYS.reduce((s, { key }) => s + (c[key] || 0), 0);
+        return (
+          <div className="flex h-1.5 mb-2 rounded-sm overflow-hidden" style={{ background: 'var(--color-surface-3)' }}>
+            {total === 0 ? (
+              <div className="flex-1" />
+            ) : (
+              COUNT_KEYS.map(({ key, tone }) => {
+                const v = c[key] || 0;
+                if (v === 0) return null;
+                const isActive = key === 'active';
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      flex: v,
+                      background: tone,
+                      boxShadow: isActive ? `0 0 8px ${tone}` : 'none',
+                    }}
+                  />
+                );
+              })
+            )}
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-5 gap-1">
         {COUNT_KEYS.map(({ key, label, tone }) => {
           const v = c[key] || 0;

@@ -111,6 +111,167 @@ function FleetTotals({ counts }) {
   );
 }
 
+// Card view — narrative row built around `current_step` as italic prose.
+// We don't have step-N-of-M counts upstream, so the bar is indeterminate
+// for `running`, hatched for `blocked/exhausted`, full for `awaiting_approval`,
+// and absent for terminal states. Action buttons are state-aware: nothing
+// dumber than offering "Approve" on a workflow that's already done.
+const STATE_NARRATION = {
+  running:           { prefix: 'now',     fg: 'var(--color-brand-glow)' },
+  awaiting_approval: { prefix: 'waiting', fg: 'var(--color-warning)'    },
+  awaiting_input:    { prefix: 'asking',  fg: 'var(--color-info)'       },
+  blocked:           { prefix: 'stuck',   fg: 'var(--color-error)'      },
+  exhausted:         { prefix: 'stuck',   fg: 'var(--color-error)'      },
+  done:              { prefix: 'done',    fg: 'var(--color-success)'    },
+  cancelled:         { prefix: 'idle',    fg: 'var(--color-foreground-faint)' },
+};
+
+function ProgressBar({ status }) {
+  const baseStyle = {
+    height: 3,
+    background: 'var(--color-surface-3)',
+    position: 'relative',
+    overflow: 'hidden',
+    borderTop: '1px solid var(--color-border-subtle)',
+    borderBottom: '1px solid var(--color-border-subtle)',
+  };
+  if (status === 'running') {
+    return (
+      <div style={baseStyle}>
+        <div
+          className="fleet-bar-indeterminate"
+          style={{
+            position: 'absolute', top: 0, bottom: 0, width: '30%',
+            background: 'var(--color-brand-glow)',
+            boxShadow: '0 0 10px var(--color-brand-glow)',
+          }}
+        />
+      </div>
+    );
+  }
+  if (status === 'awaiting_approval' || status === 'awaiting_input') {
+    const tone = status === 'awaiting_input' ? 'var(--color-info)' : 'var(--color-warning)';
+    return (
+      <div style={baseStyle}>
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: tone,
+          boxShadow: `0 0 10px ${tone}`,
+        }} />
+      </div>
+    );
+  }
+  if (status === 'blocked' || status === 'exhausted') {
+    return (
+      <div style={{
+        ...baseStyle,
+        background: 'repeating-linear-gradient(90deg, var(--color-error), var(--color-error) 4px, transparent 4px, transparent 8px)',
+      }} />
+    );
+  }
+  return <div style={baseStyle} />;
+}
+
+function FleetCard({ row, active, onClick, onAction }) {
+  const tone = STATUS_TONE[row.status] || STATUS_TONE.cancelled;
+  const narr = STATE_NARRATION[row.status] || STATE_NARRATION.cancelled;
+  const isWaiting       = row.status === 'awaiting_approval';
+  const isAwaitingInput = row.status === 'awaiting_input';
+  const isBlocked       = ['blocked', 'exhausted'].includes(row.status);
+  const isRunning       = row.status === 'running';
+  const isTerminal      = ['done', 'cancelled'].includes(row.status);
+
+  // Pick the most informative narration: current_step is the live "what".
+  // Fall back to last_step_error for blocked rows since the error is the
+  // only signal of what went wrong.
+  const narration = isBlocked && row.last_step_error
+    ? row.last_step_error.split('\n')[0].slice(0, 200)
+    : (row.current_step || row.title || '(no step)');
+
+  function btn(label, kind, handler) {
+    const styles = {
+      go:     { background: 'var(--color-brand)',       color: 'var(--color-brand-foreground)', borderColor: 'var(--color-brand)' },
+      ghost:  { background: 'transparent',               color: 'var(--color-foreground-muted)', borderColor: 'var(--color-border)' },
+      danger: { background: 'transparent',               color: 'var(--color-error)',            borderColor: 'var(--color-error-border)' },
+    };
+    return (
+      <button
+        key={label}
+        onClick={(e) => { e.stopPropagation(); handler(); }}
+        className="font-mono uppercase cursor-pointer transition-colors"
+        style={{
+          ...styles[kind],
+          border: `1px solid ${styles[kind].borderColor}`,
+          fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
+          padding: '4px 10px', minWidth: 70, textAlign: 'center',
+          borderRadius: 'var(--radius-sm)',
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      onClick={onClick}
+      className={`grid items-center gap-4 px-5 py-4 border-b border-[var(--color-border-subtle)] cursor-pointer ${active ? 'bg-[var(--color-surface-2)]' : 'hover:bg-[var(--color-surface-2)]'}`}
+      style={{ gridTemplateColumns: '72px 1fr 200px 86px' }}
+    >
+      <div
+        className="font-mono uppercase text-center"
+        style={{
+          color: tone.fg,
+          fontSize: 10, fontWeight: 600, letterSpacing: '0.14em',
+          padding: '6px 0',
+          borderTop: `2px solid ${tone.fg}`,
+          borderBottom: `2px solid ${tone.fg}`,
+        }}
+      >
+        {row.agent || row.workflow}
+      </div>
+
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2 mb-1">
+          <span className="text-[14px] font-medium text-[var(--color-foreground)] truncate">
+            {row.identifier || row.title || row.work_item_id?.slice(0, 8) || '—'}
+          </span>
+          <span className="font-mono text-[10.5px] text-[var(--color-foreground-faint)] truncate">
+            {row.last_job_id ? `job ${row.last_job_id.slice(0, 4)}` : null}
+            {row.project_name ? ` · ${row.project_name}` : null}
+          </span>
+        </div>
+        <div className="text-[12.5px] leading-snug text-[var(--color-foreground-muted)] truncate">
+          <span
+            className="font-mono uppercase mr-2"
+            style={{ color: narr.fg, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em' }}
+          >
+            {narr.prefix} ›
+          </span>
+          <span style={{ fontStyle: 'italic' }}>{narration}</span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <div className="flex justify-between font-mono text-[10px] text-[var(--color-foreground-faint)]">
+          <span>{row.last_step_status || '—'}</span>
+          <span>{timeAgo(row.last_event_at)}</span>
+        </div>
+        <ProgressBar status={row.status} />
+      </div>
+
+      <div className="flex flex-col gap-1.5 items-end">
+        {isWaiting       && btn('Approve', 'go',    () => onAction(row, 'approve'))}
+        {isAwaitingInput && btn('Reply',   'go',    () => onAction(row, 'tail'))}
+        {isBlocked       && btn('Retry',   'go',    () => onAction(row, 'retry'))}
+        {isRunning       && btn('Tail',    'ghost', () => onAction(row, 'tail'))}
+        {isWaiting       && btn('Tail',    'ghost', () => onAction(row, 'tail'))}
+        {!isTerminal && btn('Cancel', 'danger', () => onAction(row, 'cancel'))}
+      </div>
+    </div>
+  );
+}
+
 function FleetHeader() {
   return (
     <div
@@ -456,6 +617,14 @@ export function FleetView({ apiUrl, apiKey }) {
   const [statusFilter, setStatusFilter] = useState('active');
   const [activeIdx, setActiveIdx] = useState(0);
   const [detailOpen, setDetailOpen] = useState(false);
+  // Persisted across reloads — Bloomberg grid is the default for density;
+  // cards are the "let me read what's actually happening" mode.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem('fleet:viewMode') || 'grid'; } catch { return 'grid'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('fleet:viewMode', viewMode); } catch { /* private mode */ }
+  }, [viewMode]);
 
   const load = useCallback(async () => {
     if (!apiKey) return;
@@ -495,6 +664,29 @@ export function FleetView({ apiUrl, apiKey }) {
   }), [agents]);
 
   const active = agents[activeIdx];
+
+  // Inline card actions — same endpoints DetailRail uses. "tail" just opens
+  // the rail (it owns the log/timeline). Cancel keeps the confirm prompt
+  // because it's destructive and a card click is much easier to misfire than
+  // a deliberate rail-button press.
+  const onCardAction = useCallback(async (row, action) => {
+    if (action === 'tail') {
+      setActiveIdx(agents.findIndex(a => a.instance_id === row.instance_id));
+      setDetailOpen(true);
+      return;
+    }
+    if (action === 'cancel' && !window.confirm('Cancel this workflow instance?')) return;
+    try {
+      const r = await fetch(`${apiUrl}/api/fleet/${row.instance_id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      load();
+    } catch (e) {
+      setError(`${action} failed: ${e.message}`);
+    }
+  }, [agents, apiUrl, apiKey, load]);
 
   // j/k navigation
   useEffect(() => {
@@ -548,6 +740,18 @@ export function FleetView({ apiUrl, apiKey }) {
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-px ml-1 rounded overflow-hidden border border-[var(--color-border)]">
+            {[
+              { k: 'grid',  label: 'Grid'  },
+              { k: 'cards', label: 'Cards' },
+            ].map(v => (
+              <button key={v.k} onClick={() => setViewMode(v.k)}
+                title={v.k === 'grid' ? 'Bloomberg-density grid' : 'Narrative cards'}
+                className={`px-2 h-6 text-[10.5px] uppercase tracking-wider font-medium cursor-pointer ${viewMode === v.k ? 'bg-[var(--color-brand)] text-[var(--color-brand-foreground)]' : 'bg-[var(--color-surface-2)] text-[var(--color-foreground-muted)] hover:text-[var(--color-foreground)]'}`}>
+                {v.label}
+              </button>
+            ))}
+          </div>
           <button onClick={load} className="h-7 w-7 rounded cursor-pointer text-[var(--color-foreground-faint)] hover:text-[var(--color-foreground)]" title="refresh">
             <IconRefresh width={12} height={12} className="mx-auto" />
           </button>
@@ -556,8 +760,6 @@ export function FleetView({ apiUrl, apiKey }) {
         <FleetTotals counts={counts} />
 
         <div className="flex-1 overflow-auto">
-          <div style={{ minWidth: 720 }}>
-          <FleetHeader />
           {error && <div className="px-4 py-3 text-[12px] text-[var(--color-error)]">Error: {error}</div>}
           {loading && agents.length === 0 && (
             <div className="px-6 py-16 text-center text-[12px] text-[var(--color-foreground-faint)]">Loading fleet…</div>
@@ -568,12 +770,22 @@ export function FleetView({ apiUrl, apiKey }) {
               <div className="text-[11px] text-[var(--color-foreground-faint)]">When agents start, they show up here.</div>
             </div>
           )}
-          {agents.map((row, i) => (
-            <FleetRow key={row.instance_id} row={row}
+          {viewMode === 'grid' && agents.length > 0 && (
+            <div style={{ minWidth: 720 }}>
+              <FleetHeader />
+              {agents.map((row, i) => (
+                <FleetRow key={row.instance_id} row={row}
+                  active={activeIdx === i}
+                  onClick={() => { setActiveIdx(i); setDetailOpen(true); }} />
+              ))}
+            </div>
+          )}
+          {viewMode === 'cards' && agents.length > 0 && agents.map((row, i) => (
+            <FleetCard key={row.instance_id} row={row}
               active={activeIdx === i}
-              onClick={() => { setActiveIdx(i); setDetailOpen(true); }} />
+              onClick={() => { setActiveIdx(i); setDetailOpen(true); }}
+              onAction={onCardAction} />
           ))}
-          </div>
         </div>
       </div>
 

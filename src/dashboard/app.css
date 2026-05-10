@@ -128,6 +128,16 @@
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-corner { background: transparent; }
+
+  /* Indeterminate progress for the Fleet card view — used when we know
+     the workflow is running but don't have a step N-of-M from upstream. */
+  @keyframes fleet-bar-indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(330%);  }
+  }
+  .fleet-bar-indeterminate {
+    animation: fleet-bar-indeterminate 1.6s linear infinite;
+  }
 }
 
 @layer components {
@@ -224,6 +234,7 @@
     width: 2px;
     border-radius: 0 2px 2px 0;
     background: var(--color-brand);
+    box-shadow: 0 0 8px var(--color-brand);
   }
   .sidebar-item .sidebar-icon {
     width: 16px;
