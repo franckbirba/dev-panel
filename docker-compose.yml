@@ -135,6 +135,14 @@ services:
       ENABLE_MONITORING: "true"
       ENABLE_BULLMQ: "true"
       ENABLE_MCP_HTTP: "true"
+      # Chat backend (apps/chat → /api/chat). Defaults to Qwen3-Coder via
+      # DeepInfra (cheap-tier). User can flip in the chat header dropdown
+      # (DEVPA-206 frontend wiring).
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepinfra}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # Trust X-Forwarded-User from Traefik (set by traefik-forward-auth
