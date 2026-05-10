@@ -183,6 +183,25 @@ export function initMasterDatabase(storagePath = './storage') {
     );
     CREATE INDEX IF NOT EXISTS deploy_events_project_created ON deploy_events(project_id, created_at DESC);
 
+    -- Boss-COS audit trail. Every reversible decision Shelly takes without
+    -- asking lands here so Franck can see what she did overnight and roll
+    -- back any of it with one click. Source of truth for the
+    -- AutoDecisionsPanel in the dashboard chat. (DEVPA — boss-COS cycle.)
+    CREATE TABLE IF NOT EXISTS auto_decisions (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id      TEXT,                            -- nullable, some decisions are studio-wide
+      kind            TEXT NOT NULL,                   -- drop_capture | dispatch_nightly | restart_service | promote | misc
+      what            TEXT NOT NULL,                   -- one-sentence human description ("Dropped capture 47 — duplicate of ZENO-38")
+      why             TEXT,                            -- short reason, optional
+      undo_hint       TEXT,                            -- machine-readable hint for rollback ({"target":"capture/47","action":"set_status","value":"new"})
+      ts              DATETIME DEFAULT CURRENT_TIMESTAMP,
+      rolled_back_at  DATETIME,
+      rolled_back_by  TEXT,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS auto_decisions_recent ON auto_decisions(ts DESC);
+    CREATE INDEX IF NOT EXISTS auto_decisions_project ON auto_decisions(project_id, ts DESC);
+
     -- Widget chat sessions — one row per browser-tab conversation surfaced
     -- through the embedded DevPanel widget. session_token is the opaque
     -- handle the widget passes back; thread_id binds the session to its

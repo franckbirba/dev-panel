@@ -234,6 +234,13 @@ function authenticateSpaBootstrap(req, res, next) {
   return requireForwardedUser(req, res, next);
 }
 
+// Tiny JSON parse with fallback — used by /admin/auto-decisions to inflate
+// the stored undo_hint TEXT column without crashing on legacy malformed rows.
+function safeJSON(s) {
+  if (typeof s !== 'string') return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 export function createRouter(config = {}) {
   const router = express.Router();
   const storagePath = config.storagePath || './storage';
@@ -849,6 +856,73 @@ export function createRouter(config = {}) {
       const cap = getCapture(req.params.id);
       if (!cap) return res.status(404).json({ error: 'capture not found' });
       res.json(updateCapture(req.params.id, req.body || {}));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // BOSS-COS — auto_decisions audit trail
+  //
+  // Shelly logs reversible decisions she takes without asking via POST. The
+  // dashboard's AutoDecisionsPanel reads via GET. Franck rolls back via the
+  // /:id/rollback endpoint, which marks the row rolled-back (the actual
+  // inverse-action is Shelly's job — the rollback flag is the "execute it"
+  // signal she watches for in the next turn).
+  // ============================================================================
+
+  router.get('/admin/auto-decisions', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const sinceISO = req.query.since
+        ? String(req.query.since)
+        : new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+      const includeRB = req.query.include_rolled_back === '1';
+      const projectId = req.query.project_id ? String(req.query.project_id) : null;
+      let sql = `SELECT id, project_id, kind, what, why, undo_hint, ts, rolled_back_at, rolled_back_by
+                   FROM auto_decisions WHERE ts >= ?`;
+      const params = [sinceISO];
+      if (!includeRB) sql += ` AND rolled_back_at IS NULL`;
+      if (projectId) { sql += ` AND project_id = ?`; params.push(projectId); }
+      sql += ` ORDER BY ts DESC LIMIT ?`;
+      params.push(limit);
+      const rows = db.prepare(sql).all(...params).map(r => ({
+        ...r,
+        undo_hint: r.undo_hint ? safeJSON(r.undo_hint) : null,
+      }));
+      res.json({ decisions: rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/admin/auto-decisions', authenticateAdmin, (req, res) => {
+    try {
+      const { kind, what, why = null, undo_hint = null, project_id = null } = req.body || {};
+      if (!kind || !what) return res.status(400).json({ error: 'kind and what required' });
+      const db = getMasterDatabase();
+      const r = db.prepare(
+        `INSERT INTO auto_decisions (project_id, kind, what, why, undo_hint)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(project_id, kind, what, why, undo_hint ? JSON.stringify(undo_hint) : null);
+      res.json({ id: r.lastInsertRowid, kind, what });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/admin/auto-decisions/:id/rollback', authenticateAdmin, (req, res) => {
+    try {
+      const db = getMasterDatabase();
+      const row = db.prepare(`SELECT * FROM auto_decisions WHERE id = ?`).get(req.params.id);
+      if (!row) return res.status(404).json({ error: 'not found' });
+      if (row.rolled_back_at) return res.status(409).json({ error: 'already rolled back' });
+      const rolledBy = req.body?.by || 'franck';
+      db.prepare(
+        `UPDATE auto_decisions SET rolled_back_at = CURRENT_TIMESTAMP, rolled_back_by = ? WHERE id = ?`
+      ).run(rolledBy, req.params.id);
+      res.json({ id: Number(req.params.id), rolled_back: true, undo_hint: row.undo_hint ? safeJSON(row.undo_hint) : null });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

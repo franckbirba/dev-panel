@@ -19,6 +19,7 @@ import {
   type UsageSnapshot,
   DashboardThreadList,
   type DashboardThread,
+  AutoDecisionsPanel,
 } from "@/components/devpanl";
 import { ToolUIRegistry } from "@/lib/tool-ui-registry";
 
@@ -117,6 +118,12 @@ function ThreadView({
           </div>
         </header>
         <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Boss-COS panel — Shelly's auto-decisions in the last 24h.
+              Collapsed by default; expand to see what she did without
+              asking and roll back any of it. */}
+          <div className="border-b border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+            <AutoDecisionsPanel />
+          </div>
           <div className="flex-1 overflow-hidden">
             <Thread />
           </div>
