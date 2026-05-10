@@ -20,6 +20,7 @@ import {
   StatusBar,
   type UsageSnapshot,
 } from "@/components/devpanl";
+import { ToolUIRegistry } from "@/lib/tool-ui-registry";
 
 const INITIAL_USAGE: UsageSnapshot = {
   session: { tokens: 0, cost_usd: 0 },
@@ -46,6 +47,7 @@ export const Assistant = () => {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ToolUIRegistry />
       <SidebarProvider>
         <div className="flex h-dvh w-full pr-0.5">
           <ThreadListSidebar />

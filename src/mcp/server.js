@@ -53,6 +53,7 @@ import { createCapture } from '../server/captures.js';
 import { wrapServerWithProfile, getProfile } from './profile.js';
 import { makeAwaitHuman, awaitHumanSchema } from './await-human.js';
 import { registerRuntimeTools } from './runtime.js';
+import { registerCapabilities } from '../capabilities/index.js';
 import { Queue } from 'bullmq';
 import { createRequire as createRequireMcp } from 'module';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -1774,6 +1775,16 @@ if (process.env.JOB_ID && ADMIN_API_KEY) {
 // ============================================================================
 
 registerRuntimeTools(server);
+
+// ============================================================================
+// CAPABILITIES (DEVPA-210)
+// Intent-shaped tools the chat + Pi-Shelly see by default. Each capability
+// wraps one or more raw tools above into a single verb that doesn't make the
+// LLM re-derive the workflow on every turn. Cards in apps/chat are bound
+// 1:1 by `renderHint`. See src/capabilities/index.js.
+// ============================================================================
+
+registerCapabilities(server);
 
 // ============================================================================
 // START
