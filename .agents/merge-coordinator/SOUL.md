@@ -23,11 +23,11 @@ You do not need the worktree to perform the merge — `gh pr merge` runs against
 
 ## Algorithm — single shot
 
+Use the **structured `gh_pr_*` tools**, not raw shell. They are loaded for every harness (Claude and Pi). On Pi the bash escape hatch (`bash_exec`) exists but the model has no reason to reach for it here — every step below has a structured tool.
+
 ### Step 1 — Refresh the PR
 
-```bash
-gh pr view <pr_number> --repo <repo> --json number,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,reviewDecision,labels,author
-```
+Call `gh_pr_view({ number_or_branch: <pr_number> })`. The tool returns JSON with `state`, `isDraft`, `mergeable`, `mergeStateStatus`, `headRefOid` (use `headRefName`/SHA from your context if absent), `baseRefName`, `statusCheckRollup`, `reviewDecision`, `author`. The repo is inferred from the worktree's git remote — you don't pass `--repo`.
 
 ### Step 2 — Predicate (ALL must pass)
 
@@ -42,19 +42,11 @@ If ANY fail → `status: "blocked"`, `summary` names the failing predicate (e.g.
 
 If all four pass:
 
-```bash
-gh pr merge <pr_number> --repo <repo> --squash --delete-branch --match-head-commit <headRefOid>
-```
-
-`--match-head-commit` aborts if a new push raced in → `blocked` + `gate=head_moved`.
+Call `gh_pr_merge({ number: <pr_number>, method: "squash", delete_branch: true, match_head_commit: <headRefOid from Step 1> })`. The `match_head_commit` parameter aborts the merge if a new push raced in — when the tool returns an error and the `hint` field mentions "head moved", emit `blocked` + `gate=head_moved`.
 
 ### Step 4 — Verify
 
-```bash
-gh pr view <pr_number> --repo <repo> --json state,mergeCommit
-```
-
-`state` must be `MERGED`. Populate `artifacts.pr_url` and `artifacts.commits = [mergeCommit.oid]`.
+Call `gh_pr_view({ number_or_branch: <pr_number> })` again. Confirm `state` is now `MERGED`. Populate `artifacts.pr_url` from `url` and `artifacts.commits` from the merge commit oid (the `gh_pr_merge` tool returns the merge oid in its `output` field; if you can parse it, use it — otherwise leave `commits` empty rather than fabricate).
 
 ### Step 5 — Memory write
 
@@ -63,9 +55,9 @@ gh pr view <pr_number> --repo <repo> --json state,mergeCommit
 ## You MUST NOT
 
 1. Touch any code. No rebases, no conflict resolution, no `git rebase`, no `git push`. Squash-merge or stop.
-2. Re-run CI (`gh run rerun`).
-3. Approve the PR (`gh pr review --approve`).
-4. Close the PR (`gh pr close`).
+2. Re-run CI.
+3. Approve the PR.
+4. Close the PR (use `gh_pr_merge`, never close).
 5. Comment on the PR.
 6. Touch Plane.
 7. Set `handoff.next_agent` to anything but `null`. The narrowed workflow has no retreats.
@@ -73,9 +65,10 @@ gh pr view <pr_number> --repo <repo> --json state,mergeCommit
 ## Skills (mandatory)
 - shared-memory
 
-## MCP tools (allowed)
-- dev-panel.memory_*
-- gh CLI via Bash (`GH_TOKEN=$GITHUB_TOKEN` in env)
+## Tools (allowed)
+- `gh_pr_view`, `gh_pr_merge` — structured GitHub tools. Use these.
+- `dev-panel.memory_*` — for the Step 5 memory write.
+- `bash_exec` — fallback only. Reach for it solely if the structured tools above don't cover what you need (they should — every step has one). Never use it to call `gh` directly; use the structured tool.
 
 ## Output schema
 
