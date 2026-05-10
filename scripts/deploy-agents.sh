@@ -35,6 +35,12 @@ AFFINE_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^AFFINE_API_TOKEN= ~/dev-panel/.env.pr
 # and ephemeral agents can triage and close issues. Bridge alerts (push)
 # stay on GLITCHTIP_BRIDGE_HMAC_SECRET — separate secret.
 GLITCHTIP_TOKEN=$(ssh "$SERVICES_HOST" 'grep ^GLITCHTIP_API_TOKEN= ~/dev-panel/.env.production | cut -d= -f2 || true')
+# DeepInfra OpenAI-compat — feeds Pi (cheap-tier harness) and Pi-Shelly
+# fallback when Claude Max quota is exhausted. CLAUDE.md "Cheap-tier
+# harness" + "Quota fallback" sections explain. OPENAI_API_KEY mirrors
+# the same value because pi/goose's openai provider reads OPENAI_API_KEY,
+# not DEEPINFRA_API_KEY.
+DEEPINFRA_KEY=$(ssh "$SERVICES_HOST" 'grep ^DEEPINFRA_API_KEY= ~/dev-panel/.env.production | cut -d= -f2 || true')
 
 # AGENT_HUB_URL is fixed to the public services VPS — workers connect over
 # the public Internet via Traefik (TLS, bearer-token auth) rather than over
@@ -78,6 +84,11 @@ PLANE_SHELLY_PASSWORD=${PLANE_SHELLY_PASS}
 # /agents/* to the devpanel container.
 AGENT_HUB_URL=${AGENT_HUB_URL}
 AGENT_HUB_TOKEN=${AGENT_HUB_TOKEN}
+# Cheap-tier harness — Pi/goose via DeepInfra. Worker reads these for
+# the pi-driver path (DRIVER_DEFAULT=pi). Pi-Shelly fallback (shelly-pi.service)
+# also reads them via EnvironmentFile=-/home/deploy/projects/dev-panel/.env.agent.
+DEEPINFRA_API_KEY=${DEEPINFRA_KEY}
+OPENAI_API_KEY=${DEEPINFRA_KEY}
 ENVEOF
 chown deploy:deploy /home/deploy/projects/dev-panel/.env.agent
 chmod 600 /home/deploy/projects/dev-panel/.env.agent

@@ -27,9 +27,13 @@ Environment=PG_USER=affine
 Environment=PG_DATABASE=agent_memory
 Environment=DEVPANEL_STORAGE=/home/deploy/projects/dev-panel/storage
 Environment=PROJECT_ROOT=/home/deploy/projects/dev-panel
-# Shelly's full MCP set — the bridge re-exposes these to Pi as
-# mcp__<server>__<tool>. Includes telegram (which workers strip).
-Environment=SHELLY_MCP_CONFIG=/home/deploy/.mcp.json
+# MCP set used by the per-pi-run mcp-bridge. Telegram is STRIPPED from
+# this file (~/.mcp-shelly-pi.json is rendered by deploy-agents.sh from
+# ~/.mcp.json minus the telegram block). Per-pi-run cannot spawn its own
+# telegram-multi without race-conditioning the long-lived telegram-multi
+# child the loop owns (one-poller-per-token rule, 409 Conflict). Outbound
+# Telegram is handled by the telegram-out Pi extension over HTTP Bot API.
+Environment=SHELLY_MCP_CONFIG=/home/deploy/.mcp-shelly-pi.json
 # DeepInfra knobs — same as the worker Pi path. Override per-deploy via
 # .env.agent if we ever swap providers.
 Environment=SHELLY_PI_PROVIDER=deepinfra
