@@ -14,6 +14,8 @@ export function ChatDrawer({
   environment = null,
   getCaptureContext = null,
   position = 'bottom-right',
+  hideToggle = false,           // hide the floating 💬 bubble (used when DevPanel's FAB menu owns the open trigger)
+  storeRefHandle = null,        // optional ref the parent can read to access the chat store (openDrawer/closeDrawer)
 }) {
   // One store per (mount, sessionId). The ref keeps the same hook reference
   // across renders; sessionId changes are rare but we honour them.
@@ -23,6 +25,10 @@ export function ChatDrawer({
     storeRef.current.__sid = sessionId;
   }
   const useStore = storeRef.current;
+  // Surface the store to the parent on every render — cheap, idempotent.
+  if (storeRefHandle && typeof storeRefHandle === 'object') {
+    storeRefHandle.current = useStore;
+  }
 
   const messages = useStore((s) => s.messages);
   const draft = useStore((s) => s.draft);
@@ -183,15 +189,17 @@ export function ChatDrawer({
 
   return (
     <>
-      <button
-        data-devtool-ignore
-        type="button"
-        aria-label="Open chat"
-        style={toggleStyle}
-        onClick={() => useStore.getState().toggleDrawer()}
-      >
-        💬
-      </button>
+      {!hideToggle && (
+        <button
+          data-devtool-ignore
+          type="button"
+          aria-label="Open chat"
+          style={toggleStyle}
+          onClick={() => useStore.getState().toggleDrawer()}
+        >
+          💬
+        </button>
+      )}
 
       {isOpen && (
         <aside data-devtool-ignore style={drawerStyle}>

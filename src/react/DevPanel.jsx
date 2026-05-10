@@ -128,6 +128,15 @@ export function DevPanel({
   );
 
   const chatSessionId = useMemo(() => (chat ? getOrCreateSessionId() : null), [chat]);
+  // Ref handle to the embedded ChatDrawer's zustand store, so the FAB menu
+  // can open the chat directly instead of the user juggling two FABs. Set
+  // by ChatDrawer once it mounts (see storeRefHandle prop).
+  const chatStoreRef = useRef(null);
+  const openChat = useCallback(() => {
+    const store = chatStoreRef.current;
+    if (store?.getState) store.getState().openDrawer();
+    setMode('idle'); // close the menu popover
+  }, []);
 
   const submitBug = useCallback(async (description) => {
     setSubmitting(true);
@@ -312,6 +321,15 @@ export function DevPanel({
           >
             ✨ Request Feature
           </button>
+          {chat && chatSessionId && (
+            <button
+              data-devtool-ignore
+              style={{ ...menuBtnBase, backgroundColor: '#10b981' }}
+              onClick={openChat}
+            >
+              💬 Chat with Shelly
+            </button>
+          )}
           {labels.length > 0 && (
             <select
               data-devtool-ignore
@@ -414,7 +432,10 @@ export function DevPanel({
         </div>
       )}
 
-      {/* Persistent chat drawer (opt-in via `chat` prop) */}
+      {/* Persistent chat drawer (opt-in via `chat` prop). hideToggle hides
+          the floating 💬 bubble so we expose a single FAB — chat opens via
+          the menu entry above. storeRefHandle gives us programmatic access
+          to openDrawer() from outside. */}
       {chat && chatSessionId && (
         <ChatDrawer
           apiUrl={apiUrl}
@@ -423,6 +444,8 @@ export function DevPanel({
           user={user}
           environment={environment}
           position={position}
+          hideToggle
+          storeRefHandle={chatStoreRef}
         />
       )}
     </>

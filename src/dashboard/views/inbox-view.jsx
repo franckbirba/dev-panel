@@ -77,17 +77,19 @@ function InboxRow({ item, active, onClick, onAction }) {
       <span className="shrink-0 font-mono text-[var(--color-foreground-faint)]" style={{ fontSize: 10 }}>
         {ageLabel(item.age_seconds)}
       </span>
-      <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         <button
           onClick={(e) => { e.stopPropagation(); onAction('dismiss', item); }}
-          className="text-[10px] px-1.5 h-5 rounded hover:bg-[var(--color-success-soft)] text-[var(--color-foreground-faint)] hover:text-[var(--color-success)] cursor-pointer"
-          title="(a)pprove / dismiss"
-        >a</button>
+          className="text-[11px] px-2.5 h-6 rounded font-medium cursor-pointer"
+          style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}
+          title="Dismiss (a)"
+        >Dismiss</button>
         <button
           onClick={(e) => { e.stopPropagation(); onAction('snooze', item); }}
-          className="text-[10px] px-1.5 h-5 rounded hover:bg-[var(--color-warning-soft)] text-[var(--color-foreground-faint)] hover:text-[var(--color-warning)] cursor-pointer"
-          title="(d)efer 24h"
-        >d</button>
+          className="text-[11px] px-2.5 h-6 rounded font-medium cursor-pointer"
+          style={{ background: 'var(--color-warning-soft)', color: 'var(--color-warning)' }}
+          title="Defer 24h (d)"
+        >Defer</button>
       </div>
     </div>
   );
@@ -423,16 +425,23 @@ export function InboxView({ apiUrl, apiKey, refreshKey }) {
         </div>
       </div>
 
-      {/* Detail rail — mounts ThreadPanel for capture/work_item, generic info for others */}
+      {/* Detail rail — mounts ThreadPanel for capture/work_item, generic info for others.
+          Both surfaces get the same Dismiss/Defer/Restore action footer so the row's
+          hover verbs stay reachable when drilled in. */}
       {detailOpen && active && (
         <div className="w-[440px] shrink-0 flex flex-col bg-[var(--color-surface)] border-l border-[var(--color-border-subtle)]">
           {(active.subject_type === 'capture' || active.subject_type === 'work_item' || active.subject_type === 'ticket') ? (
-            <ThreadPanel
-              subject={{ subject_type: active.subject_type, subject_id: active.subject_id, project_id: active.project_id }}
-              apiUrl={apiUrl}
-              apiKey={apiKey}
-              onClose={() => setDetailOpen(false)}
-            />
+            <>
+              <div className="flex-1 min-h-0">
+                <ThreadPanel
+                  subject={{ subject_type: active.subject_type, subject_id: active.subject_id, project_id: active.project_id }}
+                  apiUrl={apiUrl}
+                  apiKey={apiKey}
+                  onClose={() => setDetailOpen(false)}
+                />
+              </div>
+              <DetailActionFooter item={active} onAction={act} />
+            </>
           ) : (
             <GenericDetail item={active} onClose={() => setDetailOpen(false)} onAction={act} />
           )}
@@ -447,6 +456,38 @@ export function InboxView({ apiUrl, apiKey, refreshKey }) {
         onClose={() => setComposerOpen(false)}
         onCreated={() => { setComposerOpen(false); load(); }}
       />
+    </div>
+  );
+}
+
+// Action footer shared by the capture/work_item/ticket rail (which mounts
+// ThreadPanel above it) so the row-hover verbs stay reachable when the
+// user has drilled into the conversation. Same shape as GenericDetail's
+// footer below, kept aligned visually.
+function DetailActionFooter({ item, onAction }) {
+  const isResolved = item.is_resolved || item.status === 'resolved';
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border-subtle)] bg-[var(--color-surface)]">
+      <button
+        onClick={() => onAction('dismiss', item)}
+        className="px-3 h-7 rounded text-[11px] cursor-pointer font-medium"
+        style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}
+        title="Dismiss (a)"
+      >Dismiss (a)</button>
+      <button
+        onClick={() => onAction('snooze', item)}
+        className="px-3 h-7 rounded text-[11px] cursor-pointer font-medium"
+        style={{ background: 'var(--color-warning-soft)', color: 'var(--color-warning)' }}
+        title="Defer 24h (d)"
+      >Defer 24h (d)</button>
+      <div className="flex-1" />
+      {isResolved && (
+        <button
+          onClick={() => onAction('restore', item)}
+          className="px-3 h-7 rounded text-[11px] cursor-pointer text-[var(--color-foreground-faint)] hover:text-[var(--color-foreground)]"
+          title="Restore (r)"
+        >Restore (r)</button>
+      )}
     </div>
   );
 }
