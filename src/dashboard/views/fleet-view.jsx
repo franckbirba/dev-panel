@@ -9,6 +9,7 @@ import { useLiveEvent } from '@/lib/live';
 const STATUS_TONE = {
   running:           { fg: 'var(--color-success)', bg: 'var(--color-success-soft)', label: 'RUNNING'   },
   awaiting_approval: { fg: 'var(--color-warning)', bg: 'var(--color-warning-soft)', label: 'WAITING'   },
+  awaiting_input:    { fg: 'var(--color-info)',    bg: 'var(--color-info-soft)',    label: 'ASKING'    },
   blocked:           { fg: 'var(--color-error)',   bg: 'var(--color-error-soft)',   label: 'BLOCKED'   },
   exhausted:         { fg: 'var(--color-error)',   bg: 'var(--color-error-soft)',   label: 'EXHAUSTED' },
   done:              { fg: 'var(--color-success)', bg: 'var(--color-success-soft)', label: 'DONE'      },
@@ -156,6 +157,34 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
   const [error, setError] = useState(null);
   const [reply, setReply] = useState('');
   const [replyOpen, setReplyOpen] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState(null);
+
+  // When the workflow is in awaiting_input, fetch the latest unanswered
+  // question so we can render it inline above the reply box. The agent has
+  // told us exactly what it's stuck on — show it.
+  useEffect(() => {
+    if (row.status !== 'awaiting_input' || !row.last_job_id) {
+      setPendingQuestion(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `${apiUrl}/api/jobs/${encodeURIComponent(row.last_job_id)}/inbox/history`,
+          { headers: { 'X-API-Key': apiKey } }
+        );
+        if (!r.ok) return;
+        const { messages = [] } = await r.json();
+        // Latest unconsumed agent_question = the one waiting for an answer.
+        const q = [...messages].reverse().find(
+          m => m.role === 'agent_question' && !m.consumed_at
+        );
+        if (!cancelled) setPendingQuestion(q || null);
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [row.status, row.last_job_id, apiUrl, apiKey]);
 
   async function postFleetAction(action, body = {}) {
     setBusy(true); setError(null);
@@ -181,21 +210,62 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
     onClose();
   }
 
-  // Reply hits the existing /api/threads/:type/:id/messages — the same
-  // pipe Shelly uses for capture/work_item conversations. Lands in
-  // Telegram with the [thread:work_item/<id>] tag so the response routes
-  // back. This is the "talk to the agent that's stuck" affordance.
+  // Reply routes by workflow status:
+  //  - awaiting_input  → POST /api/jobs/:job_id/inbox/reply
+  //                      The agent is paused on `await_human` and will
+  //                      resume the moment this row hits job_inbox.
+  //  - everything else → POST /api/threads/work_item/:id/messages
+  //                      Same pipe Shelly uses for capture/work_item
+  //                      conversations. Lands in Telegram with the
+  //                      [thread:work_item/<id>] tag.
   async function sendReply() {
     if (!reply.trim()) return;
     setBusy(true); setError(null);
     try {
-      const r = await fetch(`${apiUrl}/api/threads/work_item/${encodeURIComponent(row.work_item_id)}/messages`, {
+      const isAwaitingInput = row.status === 'awaiting_input' && row.last_job_id;
+      const url = isAwaitingInput
+        ? `${apiUrl}/api/jobs/${encodeURIComponent(row.last_job_id)}/inbox/reply`
+        : `${apiUrl}/api/threads/work_item/${encodeURIComponent(row.work_item_id)}/messages`;
+      const body = isAwaitingInput
+        ? {
+            answer: reply.trim(),
+            source: 'dashboard',
+            work_item_id: row.work_item_id,
+            workflow_name: row.workflow,
+          }
+        : { content: reply.trim(), role: 'user' };
+      const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: JSON.stringify({ content: reply.trim(), role: 'user' }),
+        body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
       setReply(''); setReplyOpen(false);
+      onRefresh?.();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  // One-tap reply for inline keyboard options on the dashboard side.
+  async function sendOptionReply(answer) {
+    if (!row.last_job_id) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(
+        `${apiUrl}/api/jobs/${encodeURIComponent(row.last_job_id)}/inbox/reply`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+          body: JSON.stringify({
+            answer,
+            source: 'dashboard',
+            work_item_id: row.work_item_id,
+            workflow_name: row.workflow,
+          }),
+        }
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+      setPendingQuestion(null);
       onRefresh?.();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -204,6 +274,7 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
   const startedDate = asDate(row.started_at);
   const isBlocked = ['blocked', 'exhausted'].includes(row.status);
   const isWaiting = row.status === 'awaiting_approval';
+  const isAwaitingInput = row.status === 'awaiting_input';
   const isRunning = row.status === 'running';
   const isTerminal = ['done', 'cancelled'].includes(row.status);
 
@@ -241,6 +312,55 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
           )}
         </dl>
 
+        {/* Agent is asking — render the question prominently. If the agent
+            offered options, show them as one-tap buttons. Otherwise the
+            normal Reply composer below picks up the typed answer. */}
+        {isAwaitingInput && pendingQuestion && (
+          <div className="border-t border-[var(--color-border-subtle)] pt-4">
+            <div className="text-[10px] uppercase tracking-widest text-[var(--color-info)] mb-2">
+              Agent is asking
+            </div>
+            <div className="text-[13px] text-[var(--color-foreground)] mb-2 whitespace-pre-wrap">
+              {pendingQuestion.content?.prompt || '(no prompt)'}
+            </div>
+            {pendingQuestion.kind === 'tool_approval' && pendingQuestion.content?.tool && (
+              <div className="text-[11px] text-[var(--color-foreground-faint)] font-mono mb-2">
+                Tool: {pendingQuestion.content.tool}
+                {pendingQuestion.content.args && (
+                  <pre className="mt-1 p-2 rounded bg-[var(--color-surface-2)] overflow-x-auto text-[10px]">
+                    {JSON.stringify(pendingQuestion.content.args, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
+            {Array.isArray(pendingQuestion.content?.options) && pendingQuestion.content.options.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {pendingQuestion.content.options.map(opt => (
+                  <button key={opt} onClick={() => sendOptionReply(opt)} disabled={busy}
+                    className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50"
+                    style={{ background: 'var(--color-info-soft)', color: 'var(--color-info)' }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            )}
+            {pendingQuestion.kind === 'tool_approval' && (
+              <div className="flex gap-1.5 mb-2">
+                <button onClick={() => sendOptionReply('allow')} disabled={busy}
+                  className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50 font-medium"
+                  style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}>
+                  Allow
+                </button>
+                <button onClick={() => sendOptionReply('deny')} disabled={busy}
+                  className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50 font-medium"
+                  style={{ background: 'var(--color-error-soft)', color: 'var(--color-error)' }}>
+                  Deny
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="border-t border-[var(--color-border-subtle)] pt-4">
           <div className="text-[10px] uppercase tracking-widest text-[var(--color-foreground-faint)] mb-2">Autonomy</div>
           <div className="flex gap-1">
@@ -256,13 +376,19 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
           </div>
         </div>
 
-        {/* Reply composer — opens a thread to the agent. Same pipe Shelly
-            uses, so the message lands in Telegram with the right tag. */}
+        {/* Reply composer — when status is awaiting_input, posts to the
+            inbox and unblocks the agent immediately. Otherwise opens a
+            thread to the work item (same pipe Shelly uses, lands in
+            Telegram with the [thread:work_item/<id>] tag). */}
         {replyOpen && (
           <div className="border-t border-[var(--color-border-subtle)] pt-4">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--color-foreground-faint)] mb-2">Reply to agent</div>
+            <div className="text-[10px] uppercase tracking-widest text-[var(--color-foreground-faint)] mb-2">
+              {isAwaitingInput ? 'Answer the agent' : 'Reply to agent'}
+            </div>
             <textarea value={reply} onChange={e => setReply(e.target.value)} rows={3}
-              placeholder="What does the agent need to know?"
+              placeholder={isAwaitingInput
+                ? 'Type your answer — the agent resumes the moment you send.'
+                : 'What does the agent need to know?'}
               className="w-full px-2 py-1.5 text-[12px] rounded outline-none resize-none"
               style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-foreground)' }} />
             <div className="flex gap-2 mt-2">
@@ -272,7 +398,7 @@ function DetailRail({ row, apiUrl, apiKey, onClose, onRefresh }) {
               <button onClick={sendReply} disabled={busy || !reply.trim()}
                 className="px-3 h-7 rounded text-[11px] cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--color-foreground)', color: 'var(--color-background)' }}>
-                Send
+                {isAwaitingInput ? 'Send & resume' : 'Send'}
               </button>
             </div>
           </div>

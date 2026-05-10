@@ -146,7 +146,7 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  *  - Raw stderr is appended to storage/agent-logs/<jobId>.err.log.
  *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
-function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
+function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, meta = {}) {
   // Cheap-tier harness routing:
   //   DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3 (legacy cheap path;
   //                           40s/$0.002 on toys, unproven on real DEVPA)
@@ -202,6 +202,13 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT) {
         ...process.env,
         JOB_ID: jobId,
         AGENT_ROLE: agentRole,
+        // HITL context for the await_human MCP tool. When set, the tool
+        // can flip workflow_instances.status to 'awaiting_input' on
+        // pause and back to 'running' on resume. When absent, the tool
+        // still works at the inbox level but can't drive the workflow
+        // state machine.
+        ...(meta.work_item_id ? { WORK_ITEM_ID: meta.work_item_id } : {}),
+        ...(meta.workflow_name ? { WORKFLOW_NAME: meta.workflow_name } : {}),
         PATH: [
           join(process.env.HOME || '/home/deploy', '.bun/bin'),
           join(process.env.HOME || '/home/deploy', '.local/bin'),
@@ -384,7 +391,16 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // resolved repoRoot — non-coding agents (pm/architect/designer) on
     // cross-project work still need to be IN the target repo so any tools
     // that shell out (cat, grep) find the right files.
-    const output = await spawnAgent(jobData.job_id, prompt, jobData.agent, worktree?.path || repoRoot);
+    const output = await spawnAgent(
+      jobData.job_id,
+      prompt,
+      jobData.agent,
+      worktree?.path || repoRoot,
+      {
+        work_item_id: jobData.plane?.work_item_id || null,
+        workflow_name: jobData.workflow || null,
+      }
+    );
 
     // Parse result (strict: returns { ok, data } | { ok: false, error })
     const parsed = parseResult(output);

@@ -159,6 +159,91 @@ export class AlertManager {
 export const alertManager = new AlertManager();
 
 // ============================================================================
+// notifyEvent — multi-recipient dispatcher (DEVPA-185 Step 5).
+// Spec: docs/superpowers/specs/2026-05-09-agent-interactivity-v2-design.md
+//
+// Resolves recipients from notify-routing + studio_members, then sends one
+// Telegram DM per destination. Replaces the single-chat-id legacy path of
+// notifyJob() once callers migrate to it. SUPERGROUP_ENABLED is reserved
+// for Step 6 — today the dm: field is the only output path.
+// ============================================================================
+
+let _notifyRoutingMod = null;
+let _studioMembersMod = null;
+
+async function getRoutingMod() {
+  if (_notifyRoutingMod === null) {
+    _notifyRoutingMod = await import('./notify-routing.js');
+  }
+  return _notifyRoutingMod;
+}
+
+async function getStudioMod() {
+  if (_studioMembersMod === null) {
+    _studioMembersMod = await import('./studio-members.js');
+  }
+  return _studioMembersMod;
+}
+
+export async function notifyEvent({ kind, text, payload = {} }) {
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    return { sent: 0, skipped: 'no_token' };
+  }
+  const routing = await getRoutingMod();
+  const studio = await getStudioMod();
+
+  const dests = await routing.resolveDestinations({ kind, payload, studio });
+  const supergroup = routing.resolveSupergroupTopic({ kind, payload });
+
+  if (dests.length === 0 && !supergroup) {
+    return { sent: 0 };
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  let sent = 0, failed = 0;
+
+  // Per-destination DMs.
+  await Promise.all(dests.map(async ({ chat_id, display_name }) => {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(chat_id), text }),
+      });
+      if (r.ok) sent += 1;
+      else failed += 1;
+    } catch (err) {
+      failed += 1;
+      console.warn(`[notifyEvent] DM to ${display_name} (${chat_id}) failed:`, err.message);
+    }
+  }));
+
+  // Supergroup post (Step 6) — same body, with message_thread_id pointing
+  // at the right topic. Only fires when SUPERGROUP_ENABLED=true and the
+  // topic resolves.
+  if (supergroup) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: String(supergroup.chat_id),
+          message_thread_id: supergroup.message_thread_id,
+          text,
+        }),
+      });
+      if (r.ok) sent += 1;
+      else failed += 1;
+    } catch (err) {
+      failed += 1;
+      console.warn(`[notifyEvent] supergroup ${supergroup.topic_name} failed:`, err.message);
+    }
+  }
+
+  return { sent, failed };
+}
+
+// ============================================================================
 // notifyJob — plain-ASCII per-job notification used by the worker automation matrix
 // ============================================================================
 

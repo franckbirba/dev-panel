@@ -7,6 +7,20 @@
 
 import { pool as pgPool } from './pg.js';
 import { enrichWorkItems } from './plane-enrich.js';
+import {
+  postQuestion as inboxPostQuestion,
+  postReply as inboxPostReply,
+  readNextReply as inboxReadNextReply,
+  cancelPending as inboxCancelPending,
+  listForJob as inboxListForJob,
+} from './job-inbox.js';
+import { updateInstance as updateWorkflowInstance } from './workflow-instances.js';
+import {
+  sendInboxQuestion as tgSendInboxQuestion,
+  confirmReply as tgConfirmReply,
+  resolveForceReply as tgResolveForceReply,
+  clearPendingReply as tgClearPendingReply,
+} from './telegram-hitl.js';
 
 async function safeQuery(sql, params) {
   try {
@@ -17,7 +31,18 @@ async function safeQuery(sql, params) {
   }
 }
 
-export function defineFleetRoutes(router, authenticateProject) {
+export function defineFleetRoutes(router, authenticateProject, authenticateAdmin = null) {
+  // Auth helper for inbox endpoints: dashboard uses project key (X-API-Key),
+  // the agent's MCP context uses admin key (X-Admin-Key). Accept either.
+  // If authenticateAdmin isn't provided (older callers / tests), fall back
+  // to project-only.
+  function authenticateProjectOrAdmin(req, res, next) {
+    if (req.headers['x-admin-key'] && authenticateAdmin) {
+      return authenticateAdmin(req, res, next);
+    }
+    return authenticateProject(req, res, next);
+  }
+
   // GET /api/fleet?status=active|all&limit=
   // Returns { agents: [...], shelly: {...} }
   // Each agent row: workflow + last step + autonomy + recency.
@@ -27,7 +52,7 @@ export function defineFleetRoutes(router, authenticateProject) {
 
     let where;
     if (status === 'active') {
-      where = `WHERE status IN ('running','awaiting_approval','blocked')`;
+      where = `WHERE status IN ('running','awaiting_approval','awaiting_input','blocked')`;
     } else {
       where = `WHERE last_event_at > now() - interval '24 hours'`;
     }
@@ -123,10 +148,24 @@ export function defineFleetRoutes(router, authenticateProject) {
     const id = parseInt(req.params.instance_id, 10);
     if (!id) return res.status(400).json({ error: 'instance_id required' });
     try {
+      const cur = await pgPool.query(
+        `SELECT last_job_id FROM workflow_instances WHERE id = $1`,
+        [id]
+      );
       await pgPool.query(
         `UPDATE workflow_instances SET status='cancelled', last_event_at=$2 WHERE id = $1`,
         [id, Date.now()]
       );
+      // Cancel any pending await_human row so the agent's long-poll exits
+      // cleanly instead of hanging until timeout.
+      const lastJobId = cur.rows[0]?.last_job_id;
+      if (lastJobId) {
+        try {
+          await inboxCancelPending({ job_id: lastJobId });
+        } catch (e) {
+          console.warn('[fleet/cancel] inbox cancel failed (non-fatal):', e.message);
+        }
+      }
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -248,6 +287,184 @@ export function defineFleetRoutes(router, authenticateProject) {
         [JSON.stringify(md), id]
       );
       res.json({ ok: true, autonomy });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================================
+  // HITL inbox — `await_human` primitive.
+  // Spec: docs/superpowers/specs/2026-05-09-agent-interactivity-v2-design.md
+  //
+  // Auth: project key (dashboard) OR admin key (agent's MCP context). Both
+  // routes must accept either, since the same surface is read/written by
+  // dashboard humans and the running agent.
+  // ============================================================================
+
+  // POST /api/jobs/:job_id/inbox/question
+  // Called by the await_human MCP tool when the agent needs human input.
+  // Body: { kind: 'clarification' | 'tool_approval', content: object }
+  // Side effect: flips the matching workflow_instance to 'awaiting_input' so
+  // the dashboard renders the right state.
+  router.post('/jobs/:job_id/inbox/question', authenticateProjectOrAdmin, async (req, res) => {
+    const { job_id } = req.params;
+    const { kind, content, work_item_id, workflow_name } = req.body || {};
+    if (!job_id) return res.status(400).json({ error: 'job_id required' });
+    if (!['clarification', 'tool_approval'].includes(kind)) {
+      return res.status(400).json({ error: 'kind must be clarification or tool_approval' });
+    }
+    if (!content || typeof content !== 'object') {
+      return res.status(400).json({ error: 'content object required' });
+    }
+    try {
+      const row = await inboxPostQuestion({ job_id, kind, content });
+      // Best-effort flip the workflow status. Some callers may not have a
+      // workflow_instance (e.g. ad-hoc jobs) — don't fail the question post
+      // on a missing instance.
+      if (work_item_id && workflow_name) {
+        try {
+          await updateWorkflowInstance(
+            { work_item_id, workflow_name },
+            { status: 'awaiting_input' }
+          );
+        } catch (e) {
+          console.warn('[inbox/question] workflow flip failed (non-fatal):', e.message);
+        }
+      }
+      // Fire-and-forget Telegram send — must not block the agent's
+      // long-poll if Telegram is unreachable, and must not 500 the
+      // question post.
+      tgSendInboxQuestion({
+        job_id,
+        inbox_seq: row.seq,
+        kind,
+        content,
+      }).catch(err => console.warn('[inbox/question] telegram send failed (non-fatal):', err.message));
+      res.status(201).json({ ok: true, question: row });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/jobs/:job_id/inbox/reply
+  // Called by the dashboard reply composer or the Telegram callback handler
+  // when a human answers the agent's question.
+  // Body: { answer: string, callback_query_id?: string, source?: 'dashboard'|'telegram'|'shelly' }
+  router.post('/jobs/:job_id/inbox/reply', authenticateProjectOrAdmin, async (req, res) => {
+    const { job_id } = req.params;
+    const {
+      answer, callback_query_id, source, work_item_id, workflow_name,
+      tg_chat_id, tg_message_id, original_prompt,
+    } = req.body || {};
+    if (!job_id) return res.status(400).json({ error: 'job_id required' });
+    if (typeof answer !== 'string' || !answer.trim()) {
+      return res.status(400).json({ error: 'answer string required' });
+    }
+    try {
+      const result = await inboxPostReply({
+        job_id,
+        answer: answer.trim(),
+        callback_query_id: callback_query_id || null,
+        source: source || 'dashboard',
+      });
+      // Flip the workflow status back to running so the worker resumes it.
+      if (!result.duplicate && work_item_id && workflow_name) {
+        try {
+          await updateWorkflowInstance(
+            { work_item_id, workflow_name },
+            { status: 'running' }
+          );
+        } catch (e) {
+          console.warn('[inbox/reply] workflow flip failed (non-fatal):', e.message);
+        }
+      }
+      // If the reply came from Telegram (tg_chat_id + tg_message_id
+      // provided), update the original message in-place to show the
+      // chosen answer, and drop any ForceReply pending-row.
+      if (!result.duplicate && tg_chat_id != null && tg_message_id != null) {
+        tgConfirmReply({
+          tg_chat_id,
+          tg_message_id,
+          original_prompt: original_prompt || null,
+          answer: answer.trim(),
+          source: source || 'telegram',
+        }).catch(err => console.warn('[inbox/reply] tg edit failed:', err.message));
+        tgClearPendingReply({ tg_chat_id, tg_message_id })
+          .catch(err => console.warn('[inbox/reply] tg clear failed:', err.message));
+      }
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      // "no pending question" is a 409 (conflict) not a 500 — caller raced.
+      if (/no pending question/.test(e.message)) {
+        return res.status(409).json({ error: e.message });
+      }
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/jobs/:job_id/inbox?after_seq=N
+  // Used by the await_human MCP tool to long-poll for the human's answer.
+  // Returns 200 with { reply } if a row arrived, or 204 if nothing yet.
+  router.get('/jobs/:job_id/inbox', authenticateProjectOrAdmin, async (req, res) => {
+    const { job_id } = req.params;
+    const after_seq = parseInt(req.query.after_seq, 10) || 0;
+    if (!job_id) return res.status(400).json({ error: 'job_id required' });
+    try {
+      const reply = await inboxReadNextReply({ job_id, after_seq });
+      if (!reply) return res.status(204).end();
+      res.json({ reply });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/jobs/:job_id/inbox/history
+  // Full transcript for the dashboard to render.
+  router.get('/jobs/:job_id/inbox/history', authenticateProjectOrAdmin, async (req, res) => {
+    const { job_id } = req.params;
+    if (!job_id) return res.status(400).json({ error: 'job_id required' });
+    try {
+      const rows = await inboxListForJob(job_id);
+      res.json({ messages: rows });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/telegram/inbox/resolve?chat_id=&message_id=
+  // Plugin-side helper: resolve a Telegram message_id (the bot's outbound
+  // question) to its job_id + inbox_seq. Used by the ForceReply handler in
+  // plugins/telegram-multi/server.ts before POSTing to /inbox/reply.
+  // Admin-key only — this is plugin-internal plumbing, not a public surface.
+  router.get('/telegram/inbox/resolve', async (req, res) => {
+    if (!authenticateAdmin) {
+      return res.status(501).json({ error: 'admin auth not configured' });
+    }
+    authenticateAdmin(req, res, async () => {
+      const tg_chat_id = req.query.chat_id;
+      const tg_message_id = req.query.message_id;
+      if (!tg_chat_id || !tg_message_id) {
+        return res.status(400).json({ error: 'chat_id and message_id required' });
+      }
+      try {
+        const found = await tgResolveForceReply({ tg_chat_id, tg_message_id });
+        if (!found) return res.status(404).json({ error: 'not found' });
+        res.json({ ok: true, ...found });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+  });
+
+  // POST /api/jobs/:job_id/inbox/cancel
+  // Marks pending agent_question rows as cancelled. Used by the workflow
+  // cancellation path so a paused agent doesn't long-poll forever.
+  router.post('/jobs/:job_id/inbox/cancel', authenticateProjectOrAdmin, async (req, res) => {
+    const { job_id } = req.params;
+    if (!job_id) return res.status(400).json({ error: 'job_id required' });
+    try {
+      const result = await inboxCancelPending({ job_id });
+      res.json({ ok: true, ...result });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

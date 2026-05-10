@@ -61,6 +61,25 @@ export async function loadAllowlist(): Promise<Set<string>> {
   return new Set(rows.map(r => String(r.tg_user_id)));
 }
 
+export async function loadStudioMembers(): Promise<Set<string>> {
+  // studio_members is the studio-wide identity table (Step 3 of agent
+  // interactivity v2). Used by the adapter whitelist filter to drop
+  // chatter from non-studio humans BEFORE the message reaches Claude's
+  // context (avoiding token burn + context pollution at headcount=5).
+  // Returns an empty Set if the table doesn't exist (running against an
+  // older pg without migration 012 applied).
+  try {
+    const { rows } = await getPool().query(
+      `SELECT tg_user_id FROM studio_members`
+    );
+    return new Set(rows.map(r => String(r.tg_user_id)));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/relation .* does not exist/i.test(msg)) return new Set();
+    throw err;
+  }
+}
+
 export async function addToAllowlist(tgUserId: bigint, firstName: string | null, addedVia: string): Promise<void> {
   await getPool().query(
     `INSERT INTO dev_bot_allowlist (tg_user_id, first_name, added_via)

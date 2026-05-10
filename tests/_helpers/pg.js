@@ -21,6 +21,9 @@ const MIGRATIONS = [
   resolve(__dirname, '../../infra/migrations/004-dev-bots.sql'),
   resolve(__dirname, '../../infra/migrations/005-dev-bot-allowlist.sql'),
   resolve(__dirname, '../../infra/migrations/006-team-routing.sql'),
+  resolve(__dirname, '../../infra/migrations/010-job-inbox.sql'),
+  resolve(__dirname, '../../infra/migrations/011-telegram-pending-replies.sql'),
+  resolve(__dirname, '../../infra/migrations/012-studio-members.sql'),
 ];
 
 let containerId = null;
@@ -97,7 +100,7 @@ export async function stopPg() {
 export async function truncateOrchestration() {
   if (!poolRef) throw new Error('startPg() must be called first');
   await poolRef.query(
-    `TRUNCATE workflow_instances, agent_job_log, agent_job_events, agent_memory_writes RESTART IDENTITY`
+    `TRUNCATE workflow_instances, agent_job_log, agent_job_events, agent_memory_writes, job_inbox, telegram_pending_replies RESTART IDENTITY`
   );
 }
 
@@ -106,6 +109,11 @@ export async function truncateTeam() {
   await poolRef.query(
     `TRUNCATE team_routing, team_members, dev_bot_allowlist, dev_bots RESTART IDENTITY CASCADE`
   );
+}
+
+export async function truncateStudioMembers() {
+  if (!poolRef) throw new Error('startPg() must be called first');
+  await poolRef.query(`TRUNCATE studio_members RESTART IDENTITY`);
 }
 
 export function getPool() {
