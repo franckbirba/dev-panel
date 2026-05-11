@@ -24,7 +24,7 @@ const config = {
     vite.plugins.push(tailwindcss());
 
     // Per-project "@" alias resolved via a Vite plugin (not resolve.alias)
-    // so that the rewrite depends on the *importer* path. A story under
+    // so the rewrite depends on the *importer* path. A story under
     // /stories/<slug>/foo.stories.jsx that writes `import ... from "@/..."`
     // resolves into its own project's /stories/<slug>/_src/ subtree.
     // resolve.alias's customResolver isn't reliably invoked by Vite's
