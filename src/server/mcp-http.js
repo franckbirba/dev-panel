@@ -66,14 +66,7 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
   };
 
-  app.post(path, handler);
-  app.get(path, (req, res) => {
-    res.status(405).json({
-      jsonrpc: '2.0',
-      error: { code: -32000, message: 'Method Not Allowed (use POST)' },
-      id: null,
-    });
-  });
+  app.use(path, handler);
 
   console.log(`[mcp-http] mounted at ${path}`);
   return true;
