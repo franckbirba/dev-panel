@@ -10,29 +10,40 @@
 // at the boundary. TS at compile time + defensive parse at the seam is
 // what the codebase converged to; respecting that convention keeps the
 // contract in one file the LLM and humans can both grok.
+//
+// The runtime parser lives in `src/packages/chat-renderer/parser.js` so
+// the widget (plain JS, Vite bundle) and the dashboard (TS, Next bundle)
+// share one implementation. This file owns the *types* and re-exports
+// the runtime so existing imports stay green (DEVPA-210).
+
+import {
+	extractRendererPayload as extractRendererPayloadRuntime,
+	parseRendererPayload as parseRendererPayloadRuntime,
+	RENDERER_PAYLOAD_TYPES as RUNTIME_PAYLOAD_TYPES,
+} from "../../../src/packages/chat-renderer/parser.js";
 
 // ─── Shared primitives ──────────────────────────────────────────────────
 
 export type Severity = "trace" | "info" | "warn" | "error" | "sync";
 
 export type JobState =
-  | "queued"
-  | "running"
-  | "success"
-  | "failed"
-  | "blocked"
-  | "cancelled";
+	| "queued"
+	| "running"
+	| "success"
+	| "failed"
+	| "blocked"
+	| "cancelled";
 
 export interface InlineActionChip {
-  /** Stable id used by handlers + analytics. */
-  id: string;
-  /** Short label rendered on the chip. 1–3 words. */
-  label: string;
-  /** Optional payload posted back as a user turn when clicked. Same
-   *  contract as Telegram inline-keyboard callback_data. */
-  payload?: string;
-  /** Optional variant for emphasis — defaults to "default". */
-  variant?: "default" | "primary" | "danger";
+	/** Stable id used by handlers + analytics. */
+	id: string;
+	/** Short label rendered on the chip. 1–3 words. */
+	label: string;
+	/** Optional payload posted back as a user turn when clicked. Same
+	 *  contract as Telegram inline-keyboard callback_data. */
+	payload?: string;
+	/** Optional variant for emphasis — defaults to "default". */
+	variant?: "default" | "primary" | "danger";
 }
 
 // ─── Variant payloads ───────────────────────────────────────────────────
@@ -42,17 +53,17 @@ export interface InlineActionChip {
  * Source mock: "Zeno Orchestrator" pane (Schema_Builder_v4 72%, …).
  */
 export interface JobStatusPayload {
-  type: "job-status";
-  job_id: string;
-  /** Human-friendly name. */
-  name: string;
-  state: JobState;
-  /** 0–100. Omit for indeterminate states. */
-  progress?: number;
-  /** Optional one-line status text — "Compiling 3 of 5 modules…". */
-  detail?: string;
-  /** Optional ISO timestamp of last update. */
-  updated_at?: string;
+	type: "job-status";
+	job_id: string;
+	/** Human-friendly name. */
+	name: string;
+	state: JobState;
+	/** 0–100. Omit for indeterminate states. */
+	progress?: number;
+	/** Optional one-line status text — "Compiling 3 of 5 modules…". */
+	detail?: string;
+	/** Optional ISO timestamp of last update. */
+	updated_at?: string;
 }
 
 /**
@@ -60,17 +71,17 @@ export interface JobStatusPayload {
  * Auto-scrolls unless the user scrolled up.
  */
 export interface ConsoleStreamLine {
-  ts?: string;
-  severity?: Severity;
-  text: string;
+	ts?: string;
+	severity?: Severity;
+	text: string;
 }
 
 export interface ConsoleStreamPayload {
-  type: "console-stream";
-  title: string;
-  lines: ConsoleStreamLine[];
-  /** Tail liveness — affects the dot indicator. */
-  state?: "connecting" | "connected" | "reconnecting" | "disconnected";
+	type: "console-stream";
+	title: string;
+	lines: ConsoleStreamLine[];
+	/** Tail liveness — affects the dot indicator. */
+	state?: "connecting" | "connected" | "reconnecting" | "disconnected";
 }
 
 /**
@@ -78,25 +89,25 @@ export interface ConsoleStreamPayload {
  * not raw bytes (those stream over a separate channel).
  */
 export interface TerminalSessionPayload {
-  type: "terminal-session";
-  session_id: string;
-  host: string;
-  user?: string;
-  /** Short prompt string ("deploy@hetzner:~"). */
-  prompt?: string;
-  /** Initial buffer to render before the live stream attaches. */
-  initial_lines?: string[];
-  /** Sidecar metadata — host metrics + security context. */
-  metrics?: {
-    load?: [number, number, number];
-    memory_used?: string;
-    memory_total?: string;
-  };
-  security?: {
-    label: string;
-    detail?: string;
-    variant?: "ok" | "warn" | "danger";
-  }[];
+	type: "terminal-session";
+	session_id: string;
+	host: string;
+	user?: string;
+	/** Short prompt string ("deploy@hetzner:~"). */
+	prompt?: string;
+	/** Initial buffer to render before the live stream attaches. */
+	initial_lines?: string[];
+	/** Sidecar metadata — host metrics + security context. */
+	metrics?: {
+		load?: [number, number, number];
+		memory_used?: string;
+		memory_total?: string;
+	};
+	security?: {
+		label: string;
+		detail?: string;
+		variant?: "ok" | "warn" | "danger";
+	}[];
 }
 
 /**
@@ -104,18 +115,18 @@ export interface TerminalSessionPayload {
  * and the agent's recovery question to the user.
  */
 export interface ErrorHaltPayload {
-  type: "error-halt";
-  /** Structured error code (e.g. "ENV_SECRET_MISSING"). */
-  error_code: string;
-  /** One-sentence human message. */
-  message: string;
-  /** Source — agent name or component that halted. */
-  source?: string;
-  /** The recovery question shown to the user. */
-  recovery_prompt?: string;
-  /** Optional chips beneath the question — wired to the inline-actions
-   *  contract so the same payload format works on Telegram + dashboard. */
-  actions?: InlineActionChip[];
+	type: "error-halt";
+	/** Structured error code (e.g. "ENV_SECRET_MISSING"). */
+	error_code: string;
+	/** One-sentence human message. */
+	message: string;
+	/** Source — agent name or component that halted. */
+	source?: string;
+	/** The recovery question shown to the user. */
+	recovery_prompt?: string;
+	/** Optional chips beneath the question — wired to the inline-actions
+	 *  contract so the same payload format works on Telegram + dashboard. */
+	actions?: InlineActionChip[];
 }
 
 /**
@@ -123,9 +134,9 @@ export interface ErrorHaltPayload {
  * present a closed set of replies without rendering a parent card.
  */
 export interface InlineActionsPayload {
-  type: "inline-actions";
-  prompt?: string;
-  actions: InlineActionChip[];
+	type: "inline-actions";
+	prompt?: string;
+	actions: InlineActionChip[];
 }
 
 /**
@@ -134,24 +145,24 @@ export interface InlineActionsPayload {
  * settled and capabilities can already emit it.
  */
 export interface ReactCanvasSlot {
-  kind: "diagram" | "image" | "table" | "chart" | "meta";
-  title?: string;
-  body?: string;
+	kind: "diagram" | "image" | "table" | "chart" | "meta";
+	title?: string;
+	body?: string;
 }
 
 export interface ReactCanvasPayload {
-  type: "react-canvas";
-  filename?: string;
-  /** TSX source. Compiled+sandboxed by the renderer in DEVPA-220. */
-  tsx: string;
-  /** Allowed deps the sandbox should resolve. Validated against an
-   *  allowlist server-side before stream. */
-  deps?: string[];
-  /** Theme tokens read from the host registry — keys, not values. */
-  theme?: string[];
-  slots?: ReactCanvasSlot[];
-  /** Reported bundle size in bytes (post-compile). */
-  bundle_size?: number;
+	type: "react-canvas";
+	filename?: string;
+	/** TSX source. Compiled+sandboxed by the renderer in DEVPA-220. */
+	tsx: string;
+	/** Allowed deps the sandbox should resolve. Validated against an
+	 *  allowlist server-side before stream. */
+	deps?: string[];
+	/** Theme tokens read from the host registry — keys, not values. */
+	theme?: string[];
+	slots?: ReactCanvasSlot[];
+	/** Reported bundle size in bytes (post-compile). */
+	bundle_size?: number;
 }
 
 /**
@@ -159,96 +170,59 @@ export interface ReactCanvasPayload {
  * Source mock: ENV INJECTION QUEUE.
  */
 export interface QueueItem {
-  id: string;
-  label: string;
-  state: "pending" | "waiting_for_input" | "approved" | "rejected" | "expired";
-  detail?: string;
-  /** Per-item chips (e.g. "Approve" / "Reject"). */
-  actions?: InlineActionChip[];
+	id: string;
+	label: string;
+	state: "pending" | "waiting_for_input" | "approved" | "rejected" | "expired";
+	detail?: string;
+	/** Per-item chips (e.g. "Approve" / "Reject"). */
+	actions?: InlineActionChip[];
 }
 
 export interface QueueCardPayload {
-  type: "queue-card";
-  title: string;
-  items: QueueItem[];
-  /** Optional summary footer. */
-  footer?: string;
+	type: "queue-card";
+	title: string;
+	items: QueueItem[];
+	/** Optional summary footer. */
+	footer?: string;
 }
 
 // ─── Discriminated union + helpers ──────────────────────────────────────
 
 export type RendererPayload =
-  | JobStatusPayload
-  | ConsoleStreamPayload
-  | TerminalSessionPayload
-  | ErrorHaltPayload
-  | InlineActionsPayload
-  | ReactCanvasPayload
-  | QueueCardPayload;
+	| JobStatusPayload
+	| ConsoleStreamPayload
+	| TerminalSessionPayload
+	| ErrorHaltPayload
+	| InlineActionsPayload
+	| ReactCanvasPayload
+	| QueueCardPayload;
 
 export type RendererPayloadType = RendererPayload["type"];
 
-export const RENDERER_PAYLOAD_TYPES = [
-  "job-status",
-  "console-stream",
-  "terminal-session",
-  "error-halt",
-  "inline-actions",
-  "react-canvas",
-  "queue-card",
-] as const satisfies readonly RendererPayloadType[];
+export const RENDERER_PAYLOAD_TYPES =
+	RUNTIME_PAYLOAD_TYPES as readonly RendererPayloadType[];
 
-function isObject(x: unknown): x is Record<string, unknown> {
-  return typeof x === "object" && x !== null && !Array.isArray(x);
+export function parseRendererPayload(input: unknown): RendererPayload | null {
+	return parseRendererPayloadRuntime(input) as RendererPayload | null;
 }
 
-function hasStringField(o: Record<string, unknown>, k: string): boolean {
-  return typeof o[k] === "string";
-}
-
-function hasArrayField(o: Record<string, unknown>, k: string): boolean {
-  return Array.isArray(o[k]);
+export function extractRendererPayload(
+	result: unknown,
+): RendererPayload | null {
+	return extractRendererPayloadRuntime(result) as RendererPayload | null;
 }
 
 /**
- * Narrow an unknown payload to a RendererPayload. Returns null on shape
- * mismatch — the caller falls back to ToolFallback. We validate only the
- * discriminator + the small set of fields each card actually needs to
- * render; everything else is treated as opt-in.
+ * Host registry contract. Each chat surface (dashboard, widget, future
+ * whitelabel) supplies a map binding a payload type to its React component.
+ * Partial — a surface can register only the cards it cares about; types not
+ * present fall through to a generic ToolFallback / "unrenderable" message.
+ *
+ * Component type kept loose (any-component) to avoid coupling the schema
+ * module to React's typings, which would force every consumer to bring
+ * React in for compile.
  */
-export function parseRendererPayload(input: unknown): RendererPayload | null {
-  if (!isObject(input)) return null;
-  const t = input.type;
-  if (typeof t !== "string") return null;
-  switch (t) {
-    case "job-status":
-      if (!hasStringField(input, "job_id")) return null;
-      if (!hasStringField(input, "name")) return null;
-      if (!hasStringField(input, "state")) return null;
-      return input as unknown as JobStatusPayload;
-    case "console-stream":
-      if (!hasStringField(input, "title")) return null;
-      if (!hasArrayField(input, "lines")) return null;
-      return input as unknown as ConsoleStreamPayload;
-    case "terminal-session":
-      if (!hasStringField(input, "session_id")) return null;
-      if (!hasStringField(input, "host")) return null;
-      return input as unknown as TerminalSessionPayload;
-    case "error-halt":
-      if (!hasStringField(input, "error_code")) return null;
-      if (!hasStringField(input, "message")) return null;
-      return input as unknown as ErrorHaltPayload;
-    case "inline-actions":
-      if (!hasArrayField(input, "actions")) return null;
-      return input as unknown as InlineActionsPayload;
-    case "react-canvas":
-      if (!hasStringField(input, "tsx")) return null;
-      return input as unknown as ReactCanvasPayload;
-    case "queue-card":
-      if (!hasStringField(input, "title")) return null;
-      if (!hasArrayField(input, "items")) return null;
-      return input as unknown as QueueCardPayload;
-    default:
-      return null;
-  }
-}
+export type RendererRegistry = Partial<{
+	// biome-ignore lint/suspicious/noExplicitAny: cross-surface contract
+	[K in RendererPayloadType]: any;
+}>;

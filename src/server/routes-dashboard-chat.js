@@ -35,6 +35,7 @@ import {
 import { upsertSubject } from './subjects.js';
 import { getProjectByName, getMasterDatabase } from './db.js';
 import { requireForwardedUser } from './middleware/require-forwarded-user.js';
+import { extractRendererPayload } from '../packages/chat-renderer/parser.js';
 
 // Dashboard subjects are synthetic — one per SSO user. The schema's
 // project_id NOT NULL FK forces a real project, so we anchor every
@@ -153,6 +154,78 @@ Be concise. Don't restate the data the card already shows; add the *insight* (e.
 let mcpClient = null;
 let cachedMCPTools = null;
 
+// Wrap an MCP tool's execute so any result that claims to be a renderer
+// payload is run through `extractRendererPayload` before the AI SDK streams
+// it. On shape drift the result is replaced with a one-shot `error-halt`
+// renderer payload so the dashboard surfaces something actionable instead
+// of letting the chat render raw JSON. The schema in
+// `apps/chat/lib/chat-renderer-types.ts` is the single source of truth for
+// what "claims to be a renderer payload" means — server + chat share the
+// same parser (`src/packages/chat-renderer/parser.js`).
+function wrapToolWithRendererValidation(toolName, tool) {
+  if (!tool || typeof tool.execute !== 'function') return tool;
+  const originalExecute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    execute: async (args, ctx) => {
+      const result = await originalExecute(args, ctx);
+      const payload = extractRendererPayload(result);
+      if (!payload && looksLikeRendererAttempt(result)) {
+        // The handler tried to emit a renderer payload but the shape is
+        // off — swap in a structured error-halt so the chat still has
+        // *something* to render and the agent gets a clear signal in the
+        // tool-result it can correct on the next step.
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                type: 'error-halt',
+                error_code: 'RENDERER_PAYLOAD_INVALID',
+                message: `Tool ${toolName} returned a renderer payload with an invalid shape.`,
+                source: toolName,
+              }),
+            },
+          ],
+        };
+      }
+      return result;
+    },
+  };
+}
+
+// Detect "the handler meant to return a renderer payload but the shape is
+// off". Two signals: (a) the result itself or a nested `payload` carries a
+// `type` field that matches one of the known renderer kinds, (b) the MCP
+// envelope contains parseable text whose `.type` matches. Anything else
+// is left alone — capability handlers free-form JSON is fine, only invalid
+// renderer-payload attempts get rewritten.
+const KNOWN_RENDERER_KINDS = new Set([
+  'job-status',
+  'console-stream',
+  'terminal-session',
+  'error-halt',
+  'inline-actions',
+  'react-canvas',
+  'queue-card',
+]);
+
+function looksLikeRendererAttempt(result) {
+  if (!result || typeof result !== 'object') return false;
+  if (KNOWN_RENDERER_KINDS.has(result.type)) return true;
+  if (result.payload && KNOWN_RENDERER_KINDS.has(result.payload?.type)) return true;
+  if (Array.isArray(result.content) && result.content[0]?.type === 'text') {
+    try {
+      const parsed = JSON.parse(result.content[0].text);
+      if (KNOWN_RENDERER_KINDS.has(parsed?.type)) return true;
+      if (KNOWN_RENDERER_KINDS.has(parsed?.payload?.type)) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 async function getMCPTools() {
   if (cachedMCPTools) return cachedMCPTools;
   const url = process.env.DEVPANEL_MCP_URL ?? 'https://devpanl.dev/mcp';
@@ -169,7 +242,13 @@ async function getMCPTools() {
         headers: { Authorization: `Bearer ${token}` },
       },
     });
-    cachedMCPTools = await mcpClient.tools();
+    const rawTools = await mcpClient.tools();
+    cachedMCPTools = Object.fromEntries(
+      Object.entries(rawTools).map(([name, tool]) => [
+        name,
+        wrapToolWithRendererValidation(name, tool),
+      ]),
+    );
     return cachedMCPTools;
   } catch (e) {
     console.warn('[dashboard-chat] MCP connect failed:', e.message);
