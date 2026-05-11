@@ -45,6 +45,27 @@ const config = {
     // resolves into its own project's /stories/<slug>/_src/ subtree.
     // resolve.alias's customResolver isn't reliably invoked by Vite's
     // dependency scanner, so we use the plugin pipeline instead.
+    // Stub for cross-package relative imports that don't survive the
+    // catalogue sync. e.g. apps/chat/lib/chat-renderer-types.ts imports
+    // "../../../src/packages/chat-renderer/parser.js" — that path resolves
+    // correctly in the dev-panel repo (relative jump out of apps/chat) but
+    // is gone once only apps/chat ships to /_src/. Stories don't exercise
+    // those runtime helpers, only the types; route the import to a no-op
+    // stub baked into the image at /app/stubs/.
+    vite.plugins.push({
+      name: 'devpanl-cross-package-stub',
+      enforce: 'pre',
+      resolveId(source) {
+        if (
+          source.endsWith('src/packages/chat-renderer/parser.js') ||
+          source.endsWith('src/packages/chat-renderer/parser')
+        ) {
+          return '/app/stubs/chat-renderer-parser.js';
+        }
+        return null;
+      }
+    });
+
     vite.plugins.push({
       name: 'devpanl-per-project-at-alias',
       enforce: 'pre',
