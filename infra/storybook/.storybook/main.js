@@ -68,7 +68,8 @@ const config = {
       'clsx': '/app/node_modules/clsx',
       'tailwind-merge': '/app/node_modules/tailwind-merge',
       'react': '/app/node_modules/react',
-      'react-dom': '/app/node_modules/react-dom'
+      'react-dom': '/app/node_modules/react-dom',
+      '@assistant-ui/react': '/app/node_modules/@assistant-ui/react'
     };
 
     // /stories/ is bind-mounted outside of /app, so Vite's default

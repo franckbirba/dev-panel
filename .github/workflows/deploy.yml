@@ -195,14 +195,18 @@ jobs:
       SYNC_HOST: ${{ secrets.VPS_HOST }}
 
   # v0.42 chat-first stories live in apps/chat/stories.
-  # Source aliased to apps/chat/components so .stories.tsx can `@/` import.
+  # Source aliased to apps/chat so .stories.tsx can `@/` import both
+  # apps/chat/components/... AND apps/chat/lib/... — the per-project
+  # `@` plugin in infra/storybook/.storybook/main.js resolves @/foo to
+  # /stories/<slug>/_src/foo, so the canonical apps/chat root needs to
+  # ship as _src/ to keep the components/ and lib/ prefixes intact.
   sync-devpanel-chat-stories:
     needs: deploy-core
     uses: ./.github/workflows/sync-stories.yml
     with:
       project-slug: devpanel-chat
       stories-path: apps/chat/stories
-      source-path: apps/chat/components
+      source-path: apps/chat
     secrets:
       SYNC_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       SYNC_HOST: ${{ secrets.VPS_HOST }}
