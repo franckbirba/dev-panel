@@ -3,19 +3,43 @@
 import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import {
+	AttachmentListCard,
+	CancelJobCard,
+	type CancelJobResult,
 	CaptureCard,
 	ConsoleStreamCard,
 	type Constellation,
 	ErrorHaltCard,
 	FleetRowCard,
+	type GlitchTipIssue,
+	GlitchTipIssueCard,
+	GlitchTipResolutionCard,
+	type GlitchTipResolutionResult,
 	InlineActionsCard,
 	JobStatusCard,
+	type MemoryRow,
+	MemorySearchCard,
+	MemoryWriteCard,
+	type MemoryWriteResult,
+	PageContentCard,
+	PageListCard,
+	PageMutationCard,
+	type PageMutationResult,
+	type PlaneAttachment,
+	type PlanePage,
+	type PlanePageContent,
 	QueueCard,
 	ReactCanvasCard,
 	RuntimeConsoleCard,
 	SprintProgressCard,
 	SubjectConstellationCard,
 	TerminalSessionCard,
+	TranscriptCard,
+	type TranscriptRow,
+	WorkflowDispatchCard,
+	type WorkflowDispatchResult,
+	type WorkflowInstance,
+	WorkflowInstancesCard,
 	WorkItemCard,
 } from "@/components/devpanl";
 import {
@@ -52,6 +76,33 @@ function useCaptureActionHandler() {
 		runtime.append({
 			role: "user",
 			content: [{ type: "text", text: prompts[action] }],
+		});
+	};
+}
+
+// Per-row action chips on the FleetStatusUI cards. Each chip becomes a
+// user turn that nudges the LLM to call the right MCP capability — same
+// pattern as useCaptureActionHandler. Keeps the chat surface stateless
+// (no direct fetch from the card; every action goes through Shelly so
+// she can decide whether to confirm, apply policy, or push back).
+function useFleetActionHandler() {
+	const runtime = useThreadRuntime();
+	return (action: string, jobId: string) => {
+		const a = action.toLowerCase();
+		const prompts: Record<string, string> = {
+			kill: `Cancel job ${jobId} via cancel_job. Confirm briefly with the prev_state and action that came back — don't restate what the job was.`,
+			tail: `Show me the last 50 lines of job ${jobId} via tail_log_snapshot.`,
+			pause: `Pause job ${jobId} if the worker supports it; otherwise tell me it's not supported and propose Kill.`,
+			approve: `Approve the awaiting-approval gate on job ${jobId} and continue the workflow.`,
+			reply: `Open the job ${jobId} thread so I can reply to its blocker — show me the last few messages from that thread (thread_messages_recent with subject job/${jobId}).`,
+			retry: `Retry job ${jobId} — re-enqueue with the same payload via the appropriate dispatch capability.`,
+		};
+		const text =
+			prompts[a] ??
+			`Take action "${action}" on job ${jobId} via the right MCP tool. Confirm briefly.`;
+		runtime.append({
+			role: "user",
+			content: [{ type: "text", text }],
 		});
 	};
 }
@@ -264,6 +315,21 @@ const CycleOverviewUI = makeAssistantToolUI<unknown, unknown>({
 	},
 });
 
+function FleetStatusView({
+	rows,
+}: {
+	rows: Array<Parameters<typeof FleetRowCard>[0]["row"]>;
+}) {
+	const onAction = useFleetActionHandler();
+	return (
+		<div className="my-2 flex w-full flex-col gap-2">
+			{rows.map((r) => (
+				<FleetRowCard key={r.job_id} row={r} onAction={onAction} />
+			))}
+		</div>
+	);
+}
+
 const FleetStatusUI = makeAssistantToolUI<unknown, unknown>({
 	toolName: "fleet_status",
 	render: ({ result, args, status }) => {
@@ -279,13 +345,7 @@ const FleetStatusUI = makeAssistantToolUI<unknown, unknown>({
 					status={status}
 				/>
 			);
-		return (
-			<div className="my-2 flex w-full flex-col gap-2">
-				{(data.rows ?? []).map((r) => (
-					<FleetRowCard key={r.job_id} row={r} />
-				))}
-			</div>
-		);
+		return <FleetStatusView rows={data.rows ?? []} />;
 	},
 });
 
@@ -344,6 +404,27 @@ const DispatchWorkItemUI = makeAssistantToolUI<unknown, unknown>({
 				<p className="mt-1 font-mono text-[11px] text-[var(--color-foreground-muted)]">
 					job_id={data.job_id}
 				</p>
+			</div>
+		);
+	},
+});
+
+const CancelJobUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "cancel_job",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as CancelJobResult | null;
+		if (!data || !data.job_id || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="cancel_job"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<CancelJobCard result={data} />
 			</div>
 		);
 	},
@@ -492,6 +573,489 @@ const SubjectMapUI = makeAssistantToolUI<unknown, unknown>({
 	},
 });
 
+// ─── Memory ──────────────────────────────────────────────────────────────────
+//
+// `memory_search` returns the raw pgvector rows (see src/server/pg.js#
+// memorySearchSql). The card surfaces title + content + score + a chip to
+// open the linked work item when present. `memory_write` returns the row
+// that was just persisted — small confirmation card so Franck sees what
+// landed.
+
+function useMemoryActionHandler() {
+	const runtime = useThreadRuntime();
+	return (workItemId: string) => {
+		runtime.append({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: `Use work_item_detail with work_item_id="${workItemId}" to open it.`,
+				},
+			],
+		});
+	};
+}
+
+function MemorySearchView({ rows }: { rows: MemoryRow[] }) {
+	const onOpen = useMemoryActionHandler();
+	return <MemorySearchCard rows={rows} onOpenWorkItem={onOpen} />;
+}
+
+const MemorySearchUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "memory_search",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as MemoryRow[] | null;
+		if (!Array.isArray(data) || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="memory_search"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <MemorySearchView rows={data} />;
+	},
+});
+
+const MemoryListUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "memory_list",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as MemoryRow[] | null;
+		if (!Array.isArray(data) || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="memory_list"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <MemorySearchView rows={data} />;
+	},
+});
+
+const MemoryWriteUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "memory_write",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as MemoryWriteResult | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="memory_write"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<MemoryWriteCard result={data} />
+			</div>
+		);
+	},
+});
+
+// ─── GlitchTip ───────────────────────────────────────────────────────────────
+
+function useGlitchTipActionHandler() {
+	const runtime = useThreadRuntime();
+	return (orgSlug: string | undefined, issueId: string) => {
+		const args = orgSlug
+			? `org_slug="${orgSlug}", issue_id="${issueId}"`
+			: `issue_id="${issueId}"`;
+		runtime.append({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: `Resolve the GlitchTip issue via glitchtip_resolve_issue with ${args}.`,
+				},
+			],
+		});
+	};
+}
+
+function GlitchTipIssueView({
+	issue,
+	orgSlug,
+}: {
+	issue: GlitchTipIssue;
+	orgSlug?: string;
+}) {
+	const onResolve = useGlitchTipActionHandler();
+	return (
+		<div className="my-2">
+			<GlitchTipIssueCard
+				issue={issue}
+				orgSlug={orgSlug}
+				onResolve={(id) => onResolve(orgSlug, id)}
+			/>
+		</div>
+	);
+}
+
+const GlitchTipGetIssueUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "glitchtip_get_issue",
+	render: ({ result, args, status }) => {
+		const parsed = parseToolText(result) as {
+			ok?: boolean;
+			issue?: GlitchTipIssue;
+		} | null;
+		const issue = parsed?.issue ?? null;
+		const orgSlug = (args as { org_slug?: string } | undefined)?.org_slug;
+		if (!issue || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="glitchtip_get_issue"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <GlitchTipIssueView issue={issue} orgSlug={orgSlug} />;
+	},
+});
+
+const GlitchTipResolveIssueUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "glitchtip_resolve_issue",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as GlitchTipResolutionResult | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="glitchtip_resolve_issue"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<GlitchTipResolutionCard result={data} />
+			</div>
+		);
+	},
+});
+
+// ─── Plane pages + attachments ───────────────────────────────────────────────
+
+function usePagesActionHandler() {
+	const runtime = useThreadRuntime();
+	return (project: string | undefined, pageId: string) => {
+		const args = project
+			? `project="${project}", page_id="${pageId}"`
+			: `page_id="${pageId}"`;
+		runtime.append({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: `Use plane_get_page_html with ${args} to read the body.`,
+				},
+			],
+		});
+	};
+}
+
+function PageListView({
+	pages,
+	project,
+}: {
+	pages: PlanePage[];
+	project?: string;
+}) {
+	const onOpen = usePagesActionHandler();
+	return (
+		<div className="my-2">
+			<PageListCard
+				pages={pages}
+				project={project}
+				onOpen={(id) => onOpen(project, id)}
+			/>
+		</div>
+	);
+}
+
+const PlaneListPagesUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "plane_list_pages",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| { pages?: PlanePage[]; ok?: boolean }
+			| PlanePage[]
+			| null;
+		const pages = Array.isArray(data) ? data : (data?.pages ?? null);
+		const project = (args as { project?: string } | undefined)?.project;
+		if (!pages || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="plane_list_pages"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <PageListView pages={pages} project={project} />;
+	},
+});
+
+const PlaneGetPageUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "plane_get_page",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| (PlanePageContent & { ok?: boolean })
+			| { ok?: boolean; page?: PlanePageContent }
+			| null;
+		const page =
+			data && "page" in data
+				? (data as { page?: PlanePageContent }).page
+				: (data as PlanePageContent | null);
+		if (!page || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="plane_get_page"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<PageContentCard page={page} />
+			</div>
+		);
+	},
+});
+
+const PlaneGetPageHtmlUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "plane_get_page_html",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as {
+			ok?: boolean;
+			description_html?: string;
+			html?: string;
+			id?: string;
+			name?: string;
+		} | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="plane_get_page_html"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		const page: PlanePageContent = {
+			id: data.id,
+			name: data.name,
+			description_html: data.description_html ?? data.html,
+		};
+		return (
+			<div className="my-2">
+				<PageContentCard page={page} />
+			</div>
+		);
+	},
+});
+
+function planePageMutationUI(
+	toolName: string,
+	action: PageMutationResult["action"],
+) {
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as PageMutationResult | null;
+			if (!data || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<PageMutationCard
+						result={{ ...data, action: data.action ?? action }}
+					/>
+				</div>
+			);
+		},
+	});
+}
+
+const PlaneCreatePageUI = planePageMutationUI("plane_create_page", "created");
+const PlaneUpdatePageUI = planePageMutationUI("plane_update_page", "updated");
+const PlaneUpdatePageContentUI = planePageMutationUI(
+	"plane_update_page_content",
+	"updated",
+);
+const PlaneArchivePageUI = planePageMutationUI(
+	"plane_archive_page",
+	"archived",
+);
+const PlaneDeletePageUI = planePageMutationUI("plane_delete_page", "deleted");
+
+function useAttachmentActionHandler() {
+	const runtime = useThreadRuntime();
+	return (workItemId: string, attachmentId: string) => {
+		runtime.append({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: `Use plane_download_attachment with work_item_id="${workItemId}", attachment_id="${attachmentId}" to fetch it.`,
+				},
+			],
+		});
+	};
+}
+
+function AttachmentListView({
+	attachments,
+	workItemId,
+}: {
+	attachments: PlaneAttachment[];
+	workItemId?: string;
+}) {
+	const onDownload = useAttachmentActionHandler();
+	return (
+		<div className="my-2">
+			<AttachmentListCard
+				attachments={attachments}
+				onDownload={(aid) => workItemId && onDownload(workItemId, aid)}
+			/>
+		</div>
+	);
+}
+
+const PlaneListAttachmentsUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "plane_list_attachments",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| { attachments?: PlaneAttachment[]; ok?: boolean }
+			| PlaneAttachment[]
+			| null;
+		const list = Array.isArray(data) ? data : (data?.attachments ?? null);
+		const workItemId = (args as { work_item_id?: string } | undefined)
+			?.work_item_id;
+		if (!list || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="plane_list_attachments"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <AttachmentListView attachments={list} workItemId={workItemId} />;
+	},
+});
+
+// ─── Transcript ──────────────────────────────────────────────────────────────
+
+function transcriptUI(toolName: string) {
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as
+				| TranscriptRow[]
+				| { rows?: TranscriptRow[] }
+				| null;
+			const rows = Array.isArray(data) ? data : (data?.rows ?? null);
+			if (!rows || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<TranscriptCard rows={rows} />
+				</div>
+			);
+		},
+	});
+}
+
+const TranscriptSearchUI = transcriptUI("transcript_search");
+const TranscriptRangeUI = transcriptUI("transcript_range");
+const TranscriptReplayRecentUI = transcriptUI("transcript_replay_recent");
+
+// ─── Workflows ───────────────────────────────────────────────────────────────
+
+function useWorkflowActionHandler() {
+	const runtime = useThreadRuntime();
+	return (instanceId: string) => {
+		runtime.append({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: `Show me the last 50 lines of workflow instance ${instanceId} via tail_log_snapshot.`,
+				},
+			],
+		});
+	};
+}
+
+function WorkflowInstancesView({
+	instances,
+}: {
+	instances: WorkflowInstance[];
+}) {
+	const onTail = useWorkflowActionHandler();
+	return <WorkflowInstancesCard instances={instances} onTail={onTail} />;
+}
+
+const WorkflowListInstancesUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "devpanel_workflow_list_instances",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| { instances?: WorkflowInstance[]; ok?: boolean }
+			| WorkflowInstance[]
+			| null;
+		const instances = Array.isArray(data) ? data : (data?.instances ?? null);
+		if (!instances || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="devpanel_workflow_list_instances"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <WorkflowInstancesView instances={instances} />;
+	},
+});
+
+const WorkflowDispatchUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "devpanel_workflow_dispatch",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as WorkflowDispatchResult | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="devpanel_workflow_dispatch"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<WorkflowDispatchCard result={data} />
+			</div>
+		);
+	},
+});
+
 // ─── @devpanl/chat-renderer dispatch (DEVPA-218) ────────────────────────────
 //
 // The renderer payload schema in `lib/chat-renderer-types.ts` is the
@@ -589,10 +1153,30 @@ export function ToolUIRegistry() {
 			<FleetStatusUI />
 			<PromoteCaptureUI />
 			<DispatchWorkItemUI />
+			<CancelJobUI />
 			<TailLogSnapshotUI />
 			<RunRemoteCheckUI />
 			<HostStatusUI />
 			<SubjectMapUI />
+			<MemorySearchUI />
+			<MemoryListUI />
+			<MemoryWriteUI />
+			<GlitchTipGetIssueUI />
+			<GlitchTipResolveIssueUI />
+			<PlaneListPagesUI />
+			<PlaneGetPageUI />
+			<PlaneGetPageHtmlUI />
+			<PlaneCreatePageUI />
+			<PlaneUpdatePageUI />
+			<PlaneUpdatePageContentUI />
+			<PlaneArchivePageUI />
+			<PlaneDeletePageUI />
+			<PlaneListAttachmentsUI />
+			<TranscriptSearchUI />
+			<TranscriptRangeUI />
+			<TranscriptReplayRecentUI />
+			<WorkflowListInstancesUI />
+			<WorkflowDispatchUI />
 		</>
 	);
 }

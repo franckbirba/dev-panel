@@ -2,45 +2,81 @@
 // ../ui/. This namespace is the only place project-specific composition
 // lives; primitives stay generic so they can move to the catalogue at
 // ui.devpanl.dev as-is.
-export { StatusBadge } from "./StatusBadge";
-export { WorkItemCard, type WorkItem } from "./WorkItemCard";
-export { FleetRowCard, type FleetRow } from "./FleetRowCard";
-export { RuntimeConsoleCard, type ConnectionState } from "./RuntimeConsoleCard";
-export { CaptureCard, type Capture } from "./CaptureCard";
-export { SprintProgressCard, type CycleProgress } from "./SprintProgressCard";
-export { ProjectSwitcher, type Project } from "./ProjectSwitcher";
-export { ConversationsList, type Thread } from "./ConversationsList";
-export { ActiveAgentsRail, type ActiveAgent } from "./ActiveAgentsRail";
+
+export { type ActiveAgent, ActiveAgentsRail } from "./ActiveAgentsRail";
+export { type AutoDecision, AutoDecisionsPanel } from "./AutoDecisionsPanel";
+// MCP-tool cards (full surface parity).
+export { CancelJobCard, type CancelJobResult } from "./CancelJobCard";
+export { type Capture, CaptureCard } from "./CaptureCard";
+export { ConsoleStreamCard } from "./ConsoleStreamCard";
 export { ContextBlock, type ProjectContext } from "./ContextBlock";
+export { ConversationsList, type Thread } from "./ConversationsList";
 export {
-  SettingsPanel,
-  type StudioMember,
-  type DevBot,
-  type ProjectSettings,
-} from "./SettingsPanel";
-export {
-  ProviderSwitcher,
-  DEFAULT_PROVIDERS,
-  type ProviderOption,
-} from "./ProviderSwitcher";
-export { StatusBar, type UsageSnapshot } from "./StatusBar";
-export {
-  DashboardThreadList,
-  type DashboardThread,
+	type DashboardThread,
+	DashboardThreadList,
 } from "./DashboardThreadList";
-export { AutoDecisionsPanel, type AutoDecision } from "./AutoDecisionsPanel";
-export { MessageChips } from "./MessageChips";
+export { ErrorHaltCard } from "./ErrorHaltCard";
+export { type FleetRow, FleetRowCard } from "./FleetRowCard";
 export {
-  SubjectConstellationCard,
-  type Constellation,
-  type ConstellationCenter,
-  type ConstellationEdge,
-} from "./SubjectConstellationCard";
+	type GlitchTipException,
+	type GlitchTipFrame,
+	type GlitchTipIssue,
+	GlitchTipIssueCard,
+	type GlitchTipLastEvent,
+} from "./GlitchTipIssueCard";
+export {
+	GlitchTipResolutionCard,
+	type GlitchTipResolutionResult,
+} from "./GlitchTipResolutionCard";
+export { InlineActionsCard } from "./InlineActionsCard";
 // chat-renderer cards (DEVPA-218) — one per RendererPayload variant.
 export { JobStatusCard } from "./JobStatusCard";
-export { ConsoleStreamCard } from "./ConsoleStreamCard";
-export { TerminalSessionCard } from "./TerminalSessionCard";
-export { ErrorHaltCard } from "./ErrorHaltCard";
-export { InlineActionsCard } from "./InlineActionsCard";
-export { ReactCanvasCard } from "./ReactCanvasCard";
+export { type MemoryRow, MemorySearchCard } from "./MemorySearchCard";
+export {
+	MemoryWriteCard,
+	type MemoryWriteResult,
+} from "./MemoryWriteCard";
+export { MessageChips } from "./MessageChips";
+export {
+	AttachmentListCard,
+	PageContentCard,
+	PageListCard,
+	PageMutationCard,
+	type PageMutationResult,
+	type PlaneAttachment,
+	type PlanePage,
+	type PlanePageContent,
+} from "./PlanePagesCards";
+export { type Project, ProjectSwitcher } from "./ProjectSwitcher";
+export {
+	DEFAULT_PROVIDERS,
+	type ProviderOption,
+	ProviderSwitcher,
+} from "./ProviderSwitcher";
 export { QueueCard } from "./QueueCard";
+export { ReactCanvasCard } from "./ReactCanvasCard";
+export { type ConnectionState, RuntimeConsoleCard } from "./RuntimeConsoleCard";
+export {
+	type DevBot,
+	type ProjectSettings,
+	SettingsPanel,
+	type StudioMember,
+} from "./SettingsPanel";
+export { type CycleProgress, SprintProgressCard } from "./SprintProgressCard";
+export { StatusBadge } from "./StatusBadge";
+export { StatusBar, type UsageSnapshot } from "./StatusBar";
+export {
+	type Constellation,
+	type ConstellationCenter,
+	type ConstellationEdge,
+	SubjectConstellationCard,
+} from "./SubjectConstellationCard";
+export { TerminalSessionCard } from "./TerminalSessionCard";
+export { TranscriptCard, type TranscriptRow } from "./TranscriptCard";
+export {
+	WorkflowDispatchCard,
+	type WorkflowDispatchResult,
+	type WorkflowInstance,
+	WorkflowInstancesCard,
+} from "./WorkflowCards";
+export { type WorkItem, WorkItemCard } from "./WorkItemCard";
