@@ -75,28 +75,41 @@ export const CAPABILITIES = [
  */
 export function registerCapabilities(server) {
   for (const cap of CAPABILITIES) {
-    server.tool(
-      cap.name,
-      cap.description,
-      cap.paramSchema?.shape ?? {},
-      async (args) => {
-        try {
-          const result = await cap.handler(args);
-          // Tag every result with the capability name so the chat
-          // tool-UI registry can pick the right renderer at stream time
-          // without re-keying off tool name.
-          const payload = { __capability: cap.name, ...result };
-          return {
-            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
-          };
-        } catch (err) {
-          return {
-            content: [{ type: 'text', text: `${cap.name} failed: ${err.message}` }],
-            isError: true,
-          };
-        }
+    const invoke = async (args) => {
+      try {
+        const result = await cap.handler(args);
+        // Tag every result with the capability name so the chat
+        // tool-UI registry can pick the right renderer at stream time
+        // without re-keying off tool name.
+        const payload = { __capability: cap.name, ...result };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `${cap.name} failed: ${err.message}` }],
+          isError: true,
+        };
       }
-    );
+    };
+
+    const shape = cap.paramSchema?.shape ?? {};
+    server.tool(cap.name, cap.description, shape, invoke);
+
+    // Register each subsumed raw tool name as an alias delegating to the
+    // same handler. Qwen3 + other models frequently hallucinate the older
+    // names (e.g. `ssh_status`, `tail_log`) from training-data familiarity
+    // even when the system prompt lists only the canonical ones. Without
+    // aliases those calls 404 at the MCP transport layer ("Load failed").
+    for (const alias of cap.replaces ?? []) {
+      if (alias === cap.name) continue;
+      server.tool(
+        alias,
+        `[alias of ${cap.name}] ${cap.description}`,
+        shape,
+        invoke
+      );
+    }
   }
 }
 

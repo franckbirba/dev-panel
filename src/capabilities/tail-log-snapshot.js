@@ -49,11 +49,13 @@ export const tailLogSnapshot = {
   description:
     'Snapshot of the last N lines of journalctl for a unit on a known host. Synchronous. For live tailing, RuntimeConsoleCard subscribes to /api/runtime/tail-log SSE — this verb is the "give me the last 50 lines" companion.',
   paramSchema: z.object({
-    host: z.enum(Object.keys(HOSTS)),
+    host: z.enum(Object.keys(HOSTS)).describe('Target host: "hetzner-vps" or "services".'),
     unit: z
       .string()
-      .regex(/^[a-zA-Z0-9._-]+$/, 'unit must be alphanumeric/_/-/.'),
-    lines: z.number().int().min(1).max(500).default(50),
+      .regex(/^[a-zA-Z0-9@._+-]+$/, 'unit must be a systemd unit name')
+      .describe('systemd unit name, e.g. "shelly.service", "devpanel-worker.service", "glitchtip-web". Template units like "foo@bar.service" are allowed.'),
+    lines: z.number().int().min(1).max(500).default(50)
+      .describe('How many tail lines to fetch (1-500).'),
   }),
   renderHint: 'RuntimeConsole',
   replaces: ['tail_log'],

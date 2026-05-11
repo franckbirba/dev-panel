@@ -26,6 +26,7 @@ import express from 'express';
 import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
+import { makeTextScrubber } from './chat-text-scrubber.js';
 import {
   getOrCreateThread,
   listMessages,
@@ -324,6 +325,7 @@ export function mountDashboardChat(app) {
         system: system ?? DEFAULT_SYSTEM,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
+        experimental_transform: makeTextScrubber,
       });
 
       // Persist the assistant reply *inside* onFinish, before res.end().

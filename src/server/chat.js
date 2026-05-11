@@ -1,6 +1,7 @@
 import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
+import { makeTextScrubber } from './chat-text-scrubber.js';
 
 // Default system prompt — nudges the LLM toward intent-shaped capability
 // tools (the ones in `src/capabilities/`) rather than fishing through the
@@ -71,6 +72,7 @@ export function mountChat(app) {
         system: system ?? DEFAULT_SYSTEM,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
+        experimental_transform: makeTextScrubber,
       });
 
       // Pipe AI SDK Data Stream Protocol response straight to Express
