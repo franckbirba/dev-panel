@@ -36,23 +36,22 @@ const config = {
         if (!source.startsWith('@/') || !importer) return null;
         const m = importer.match(/^\/stories\/([^/]+)\//);
         if (!m) return null;
+        const slug = m[1];
         const rest = source.slice(2);
-        const base = `/stories/${m[1]}/_src/${rest}`;
-        // Try exact path first, then common JS/TS extensions.
-        const candidates = [
-          base,
-          `${base}.tsx`,
-          `${base}.ts`,
-          `${base}.jsx`,
-          `${base}.js`,
-          `${base}/index.tsx`,
-          `${base}/index.ts`,
-          `${base}/index.jsx`,
-          `${base}/index.js`
-        ];
-        for (const c of candidates) {
-          const r = await this.resolve(c, importer, { skipSelf: true });
-          if (r) return r.id;
+        // Roots to try, in priority order:
+        //   1. /stories/<slug>/_src/<rest>            (when source-path covers a parent dir, e.g. src/dashboard)
+        //   2. /stories/<slug>/_src/<rest sans leading "components/">
+        //      (when source-path IS the components dir, e.g. apps/chat/components → _src/devpanl/...)
+        const roots = [`/stories/${slug}/_src/${rest}`];
+        if (rest.startsWith('components/')) {
+          roots.push(`/stories/${slug}/_src/${rest.slice('components/'.length)}`);
+        }
+        const exts = ['', '.tsx', '.ts', '.jsx', '.js', '/index.tsx', '/index.ts', '/index.jsx', '/index.js'];
+        for (const root of roots) {
+          for (const ext of exts) {
+            const r = await this.resolve(root + ext, importer, { skipSelf: true });
+            if (r) return r.id;
+          }
         }
         return null;
       }
