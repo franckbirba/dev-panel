@@ -8,8 +8,19 @@ import {
   RuntimeConsoleCard,
   SprintProgressCard,
   SubjectConstellationCard,
+  JobStatusCard,
+  ConsoleStreamCard,
+  TerminalSessionCard,
+  ErrorHaltCard,
+  InlineActionsCard,
+  ReactCanvasCard,
+  QueueCard,
   type Constellation,
 } from "@/components/devpanl";
+import {
+  parseRendererPayload,
+  type RendererPayload,
+} from "@/lib/chat-renderer-types";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 
 // ─── Action wiring — turn card button clicks into chat turns ────────────────
@@ -372,6 +383,72 @@ const SubjectMapUI = makeAssistantToolUI<unknown, unknown>({
     return <SubjectConstellationCard data={data} />;
   },
 });
+
+// ─── @devpanl/chat-renderer dispatch (DEVPA-218) ────────────────────────────
+//
+// The renderer payload schema in `lib/chat-renderer-types.ts` is the
+// extensible surface every future capability targets. Rather than
+// registering one `makeAssistantToolUI` per type and forcing each new
+// capability to also touch this file, we expose a single component that
+// dispatches on the payload's discriminator. Any capability whose handler
+// returns a `RendererPayload`-shaped object — directly, or under a
+// `payload` key — will render the right card automatically.
+//
+// Concretely:
+//   - DEVPA-219 (Engine tab) will wire `error-halt` and `terminal-session`
+//     payloads from running jobs into this dispatcher.
+//   - DEVPA-220 (react-canvas) replaces the placeholder ReactCanvasCard
+//     with the live esbuild-wasm renderer; the dispatch path here doesn't
+//     change.
+//   - Any capability that emits a structured chip set ("inline-actions"),
+//     a queue, or a job-status snapshot gets a card for free.
+
+export function RendererPayloadView({ payload }: { payload: RendererPayload }) {
+  switch (payload.type) {
+    case "job-status":
+      return <JobStatusCard job={payload} />;
+    case "console-stream":
+      return <ConsoleStreamCard stream={payload} />;
+    case "terminal-session":
+      return <TerminalSessionCard session={payload} />;
+    case "error-halt":
+      return <ErrorHaltCard halt={payload} />;
+    case "inline-actions":
+      return (
+        <InlineActionsCard prompt={payload.prompt} actions={payload.actions} />
+      );
+    case "react-canvas":
+      return <ReactCanvasCard canvas={payload} />;
+    case "queue-card":
+      return <QueueCard queue={payload} />;
+  }
+}
+
+/**
+ * Extract a RendererPayload from an arbitrary tool result. Looks for the
+ * payload in three positions: (a) the result itself, (b) a top-level
+ * `payload` key, (c) inside the existing `__capability`-tagged envelope
+ * under `payload`. Returns null if no variant matches.
+ */
+export function extractRendererPayload(result: unknown): RendererPayload | null {
+  const direct = parseRendererPayload(result);
+  if (direct) return direct;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const r = result as Record<string, unknown>;
+    if ("payload" in r) {
+      const nested = parseRendererPayload(r.payload);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+// A registry entry that opportunistically renders any tool result whose
+// shape matches a RendererPayload variant — without binding to a single
+// `toolName`. The chat infra calls `makeAssistantToolUI` per name, so we
+// can't register a wildcard here; instead, the helpers above are exposed
+// for individual UI handlers (or app/assistant.tsx) to plug into when a
+// capability is meant to render via this path.
 
 // ─── Mounted as a React tree under <ToolUIRegistry /> in app/assistant.tsx ───
 
