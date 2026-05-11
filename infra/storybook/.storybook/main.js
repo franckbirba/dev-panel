@@ -23,24 +23,44 @@ const config = {
     vite.plugins.push(react({ include: ['/stories/**/*.{js,jsx,ts,tsx}'] }));
     vite.plugins.push(tailwindcss());
 
-    vite.resolve = vite.resolve || {};
-    // Per-project "@" alias: a story under /stories/<slug>/foo.stories.jsx
-    // that writes `import ... from "@/components/..."` resolves into that
-    // project's own /stories/<slug>/_src/ subtree. We use the array form
-    // with a customResolver so the rewrite depends on the *importer* path
-    // (each project gets its own _src), instead of a single global "@".
-    const perProjectAtAlias = {
-      find: /^@\/(.+)$/,
-      replacement: '$1',
-      customResolver(source, importer) {
-        const m = importer && importer.match(/^\/stories\/([^/]+)\//);
-        const slug = m ? m[1] : 'devpanel';
-        return this.resolve(`/stories/${slug}/_src/${source}`, importer, {
-          skipSelf: true
-        }).then((r) => (r ? r.id : null));
+    // Per-project "@" alias resolved via a Vite plugin (not resolve.alias)
+    // so the rewrite depends on the *importer* path. A story under
+    // /stories/<slug>/foo.stories.jsx that writes `import ... from "@/..."`
+    // resolves into its own project's /stories/<slug>/_src/ subtree.
+    // resolve.alias's customResolver isn't reliably invoked by Vite's
+    // dependency scanner, so we use the plugin pipeline instead.
+    vite.plugins.push({
+      name: 'devpanl-per-project-at-alias',
+      enforce: 'pre',
+      async resolveId(source, importer) {
+        if (!source.startsWith('@/') || !importer) return null;
+        const m = importer.match(/^\/stories\/([^/]+)\//);
+        if (!m) return null;
+        const rest = source.slice(2);
+        const base = `/stories/${m[1]}/_src/${rest}`;
+        // Try exact path first, then common JS/TS extensions.
+        const candidates = [
+          base,
+          `${base}.tsx`,
+          `${base}.ts`,
+          `${base}.jsx`,
+          `${base}.js`,
+          `${base}/index.tsx`,
+          `${base}/index.ts`,
+          `${base}/index.jsx`,
+          `${base}/index.js`
+        ];
+        for (const c of candidates) {
+          const r = await this.resolve(c, importer, { skipSelf: true });
+          if (r) return r.id;
+        }
+        return null;
       }
-    };
-    const bareDepAliases = {
+    });
+
+    vite.resolve = vite.resolve || {};
+    vite.resolve.alias = {
+      ...(vite.resolve.alias || {}),
       // Bare-import deps used by synced source trees won't resolve up from
       // /stories/ to /app/node_modules on their own. Pin each one to the
       // container's own installed copy.
@@ -51,15 +71,6 @@ const config = {
       'react': '/app/node_modules/react',
       'react-dom': '/app/node_modules/react-dom'
     };
-    const existing = vite.resolve.alias;
-    const existingArr = Array.isArray(existing)
-      ? existing
-      : Object.entries(existing || {}).map(([find, replacement]) => ({ find, replacement }));
-    vite.resolve.alias = [
-      perProjectAtAlias,
-      ...Object.entries(bareDepAliases).map(([find, replacement]) => ({ find, replacement })),
-      ...existingArr
-    ];
 
     // /stories/ is bind-mounted outside of /app, so Vite's default
     // node_modules lookup from a story file won't find the storybook
