@@ -8,6 +8,7 @@ import {
   RuntimeConsoleCard,
   SprintProgressCard,
   SubjectConstellationCard,
+<<<<<<< HEAD
   JobStatusCard,
   ConsoleStreamCard,
   TerminalSessionCard,
@@ -15,6 +16,8 @@ import {
   InlineActionsCard,
   ReactCanvasCard,
   QueueCard,
+=======
+>>>>>>> origin/feat/subject-graph
   type Constellation,
 } from "@/components/devpanl";
 import {
@@ -384,6 +387,7 @@ const SubjectMapUI = makeAssistantToolUI<unknown, unknown>({
   },
 });
 
+<<<<<<< HEAD
 // ─── @devpanl/chat-renderer dispatch (DEVPA-218) ────────────────────────────
 //
 // The renderer payload schema in `lib/chat-renderer-types.ts` is the
@@ -450,6 +454,8 @@ export function extractRendererPayload(result: unknown): RendererPayload | null 
 // for individual UI handlers (or app/assistant.tsx) to plug into when a
 // capability is meant to render via this path.
 
+=======
+>>>>>>> origin/feat/subject-graph
 // ─── Mounted as a React tree under <ToolUIRegistry /> in app/assistant.tsx ───
 
 export function ToolUIRegistry() {
