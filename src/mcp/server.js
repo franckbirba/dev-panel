@@ -215,33 +215,52 @@ server.tool(
   async () => {
     // Source of truth lives on the services API, not the local SQLite.
     // This MCP runs on the agents node where storage/projects.db is empty.
+    //
+    // Use the M2M-routed `/api/admin/projects` (X-Admin-Key auth, no SSO)
+    // NOT `/api/projects` (authenticateSpaBootstrap — needs X-Forwarded-User
+    // from Traefik's oauth-google middleware). With X-Admin-Key on
+    // /api/projects, Traefik's SSO middleware intercepts and returns the
+    // Google login HTML page, which then crashes `resp.json()` with
+    // "Unexpected token '<'" inside the chat tool surface. See the routing
+    // comment at src/server/routes.js:765.
     if (!ADMIN_API_KEY) {
       return {
-        content: [{ type: 'text', text: 'ADMIN_API_KEY not configured — cannot query /api/projects.' }],
+        content: [{ type: 'text', text: 'ADMIN_API_KEY not configured — cannot query /api/admin/projects.' }],
         isError: true
       };
     }
+    const url = `${API_BASE}/api/admin/projects`;
     try {
-      const resp = await fetch(`${API_BASE}/api/projects`, {
+      const resp = await fetch(url, {
         headers: { 'X-Admin-Key': ADMIN_API_KEY }
       });
       if (!resp.ok) {
         const body = await resp.text();
         return {
-          content: [{ type: 'text', text: `GET ${API_BASE}/api/projects → ${resp.status}: ${body}` }],
+          content: [{ type: 'text', text: `GET ${url} → ${resp.status}: ${body.slice(0, 500)}` }],
+          isError: true
+        };
+      }
+      const ctype = resp.headers.get('content-type') || '';
+      if (!ctype.includes('application/json')) {
+        const body = await resp.text();
+        return {
+          content: [{ type: 'text', text: `GET ${url} → ${resp.status} returned non-JSON (${ctype}). Head: ${body.slice(0, 200)}` }],
           isError: true
         };
       }
       const { projects = [] } = await resp.json();
       const result = projects.map(p => ({
         name: p.name,
-        github: `${p.github_owner}/${p.github_repo}`,
-        id: p.id
+        github: p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : null,
+        id: p.id,
+        plane_project_id: p.plane_project_id ?? null,
+        default_branch: p.default_branch ?? null,
       }));
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return {
-        content: [{ type: 'text', text: `Failed to reach ${API_BASE}/api/projects: ${err.message}` }],
+        content: [{ type: 'text', text: `Failed to reach ${url}: ${err.message}` }],
         isError: true
       };
     }
