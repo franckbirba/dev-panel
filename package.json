@@ -49,6 +49,8 @@
     "@ai-sdk/mcp": "^1.0.41",
     "@ai-sdk/openai": "^3.0.63",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server-github": "^2025.4.8",
+    "affine-mcp-server": "^1.13.0",
     "ai": "^6.0.177",
     "arctic": "^3.7.0",
     "better-sqlite3": "^11.0.0",

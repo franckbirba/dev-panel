@@ -4,6 +4,14 @@
 // ui.devpanl.dev as-is.
 
 export { type ActiveAgent, ActiveAgentsRail } from "./ActiveAgentsRail";
+export {
+	type AffineDoc,
+	AffineDocCard,
+	type AffineDocContent,
+	AffineDocListCard,
+	AffineMutationCard,
+	type AffineMutationResult,
+} from "./AffineCards";
 export { type AutoDecision, AutoDecisionsPanel } from "./AutoDecisionsPanel";
 // MCP-tool cards (full surface parity).
 export { CancelJobCard, type CancelJobResult } from "./CancelJobCard";
@@ -17,6 +25,14 @@ export {
 } from "./DashboardThreadList";
 export { ErrorHaltCard } from "./ErrorHaltCard";
 export { type FleetRow, FleetRowCard } from "./FleetRowCard";
+export {
+	type GitHubIssue,
+	GitHubIssueCard,
+	GitHubIssueListCard,
+	type GitHubPR,
+	GitHubPRCard,
+	GitHubPRListCard,
+} from "./GitHubCards";
 export {
 	type GlitchTipException,
 	type GlitchTipFrame,

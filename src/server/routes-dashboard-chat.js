@@ -36,6 +36,7 @@ import { upsertSubject } from './subjects.js';
 import { getProjectByName, getMasterDatabase } from './db.js';
 import { requireForwardedUser } from './middleware/require-forwarded-user.js';
 import { extractRendererPayload } from '../packages/chat-renderer/parser.js';
+import { connectExternalMCPs } from './external-mcp.js';
 
 // Dashboard subjects are synthetic — one per SSO user. The schema's
 // project_id NOT NULL FK forces a real project, so we anchor every
@@ -230,30 +231,62 @@ async function getMCPTools() {
   if (cachedMCPTools) return cachedMCPTools;
   const url = process.env.DEVPANEL_MCP_URL ?? 'https://devpanl.dev/mcp';
   const token = process.env.ADMIN_API_KEY;
-  if (!token) {
-    console.warn('[dashboard-chat] ADMIN_API_KEY missing — MCP tools disabled');
-    return {};
-  }
-  try {
-    mcpClient = await createMCPClient({
-      transport: {
-        type: 'http',
-        url,
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    });
-    const rawTools = await mcpClient.tools();
-    cachedMCPTools = Object.fromEntries(
-      Object.entries(rawTools).map(([name, tool]) => [
-        name,
-        wrapToolWithRendererValidation(name, tool),
-      ]),
+
+  // Connect the devpanel-prod HTTP MCP + AFFiNE/GitHub stdio MCPs in
+  // parallel. We collect partial results — if one connector dies the
+  // others still surface. This is the same isolation behaviour the
+  // original HTTP-only path had (try/catch returns {}), generalised
+  // across N transports.
+  /** @type {Record<string, unknown>} */
+  let devpanelTools = {};
+  /** @type {Record<string, unknown>} */
+  let externalTools = {};
+
+  const tasks = [];
+  if (token) {
+    tasks.push(
+      (async () => {
+        try {
+          mcpClient = await createMCPClient({
+            transport: {
+              type: 'http',
+              url,
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          });
+          devpanelTools = await mcpClient.tools();
+        } catch (e) {
+          console.warn(
+            '[dashboard-chat] devpanel-prod MCP connect failed:',
+            e.message,
+          );
+        }
+      })(),
     );
-    return cachedMCPTools;
-  } catch (e) {
-    console.warn('[dashboard-chat] MCP connect failed:', e.message);
-    return {};
+  } else {
+    console.warn(
+      '[dashboard-chat] ADMIN_API_KEY missing — devpanel-prod MCP disabled',
+    );
   }
+  tasks.push(
+    (async () => {
+      externalTools = await connectExternalMCPs();
+    })(),
+  );
+  await Promise.all(tasks);
+
+  const merged = { ...devpanelTools, ...externalTools };
+  cachedMCPTools = Object.fromEntries(
+    Object.entries(merged).map(([name, tool]) => [
+      name,
+      wrapToolWithRendererValidation(name, tool),
+    ]),
+  );
+  console.log(
+    `[dashboard-chat] MCP tools mounted: ${Object.keys(cachedMCPTools).length} total ` +
+      `(devpanel: ${Object.keys(devpanelTools).length}, external: ${Object.keys(externalTools).length})`,
+  );
+  return cachedMCPTools;
 }
 
 // Map our DB-row shape to assistant-ui's UIMessage shape.
