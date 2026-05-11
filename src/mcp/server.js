@@ -1102,38 +1102,13 @@ server.tool(
   }
 );
 
-server.tool(
-  'cancel_job',
-  'Cancel a waiting job or kill an active job',
-  {
-    job_id: z.string().describe('BullMQ job ID')
-  },
-  async ({ job_id }) => {
-    try {
-      const queue = getAgentsQueue();
-      const job = await queue.getJob(job_id);
-      if (!job) {
-        return { content: [{ type: 'text', text: `Job ${job_id} not found` }], isError: true };
-      }
-      const state = await job.getState();
-      if (state === 'active') {
-        try {
-          const resp = await fetch(`${WORKER_API}/kill/${job_id}`, { method: 'POST' });
-          if (resp.ok) {
-            return { content: [{ type: 'text', text: `Job ${job_id} kill signal sent` }] };
-          }
-          return { content: [{ type: 'text', text: `Worker API error: ${resp.status}` }], isError: true };
-        } catch {
-          return { content: [{ type: 'text', text: `Cannot reach worker API at ${WORKER_API}` }], isError: true };
-        }
-      }
-      await job.remove();
-      return { content: [{ type: 'text', text: `Job ${job_id} removed (was ${state})` }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: `Error cancelling job: ${err.message}` }], isError: true };
-    }
-  }
-);
+// `cancel_job` is now wrapped by the `cancelJob` capability in
+// src/capabilities/cancel-job.js (registered below via registerCapabilities).
+// The capability searches every BullMQ queue (not just `agents`), wraps the
+// worker /kill path with a clear `{action, prev_state, message}` payload
+// shape, and surfaces a confirmation card in the chat. The capability owns
+// the canonical registration; declaring the raw tool here would collide and
+// crash the MCP HTTP mount (see PR #239 for the alias-collision fix).
 
 server.tool(
   'set_mode',
