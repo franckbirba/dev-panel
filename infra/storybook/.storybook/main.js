@@ -4,7 +4,23 @@ import react from '@vitejs/plugin-react';
 
 /** @type { import('@storybook/react-vite').StorybookConfig } */
 const config = {
-  stories: ['/stories/**/*.mdx', '/stories/**/*.stories.@(js|jsx|ts|tsx)'],
+  // Each project syncs into /stories/<slug>/, and may *also* ship its own
+  // component sources under /stories/<slug>/_src/ via the sync workflow's
+  // source-path. Some source trees (e.g. apps/chat/) carry their own
+  // stories/ folder, which Storybook's glob would index a second time and
+  // emit "Duplicate stories" errors for. Use the object form to scope
+  // precisely to /stories/<slug>/ at the top level and walk down only the
+  // subdirectories that are NOT _src.
+  stories: [
+    {
+      directory: '/stories',
+      files: '*/*.@(mdx|stories.@(js|jsx|ts|tsx))'
+    },
+    {
+      directory: '/stories',
+      files: '*/!(_src)/**/*.@(mdx|stories.@(js|jsx|ts|tsx))'
+    }
+  ],
   addons: ['@storybook/addon-essentials'],
   framework: {
     name: '@storybook/react-vite',
