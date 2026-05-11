@@ -66,17 +66,19 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
   };
 
-  // GET — OpenCode's MCP SDK uses StreamableHTTP transport which requires
-  // GET to return text/event-stream. We can't route GET through the MCP
-  // transport (it needs POST-first initialization), so we return a minimal
-  // SSE stream that closes immediately. Auth is not required on GET.
+  // GET — OpenCode's MCP SDK uses StreamableHTTP transport which expects
+  // GET to return an SSE stream with an "endpoint" event containing the
+  // POST URL. We can't route GET through the MCP transport (it needs
+  // POST-first initialization), so we return the correct SSE handshake.
   app.get(path, (req, res) => {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    res.write('data: {"jsonrpc":"2.0","message":"ok"}\n\n');
+    // MCP Streamable HTTP spec: GET must return an endpoint event
+    const endpointUrl = `${req.protocol}://${req.get('host')}${path}`;
+    res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
     res.end();
   });
 
