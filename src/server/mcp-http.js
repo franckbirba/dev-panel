@@ -66,7 +66,14 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
   };
 
-  app.use(path, handler);
+  // GET — health check only. OpenCode and other clients do a GET first to
+  // verify the server is alive before POSTing tool calls. Don't open an
+  // SSE stream here — just 200 OK.
+  app.get(path, (req, res) => {
+    res.status(200).json({ jsonrpc: '2.0', message: 'ok' });
+  });
+
+  app.post(path, handler);
 
   console.log(`[mcp-http] mounted at ${path}`);
   return true;
