@@ -197,21 +197,40 @@ The same MCP server that runs in stdio for Shelly (`src/mcp/server.js`, 23+ tool
 - `devpanel-api` traefik labels: `traefik.http.routers.devpanel-mcp.rule=Host(devpanl.dev) && PathPrefix(/mcp)`, priority `250` (beats SPA catch-all at `100`), no middleware.
 - `MCP_NO_AUTOSTART=1` is set in-process before importing `src/mcp/server.js` so its stdio bootstrap doesn't try to colonize the Express stdin/stdout.
 
-**Client config** (each dev's `~/.config/claude-code/.claude.json` or wherever they keep MCP server defs):
+**Client config — easiest path is the Claude Code CLI:**
+```bash
+# Replace <token> with the studio's ADMIN_API_KEY. Once added, restart
+# Claude Code so it re-runs MCP discovery; tools surface as
+# `mcp__devpanel-prod__<tool_name>`.
+claude mcp add --transport http devpanel-prod https://devpanl.dev/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+**Or the JSON-form** (each dev's `~/.claude.json` under the `"mcpServers"` key, scope `user` or `project`):
 ```json
 {
   "mcpServers": {
     "devpanel-prod": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "https://devpanl.dev/mcp",
       "headers": { "Authorization": "Bearer ${ADMIN_API_KEY}" }
     }
   }
 }
 ```
+The CLAUDE.md historically said `"type": "streamable-http"` — that was the on-the-wire transport name. The CLI / config field is just `"http"`.
+
 For now we share `ADMIN_API_KEY` — single token. Per-dev tokens (revocable) are a follow-up; track with `dev_bots`-style rotation if it becomes an issue.
 
-**Smoke-test.** From any host:
+**Verify it's wired.** Run:
+```bash
+claude mcp list 2>&1 | grep -E "devpanel-prod|^plane"
+```
+You should see `devpanel-prod: ... ✓ Connected`. If you only see `plane: uvx ... plane-mcp-server` (the upstream PyPI shim), the devpanel-prod entry is missing — re-run the `claude mcp add` line above. (DEVPA-211 root cause: the entry was undocumented for years; devs only saw upstream `plane` tools and missed the studio-flavored ones — `plane_create_page`, `memory_search`, `subject_map`, `thread_append`, `auto_decision_log`, etc.)
+
+**Drop the upstream `plane: uvx plane-mcp-server` entry once devpanel-prod is verified** — we shadow all of its useful tools and the upstream's `plane_*` names collide with ours, so leaving both creates duplicate-tool noise in `tools/list`.
+
+**Smoke-test from a shell.** From any host with `ADMIN_API_KEY` in env:
 ```bash
 curl -sS -X POST https://devpanl.dev/mcp \
   -H "Authorization: Bearer $ADMIN_API_KEY" \
