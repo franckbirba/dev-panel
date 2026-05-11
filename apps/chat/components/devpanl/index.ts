@@ -36,6 +36,7 @@ export {
   type ConstellationCenter,
   type ConstellationEdge,
 } from "./SubjectConstellationCard";
+<<<<<<< HEAD
 // chat-renderer cards (DEVPA-218) — one per RendererPayload variant.
 export { JobStatusCard } from "./JobStatusCard";
 export { ConsoleStreamCard } from "./ConsoleStreamCard";
@@ -44,3 +45,5 @@ export { ErrorHaltCard } from "./ErrorHaltCard";
 export { InlineActionsCard } from "./InlineActionsCard";
 export { ReactCanvasCard } from "./ReactCanvasCard";
 export { QueueCard } from "./QueueCard";
+=======
+>>>>>>> origin/feat/subject-graph
