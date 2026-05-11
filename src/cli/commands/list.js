@@ -54,8 +54,8 @@ export const listCommand = new Command('list')
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
       // Initialize DB
-      const { initDatabase, listTickets } = await import('../../server/db.js');
-      initDatabase(config.storage.path);
+      const { initMasterDatabase, listTickets } = await import('../../server/db.js');
+      initMasterDatabase(config.storage.path);
 
       // Get tickets
       const tickets = listTickets({

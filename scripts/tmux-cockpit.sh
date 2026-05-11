@@ -11,6 +11,7 @@
 #   6 services      — interactive shell on services VPS as deploy, in repo
 #   7 local         — local repo shell (git, edits, ./scripts/deploy-agents.sh)
 #   8 agents-files  — yazi (TUI file explorer) on hetzner-vps, rooted in repo
+#   9 zeno-prod     — interactive shell on zeno prod host (therealfbi@91.134.141.50)
 #
 # Prerequisites:
 #   - tmux 3.x on PATH
@@ -32,6 +33,7 @@ CONF="$REPO_ROOT/scripts/tmux/devpanl.conf"
 # ("open terminal failed") or behaves non-interactively.
 SSH_AGENTS="ssh -tt hetzner-vps"
 SSH_SERVICES="ssh -tt deploy@77.42.46.87"
+SSH_ZENO="ssh -tt -i $HOME/.ssh/zeno-prod -o IdentitiesOnly=yes therealfbi@91.134.141.50"
 
 TMUX="tmux -L $SOCKET -f $CONF"
 
@@ -81,6 +83,10 @@ $TMUX new-window -t "$SESSION" -n local -c "$REPO_ROOT"
 # pane doesn't disappear; relaunch with `yazi` or just type other commands.
 $TMUX new-window -t "$SESSION" -n agents-files \
   "$SSH_AGENTS 'su - deploy -c \"cd /home/deploy/projects/dev-panel && yazi; exec bash -l\"' || exec \$SHELL"
+
+# Window 9: zeno-prod — interactive shell on the zeno production host.
+$TMUX new-window -t "$SESSION" -n zeno-prod \
+  "$SSH_ZENO 'exec bash -il' || exec \$SHELL"
 
 # Land on Shelly.
 $TMUX select-window -t "$SESSION:shelly"
