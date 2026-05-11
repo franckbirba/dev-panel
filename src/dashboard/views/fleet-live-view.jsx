@@ -12,6 +12,8 @@
 // No phone mock. No serif. The chat panel is a flat panel using the
 // same surface tokens as the rest of the dashboard.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { JobLog } from '@/components/job-log';
+import { getAdminKey } from '@/lib/projects-store';
 
 const STYLES = `
   .fleet-live { display:flex; flex-direction:column; height:100%; overflow:hidden;
@@ -184,6 +186,29 @@ const STYLES = `
     transition:background 120ms }
   .fleet-live__compose button:hover { background:var(--color-brand-glow,var(--color-brand)) }
   .fleet-live__compose button:disabled { opacity:0.4; cursor:not-allowed }
+
+  /* Tail drawer — overlay anchored bottom-right of the fleet pane.
+     Streams agent_job_events via JobLog (SSE). Admin key comes from
+     localStorage; "Tail" stays a no-op for users who never set one. */
+  .fleet-live__tail-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4);
+    display:flex; align-items:flex-end; justify-content:flex-end; z-index:50; padding:24px }
+  .fleet-live__tail-drawer { width:min(720px, 90vw); height:min(560px, 80vh);
+    background:var(--color-surface-1); border:1px solid var(--color-border);
+    border-radius:10px; display:flex; flex-direction:column; overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,0.5) }
+  .fleet-live__tail-header { display:flex; align-items:center; gap:8px;
+    padding:10px 14px; border-bottom:1px solid var(--color-border-subtle);
+    font-family:var(--font-mono); font-size:11px; color:var(--color-foreground-muted) }
+  .fleet-live__tail-title { color:var(--color-foreground); font-weight:600 }
+  .fleet-live__tail-close { margin-left:auto; background:transparent; border:none;
+    color:var(--color-foreground-muted); cursor:pointer; font-size:18px; line-height:1;
+    padding:2px 6px; border-radius:4px }
+  .fleet-live__tail-close:hover { color:var(--color-foreground);
+    background:var(--color-surface-2) }
+  .fleet-live__tail-body { flex:1; min-height:0; padding:10px 14px;
+    display:flex; flex-direction:column }
+  .fleet-live__tail-empty { padding:12px; font-family:var(--font-mono); font-size:11px;
+    color:var(--color-foreground-muted) }
 `;
 
 function statusTone(status) {
@@ -485,11 +510,31 @@ export function FleetLiveView({ apiUrl, apiKey, sseConnected = false, projectNam
     tokens24h: agents.reduce((sum, a) => sum + (a.tokens_used || 0), 0),
   }), [agents]);
 
+  // Tail is a client-side drawer (no server call) — the JobLog component
+  // streams /api/admin/jobs/:id/events?stream=1 via EventSource using the
+  // admin key from localStorage. We track which job's tail is open and let
+  // the drawer dismiss itself.
+  const [tailJobId, setTailJobId] = useState(null);
+  const [tailLabel, setTailLabel] = useState(null);
+
+  function openTail(row) {
+    const jobId = row.last_job_id || row.job_id;
+    if (!jobId) return;
+    setTailJobId(String(jobId));
+    setTailLabel(
+      `${row.agent || row.workflow || 'job'} · ${row.identifier || String(jobId).slice(0, 8)}`,
+    );
+  }
+
   async function handleAction(action, row) {
+    if (action === 'tail') {
+      openTail(row);
+      return;
+    }
     if (!apiKey || !row.instance_id) return;
     const map = {
       kill: 'cancel', cancel: 'cancel', approve: 'approve', retry: 'retry',
-      reply: null, tail: null, inspect: null, pause: null,
+      reply: null, inspect: null, pause: null,
     };
     const endpoint = map[action];
     if (!endpoint) return;
@@ -567,6 +612,54 @@ export function FleetLiveView({ apiUrl, apiKey, sseConnected = false, projectNam
           <ChatPanel apiUrl={apiUrl} apiKey={apiKey} />
         </div>
       </div>
+      {tailJobId && (
+        <TailDrawer
+          jobId={tailJobId}
+          label={tailLabel}
+          apiUrl={apiUrl}
+          onClose={() => { setTailJobId(null); setTailLabel(null); }}
+        />
+      )}
     </>
+  );
+}
+
+function TailDrawer({ jobId, label, apiUrl, onClose }) {
+  const adminKey = getAdminKey();
+
+  // Escape closes the drawer — clicking the backdrop too.
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fleet-live__tail-overlay"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="fleet-live__tail-drawer">
+        <div className="fleet-live__tail-header">
+          <span className="fleet-live__tail-title">tail</span>
+          <span>{label || jobId}</span>
+          <button
+            type="button"
+            className="fleet-live__tail-close"
+            onClick={onClose}
+            aria-label="Close tail"
+          >×</button>
+        </div>
+        <div className="fleet-live__tail-body">
+          {adminKey ? (
+            <JobLog jobId={jobId} apiUrl={apiUrl} adminKey={adminKey} />
+          ) : (
+            <div className="fleet-live__tail-empty">
+              Admin key required to stream logs. Set one in Settings.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
