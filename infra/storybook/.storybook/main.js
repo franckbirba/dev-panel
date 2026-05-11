@@ -69,7 +69,14 @@ const config = {
       'tailwind-merge': '/app/node_modules/tailwind-merge',
       'react': '/app/node_modules/react',
       'react-dom': '/app/node_modules/react-dom',
-      '@assistant-ui/react': '/app/node_modules/@assistant-ui/react'
+      '@assistant-ui/react': '/app/node_modules/@assistant-ui/react',
+      '@radix-ui/react-avatar': '/app/node_modules/@radix-ui/react-avatar',
+      '@radix-ui/react-collapsible': '/app/node_modules/@radix-ui/react-collapsible',
+      '@radix-ui/react-dialog': '/app/node_modules/@radix-ui/react-dialog',
+      '@radix-ui/react-separator': '/app/node_modules/@radix-ui/react-separator',
+      '@radix-ui/react-slot': '/app/node_modules/@radix-ui/react-slot',
+      '@radix-ui/react-tooltip': '/app/node_modules/@radix-ui/react-tooltip',
+      'lucide-react': '/app/node_modules/lucide-react'
     };
 
     // /stories/ is bind-mounted outside of /app, so Vite's default
@@ -85,7 +92,15 @@ const config = {
       'tailwind-merge',
       'clsx',
       'class-variance-authority',
-      'radix-ui'
+      'radix-ui',
+      '@assistant-ui/react',
+      '@radix-ui/react-avatar',
+      '@radix-ui/react-collapsible',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-separator',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-tooltip',
+      'lucide-react'
     ];
 
     return vite;
