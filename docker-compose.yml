@@ -132,6 +132,12 @@ services:
       ALLOWED_ORIGINS: https://devpanl.dev,https://edms.epitools.bj,https://candidat.epitools.bj,https://zeno.epitools.bj
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # External MCP servers the dashboard chat connects to so Qwen sees
+      # the same surface as Shelly (AFFiNE × 3 workspaces + GitHub).
+      # AFFINE_API_TOKEN is the same token used by Shelly's ~/.mcp.json on
+      # the agents host. If unset, the AFFiNE connectors silently disable.
+      AFFINE_API_TOKEN: ${AFFINE_API_TOKEN:-}
+      AFFINE_BASE_URL: ${AFFINE_BASE_URL:-https://affine.devpanl.dev}
       ENABLE_MONITORING: "true"
       ENABLE_BULLMQ: "true"
       ENABLE_MCP_HTTP: "true"

@@ -3,6 +3,12 @@
 import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import {
+	type AffineDoc,
+	AffineDocCard,
+	type AffineDocContent,
+	AffineDocListCard,
+	AffineMutationCard,
+	type AffineMutationResult,
 	AttachmentListCard,
 	CancelJobCard,
 	type CancelJobResult,
@@ -11,6 +17,12 @@ import {
 	type Constellation,
 	ErrorHaltCard,
 	FleetRowCard,
+	type GitHubIssue,
+	GitHubIssueCard,
+	GitHubIssueListCard,
+	type GitHubPR,
+	GitHubPRCard,
+	GitHubPRListCard,
 	type GlitchTipIssue,
 	GlitchTipIssueCard,
 	GlitchTipResolutionCard,
@@ -91,7 +103,7 @@ function useFleetActionHandler() {
 		const a = action.toLowerCase();
 		const prompts: Record<string, string> = {
 			kill: `Cancel job ${jobId} via cancel_job. Confirm briefly with the prev_state and action that came back — don't restate what the job was.`,
-			tail: `Show me the last 50 lines of job ${jobId} via tail_log_snapshot.`,
+			tail: `Show me the last 50 lines of job ${jobId} via job_log_snapshot.`,
 			pause: `Pause job ${jobId} if the worker supports it; otherwise tell me it's not supported and propose Kill.`,
 			approve: `Approve the awaiting-approval gate on job ${jobId} and continue the workflow.`,
 			reply: `Open the job ${jobId} thread so I can reply to its blocker — show me the last few messages from that thread (thread_messages_recent with subject job/${jobId}).`,
@@ -451,6 +463,42 @@ const TailLogSnapshotUI = makeAssistantToolUI<unknown, unknown>({
 			<div className="my-2">
 				<RuntimeConsoleCard
 					title={data.title ?? "log"}
+					lines={data.lines ?? []}
+					state={
+						(data.state as Parameters<typeof RuntimeConsoleCard>[0]["state"]) ??
+						"connected"
+					}
+				/>
+			</div>
+		);
+	},
+});
+
+// `job_log_snapshot` shares the RuntimeConsoleCard shape with tail_log_snapshot
+// — the capability handler in src/capabilities/job-log-snapshot.js emits the
+// same `{title, lines, state}` payload — so the binding is identical aside
+// from toolName.
+const JobLogSnapshotUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "job_log_snapshot",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as {
+			title?: string;
+			lines?: string[];
+			state?: string;
+		} | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="job_log_snapshot"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<RuntimeConsoleCard
+					title={data.title ?? "job log"}
 					lines={data.lines ?? []}
 					state={
 						(data.state as Parameters<typeof RuntimeConsoleCard>[0]["state"]) ??
@@ -998,7 +1046,7 @@ function useWorkflowActionHandler() {
 			content: [
 				{
 					type: "text",
-					text: `Show me the last 50 lines of workflow instance ${instanceId} via tail_log_snapshot.`,
+					text: `Show me the last 50 lines of workflow instance ${instanceId} via job_log_snapshot.`,
 				},
 			],
 		});
@@ -1053,6 +1101,298 @@ const WorkflowDispatchUI = makeAssistantToolUI<unknown, unknown>({
 				<WorkflowDispatchCard result={data} />
 			</div>
 		);
+	},
+});
+
+// ─── AFFiNE (3 workspaces, same MCP package) ─────────────────────────────────
+//
+// connectExternalMCPs() in src/server/external-mcp.js spawns one
+// affine-mcp-server stdio child per workspace and namespaces its tools
+// with the workspace label. So the same verb shows up three times in the
+// tools/list: `affine_zeno_list_docs`, `affine_devpanl_list_docs`,
+// `affine_edms_list_docs`, etc. We bind a card per (workspace, verb) so
+// the LLM doesn't have to disambiguate which workspace it called against.
+
+const AFFINE_WORKSPACES = ["zeno", "devpanl", "edms"] as const;
+
+function affineDocListUI(workspace: string) {
+	const toolName = `affine_${workspace}_list_docs`;
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as
+				| { docs?: AffineDoc[] }
+				| AffineDoc[]
+				| null;
+			const docs = Array.isArray(data) ? data : (data?.docs ?? null);
+			if (!docs || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<AffineDocListCard docs={docs} workspace={`affine-${workspace}`} />
+				</div>
+			);
+		},
+	});
+}
+
+function affineSearchDocsUI(workspace: string) {
+	const toolName = `affine_${workspace}_search_docs`;
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as
+				| { docs?: AffineDoc[]; hits?: AffineDoc[]; results?: AffineDoc[] }
+				| AffineDoc[]
+				| null;
+			const docs = Array.isArray(data)
+				? data
+				: (data?.docs ?? data?.hits ?? data?.results ?? null);
+			if (!docs || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<AffineDocListCard docs={docs} workspace={`affine-${workspace}`} />
+				</div>
+			);
+		},
+	});
+}
+
+function affineReadDocUI(workspace: string, verb: string) {
+	const toolName = `affine_${workspace}_${verb}`;
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as
+				| (AffineDocContent & { doc?: AffineDocContent })
+				| null;
+			const doc =
+				data && "doc" in data && data.doc
+					? (data.doc as AffineDocContent)
+					: (data as AffineDocContent | null);
+			if (!doc || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<AffineDocCard doc={doc} />
+				</div>
+			);
+		},
+	});
+}
+
+function affineMutationUI(
+	workspace: string,
+	verb: string,
+	action: AffineMutationResult["action"],
+) {
+	const toolName = `affine_${workspace}_${verb}`;
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as AffineMutationResult | null;
+			if (!data || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return (
+				<div className="my-2">
+					<AffineMutationCard
+						result={{ ...data, action: data.action ?? action }}
+					/>
+				</div>
+			);
+		},
+	});
+}
+
+const AFFINE_VERBS: Array<
+	| { kind: "list" }
+	| { kind: "search" }
+	| { kind: "read"; verb: string }
+	| { kind: "mutation"; verb: string; action: AffineMutationResult["action"] }
+> = [
+	{ kind: "list" },
+	{ kind: "search" },
+	{ kind: "read", verb: "get_doc" },
+	{ kind: "read", verb: "read_doc" },
+	{ kind: "read", verb: "export_doc_markdown" },
+	{ kind: "mutation", verb: "create_doc", action: "created" },
+	{ kind: "mutation", verb: "create_doc_from_markdown", action: "created" },
+	{ kind: "mutation", verb: "create_semantic_page", action: "created" },
+	{ kind: "mutation", verb: "append_markdown", action: "appended" },
+	{ kind: "mutation", verb: "append_paragraph", action: "appended" },
+	{ kind: "mutation", verb: "append_block", action: "appended" },
+	{ kind: "mutation", verb: "append_semantic_section", action: "appended" },
+	{ kind: "mutation", verb: "replace_doc_with_markdown", action: "updated" },
+	{ kind: "mutation", verb: "update_doc_title", action: "updated" },
+	{ kind: "mutation", verb: "find_and_replace", action: "updated" },
+	{ kind: "mutation", verb: "delete_doc", action: "deleted" },
+];
+
+const AffineUIRegistry = AFFINE_WORKSPACES.flatMap((ws) =>
+	AFFINE_VERBS.map((v) => {
+		const id =
+			v.kind === "list"
+				? `${ws}:list_docs`
+				: v.kind === "search"
+					? `${ws}:search_docs`
+					: `${ws}:${v.verb}`;
+		const UI =
+			v.kind === "list"
+				? affineDocListUI(ws)
+				: v.kind === "search"
+					? affineSearchDocsUI(ws)
+					: v.kind === "read"
+						? affineReadDocUI(ws, v.verb)
+						: affineMutationUI(ws, v.verb, v.action);
+		return { id, UI };
+	}),
+);
+
+// ─── GitHub MCP (@modelcontextprotocol/server-github) ────────────────────────
+
+function ghListPullsUI(toolName: string) {
+	return makeAssistantToolUI<unknown, unknown>({
+		toolName,
+		render: ({ result, args, status }) => {
+			const data = parseToolText(result) as
+				| GitHubPR[]
+				| { pulls?: GitHubPR[]; items?: GitHubPR[] }
+				| null;
+			const pulls = Array.isArray(data)
+				? data
+				: (data?.pulls ?? data?.items ?? null);
+			const repo = (args as { repo?: string; owner?: string } | undefined)
+				?.repo;
+			if (!pulls || status.type === "running")
+				return (
+					<ToolFallback
+						toolName={toolName}
+						args={args}
+						result={result}
+						status={status}
+					/>
+				);
+			return <GitHubPRListCard pulls={pulls} repo={repo} />;
+		},
+	});
+}
+
+const GitHubListPullsUI = ghListPullsUI("github_list_pull_requests");
+
+const GitHubGetPullUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "github_get_pull_request",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as GitHubPR | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="github_get_pull_request"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<GitHubPRCard pr={data} />
+			</div>
+		);
+	},
+});
+
+const GitHubListIssuesUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "github_list_issues",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| GitHubIssue[]
+			| { issues?: GitHubIssue[]; items?: GitHubIssue[] }
+			| null;
+		const issues = Array.isArray(data)
+			? data
+			: (data?.issues ?? data?.items ?? null);
+		const repo = (args as { repo?: string } | undefined)?.repo;
+		if (!issues || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="github_list_issues"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <GitHubIssueListCard issues={issues} repo={repo} />;
+	},
+});
+
+const GitHubGetIssueUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "github_get_issue",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as GitHubIssue | null;
+		if (!data || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="github_get_issue"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return (
+			<div className="my-2">
+				<GitHubIssueCard issue={data} />
+			</div>
+		);
+	},
+});
+
+const GitHubSearchIssuesUI = makeAssistantToolUI<unknown, unknown>({
+	toolName: "github_search_issues",
+	render: ({ result, args, status }) => {
+		const data = parseToolText(result) as
+			| { items?: GitHubIssue[] }
+			| GitHubIssue[]
+			| null;
+		const items = Array.isArray(data) ? data : (data?.items ?? null);
+		const repo = (args as { repo?: string } | undefined)?.repo;
+		if (!items || status.type === "running")
+			return (
+				<ToolFallback
+					toolName="github_search_issues"
+					args={args}
+					result={result}
+					status={status}
+				/>
+			);
+		return <GitHubIssueListCard issues={items} repo={repo} />;
 	},
 });
 
@@ -1155,6 +1495,7 @@ export function ToolUIRegistry() {
 			<DispatchWorkItemUI />
 			<CancelJobUI />
 			<TailLogSnapshotUI />
+			<JobLogSnapshotUI />
 			<RunRemoteCheckUI />
 			<HostStatusUI />
 			<SubjectMapUI />
@@ -1177,6 +1518,14 @@ export function ToolUIRegistry() {
 			<TranscriptReplayRecentUI />
 			<WorkflowListInstancesUI />
 			<WorkflowDispatchUI />
+			{AffineUIRegistry.map(({ id, UI }) => (
+				<UI key={id} />
+			))}
+			<GitHubListPullsUI />
+			<GitHubGetPullUI />
+			<GitHubListIssuesUI />
+			<GitHubGetIssueUI />
+			<GitHubSearchIssuesUI />
 		</>
 	);
 }
