@@ -101,8 +101,20 @@ export function registerCapabilities(server) {
     // names (e.g. `ssh_status`, `tail_log`) from training-data familiarity
     // even when the system prompt lists only the canonical ones. Without
     // aliases those calls 404 at the MCP transport layer ("Load failed").
+    //
+    // Idempotency: if the raw tool of the same name is *already* declared
+    // elsewhere on the server (today: `list_captures` registered directly
+    // in `src/mcp/server.js`), registering an alias would throw
+    // `Tool <name> is already registered` and abort the entire MCP HTTP
+    // mount — leaving `streamText` with zero tools, so Qwen3 fall back to
+    // narrating tool names in prose (`[fleet_status()]`) instead of
+    // actually calling them. Skip the alias in that case; the original
+    // registration wins.
     for (const alias of cap.replaces ?? []) {
       if (alias === cap.name) continue;
+      if (server._registeredTools && server._registeredTools[alias]) {
+        continue;
+      }
       server.tool(
         alias,
         `[alias of ${cap.name}] ${cap.description}`,
