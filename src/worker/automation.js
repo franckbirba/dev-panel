@@ -150,8 +150,24 @@ async function verifyMemoryWrites({ job_id, result }) {
 // Mutates `result` in place. Idempotent: only fires when status=done AND a
 // worktree was used (skips non-coding agents). Returns a small report for
 // logging.
+// Predicate-only workflows do not produce diffs by design — they observe
+// state and emit a decision (merge / block / done). Running the no-diff
+// downgrade against them turns every successful merge-coordinator run into a
+// `blocked`, which is exactly what kept auto-merge wedged after the
+// bash-extension fix landed (job 3120, 2026-05-11). Add new predicate-only
+// workflows to this set when they ship; the cost of forgetting is the same
+// false-block we just fixed.
+const PREDICATE_ONLY_WORKFLOWS = new Set([
+  'merge-coordinator',
+]);
+
 function verifyAndCommit({ result, jobData }) {
   if (!result || result.status !== 'done') return { changed: false };
+
+  if (PREDICATE_ONLY_WORKFLOWS.has(jobData.workflow)) {
+    // No diff is the contract, not a bug — skip the diff guard entirely.
+    return { changed: false, skipped: 'predicate_only_workflow' };
+  }
 
   const worktreePath = jobData.context?.worktree_path;
   const branch = jobData.context?.branch;

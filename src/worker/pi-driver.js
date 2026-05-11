@@ -252,6 +252,15 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
   });
 }
 
+// Hard-tier roles never fall through to Pi by default. Reviewer/qa/architect/
+// deploy require Claude Opus quality (CLAUDE.md cheap-tier section); routing
+// them to Pi-with-anthropic-model fails fast on the agents host because no
+// Anthropic key is wired there (`No API key found for anthropic` — caught
+// 2026-05-11 on jobs 3134/3135 after DRIVER_DEFAULT=pi swept reviewer in).
+// An explicit DRIVER_<HARD_ROLE>=pi still wins (escape hatch for testing on a
+// host that does have an Anthropic key wired into Pi).
+const HARD_TIER_ROLES = new Set(['reviewer', 'qa', 'architect', 'deploy']);
+
 // Mirror shouldUseGoose / shouldUseMiniSwe gate semantics. Pi is opt-in via
 // DRIVER_<AGENT>=pi or DRIVER_DEFAULT=pi. FORCE_TIER=opus is the kill switch
 // (preserves the existing escape hatch — sets every role back to Claude).
@@ -261,5 +270,6 @@ export function shouldUsePi(agentRole) {
   if (process.env[envKey] === 'pi') return true;
   // Per-role overrides for other drivers explicitly veto pi for this role.
   if (['claude', 'mini', 'goose'].includes(process.env[envKey])) return false;
+  if (HARD_TIER_ROLES.has(agentRole)) return false;
   return process.env.DRIVER_DEFAULT === 'pi';
 }
