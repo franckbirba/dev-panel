@@ -10,6 +10,10 @@ const PLANE_API_KEY = process.env.PLANE_API_KEY || process.env.PLANE_API_TOKEN |
 async function createPlaneWorkItem({ project_id, name, description, priority }) {
   if (!PLANE_API_KEY) throw new Error('PLANE_API_KEY not configured');
   const url = `${PLANE_BASE_URL}/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${project_id}/issues/`;
+  
+  // Diagnostic logging for troubleshooting
+  console.log(`[promote_capture] Creating work item in Plane project: ${project_id}`);
+  
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'X-API-Key': PLANE_API_KEY, 'Content-Type': 'application/json' },
@@ -18,7 +22,9 @@ async function createPlaneWorkItem({ project_id, name, description, priority }) 
   });
   if (!r.ok) {
     const t = await r.text().catch(() => '');
-    throw new Error(`plane create work item → ${r.status}${t ? ': ' + t.slice(0, 200) : ''}`);
+    const errorMsg = `plane create work item → ${r.status}${t ? ': ' + t.slice(0, 200) : ''}`;
+    console.error(`[promote_capture] Plane API error: ${errorMsg}. Project ID used: ${project_id}`);
+    throw new Error(errorMsg);
   }
   return r.json();
 }
@@ -50,10 +56,22 @@ export const promoteCapture = {
     const c = data.capture || data;
     if (!c) throw new Error(`capture ${capture_id} not found`);
 
+    // Diagnostic logging to help troubleshoot project ID issues
+    console.log(`[promote_capture] Processing capture ${capture_id}`, {
+      project_name: c.project_name,
+      project_id: c.project_id,  // devpanel project ID
+      plane_project_id: c.plane_project_id,  // Plane project UUID
+      provided_override: plane_project_id
+    });
+
+    // Ensure we have the correct plane project ID
     const targetPlaneProject = plane_project_id || c.plane_project_id;
     if (!targetPlaneProject) {
       throw new Error(
-        `capture ${capture_id} is on devpanel project "${c.project_name}" which has no plane_project_id. Link it first via the admin UI, or pass plane_project_id explicitly.`
+        `capture ${capture_id} is on devpanel project "${c.project_name}" which has no plane_project_id. ` +
+        `devpanel project ID: ${c.project_id}, plane_project_id from DB: ${c.plane_project_id}, ` +
+        `provided override: ${plane_project_id}. ` +
+        `Link the project to Plane via admin UI first.`
       );
     }
 
@@ -69,19 +87,23 @@ export const promoteCapture = {
     // surface that fact instead of pretending the whole thing succeeded.
     let patchError = null;
     try {
+      console.log(`[promote_capture] Attempting to patch capture ${capture_id} to promoted status`);
       await adminPatch(`/api/admin/captures/${encodeURIComponent(capture_id)}`, {
         status: 'promoted',
         plane_work_item_id: created.id,
         plane_sequence_id: created.sequence_id,
       });
+      console.log(`[promote_capture] Successfully patched capture ${capture_id}`);
     } catch (e) {
       patchError = e.message;
+      console.error(`[promote_capture] Failed to patch capture ${capture_id} to promoted status: ${e.message}`);
     }
 
     // Subject-graph edge: capture --[promoted_to]--> work_item.
     // Best-effort — graph write failure must not break the user-visible
     // success of the promotion. Logged in adminPost on failure.
     try {
+      console.log(`[promote_capture] Attempting to create subject link for capture ${capture_id} -> work item ${created.id}`);
       const { adminPost } = await import('./_http.js');
       await adminPost('/api/admin/subject-links', {
         from_type: 'capture',
@@ -95,6 +117,7 @@ export const promoteCapture = {
           plane_project_id: targetPlaneProject,
         },
       });
+      console.log(`[promote_capture] Successfully created subject link`);
     } catch (e) {
       console.warn('[promote_capture] subject-link write failed:', e.message);
     }
