@@ -68,8 +68,7 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
 
   // GET — OpenCode's MCP SDK does a GET first expecting SSE (streamable HTTP).
   // The MCP SDK transport expects POST-first initialization, so we can't
-  // route GET through it. Instead, return a minimal SSE stream that closes
-  // immediately to satisfy the client's health check.
+  // route GET through it. Return a minimal SSE stream that closes immediately.
   app.get(path, (req, res) => {
     const authz = req.headers.authorization || '';
     const m = /^Bearer\s+(.+)$/i.exec(authz);
@@ -81,13 +80,10 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
       });
       return;
     }
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-    res.write('event: end\ndata: {"jsonrpc":"2.0","message":"ok"}\n\n');
-    res.end();
+    // Return JSON content-type — the SDK expects to parse this as JSON,
+    // not SSE text. This satisfies the GET health check without opening
+    // a long-lived SSE stream.
+    res.status(200).json({ jsonrpc: '2.0', message: 'ok' });
   });
 
   app.post(path, handler);
