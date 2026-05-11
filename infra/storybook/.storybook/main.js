@@ -24,13 +24,23 @@ const config = {
     vite.plugins.push(tailwindcss());
 
     vite.resolve = vite.resolve || {};
-    vite.resolve.alias = {
-      ...(vite.resolve.alias || {}),
-      // Per-project "@" alias: a story under /stories/<slug>/foo.stories.jsx
-      // that writes `import ... from "@/components/..."` resolves into that
-      // project's own /stories/<slug>/_src/ subtree. Source trees are copied
-      // into _src/ by the sync workflow.
-      '@': '/stories/devpanel/_src',
+    // Per-project "@" alias: a story under /stories/<slug>/foo.stories.jsx
+    // that writes `import ... from "@/components/..."` resolves into that
+    // project's own /stories/<slug>/_src/ subtree. We use the array form
+    // with a customResolver so the rewrite depends on the *importer* path
+    // (each project gets its own _src), instead of a single global "@".
+    const perProjectAtAlias = {
+      find: /^@\/(.+)$/,
+      replacement: '$1',
+      customResolver(source, importer) {
+        const m = importer && importer.match(/^\/stories\/([^/]+)\//);
+        const slug = m ? m[1] : 'devpanel';
+        return this.resolve(`/stories/${slug}/_src/${source}`, importer, {
+          skipSelf: true
+        }).then((r) => (r ? r.id : null));
+      }
+    };
+    const bareDepAliases = {
       // Bare-import deps used by synced source trees won't resolve up from
       // /stories/ to /app/node_modules on their own. Pin each one to the
       // container's own installed copy.
@@ -41,6 +51,15 @@ const config = {
       'react': '/app/node_modules/react',
       'react-dom': '/app/node_modules/react-dom'
     };
+    const existing = vite.resolve.alias;
+    const existingArr = Array.isArray(existing)
+      ? existing
+      : Object.entries(existing || {}).map(([find, replacement]) => ({ find, replacement }));
+    vite.resolve.alias = [
+      perProjectAtAlias,
+      ...Object.entries(bareDepAliases).map(([find, replacement]) => ({ find, replacement })),
+      ...existingArr
+    ];
 
     // /stories/ is bind-mounted outside of /app, so Vite's default
     // node_modules lookup from a story file won't find the storybook
