@@ -47,7 +47,7 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
 
     try {
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
+        sessionIdGenerator: () => crypto.randomUUID(),
       });
       res.on('close', () => {
         transport.close().catch(() => {});
@@ -66,14 +66,7 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
   };
 
-  // GET — health check only. OpenCode and other clients do a GET first to
-  // verify the server is alive before POSTing tool calls. Don't open an
-  // SSE stream here — just 200 OK.
-  app.get(path, (req, res) => {
-    res.status(200).json({ jsonrpc: '2.0', message: 'ok' });
-  });
-
-  app.post(path, handler);
+  app.use(path, handler);
 
   console.log(`[mcp-http] mounted at ${path}`);
   return true;
