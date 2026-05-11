@@ -1,0 +1,38 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # Catch unresolved merge conflict markers before they reach main.
+  # Background: PR #233 squash-merged with `<<<<<<< HEAD` etc. in 5 files
+  # because the merge-coordinator agent's `git diff --check` step didn't
+  # exist yet. devpanel-api crashed on import; prod 404'd for 15 min.
+  # This job is the belt-and-braces — primary guard is in the agent's
+  # SOUL.md (`.agents/merge-coordinator/SOUL.md` Step 2.5).
+  conflict-markers:
+    name: No conflict markers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # We only need the tip of the PR head — single-commit checkout
+          # is enough since `git diff --check` works on the working tree.
+          fetch-depth: 1
+      - name: Scan tracked files for conflict markers
+        run: |
+          # `git diff --check` against the empty tree treats every line of
+          # every tracked file as added; any `<<<<<<<` / `=======` /
+          # `>>>>>>>` at column 0 is reported as `leftover conflict marker`.
+          # It also reports trailing whitespace etc. — we filter those out
+          # because they're not what this job is for.
+          EMPTY_TREE=$(git hash-object -t tree /dev/null)
+          OUT=$(git --no-pager diff --check "$EMPTY_TREE" -- . 2>&1 || true)
+          MARKERS=$(printf '%s\n' "$OUT" | grep -F 'leftover conflict marker' || true)
+          if [ -n "$MARKERS" ]; then
+            echo "::error::Found unresolved merge conflict markers — resolve locally and push again:"
+            printf '%s\n' "$MARKERS"
+            exit 1
+          fi
+          echo "No conflict markers found."

@@ -56,7 +56,16 @@ git rebase origin/main
 
 Three outcomes:
 
-- **Clean rebase.** `git rebase` exits 0 with no conflict markers. Force-push:
+- **Clean rebase.** `git rebase` exits 0. **Before pushing, verify no conflict markers leaked into tracked files** — a clean exit code is necessary but not sufficient (rerere replays and certain non-trivial 3-way merges can produce marker text without setting a non-zero exit). Run:
+  ```
+  git diff --check HEAD
+  ```
+  This exits non-zero with a `leftover conflict marker` report on any tracked file containing `<<<<<<<`, `=======`, or `>>>>>>>`. If it reports anything:
+  - Reset the worktree: `git rebase --abort 2>/dev/null; git reset --hard origin/<context.github.branch>`
+  - Emit `gate=rebase_left_markers:<files>` (the file list from `git diff --check`).
+  - BLOCKED. Do NOT push. (This is the failure mode that caused the 2026-05-11 prod outage — PR #233 force-pushed conflict markers up and crashed devpanel-api on import.)
+
+  If `git diff --check` exits 0, force-push:
   ```
   git push --force-with-lease origin <context.github.branch>
   ```
