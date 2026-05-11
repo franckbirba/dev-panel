@@ -179,24 +179,52 @@ export interface QueueItem {
 }
 
 export interface QueueCardPayload {
-	type: "queue-card";
-	title: string;
-	items: QueueItem[];
-	/** Optional summary footer. */
-	footer?: string;
+        type: "queue-card";
+        title: string;
+        items: QueueItem[];
+        /** Optional summary footer. */
+        footer?: string;
+}
+
+/**
+ * subject-constellation — the studio graph neighborhood card.
+ * Centers on one subject and shows its immediate typed connections.
+ */
+export interface SubjectConstellationPayload {
+        type: "subject-constellation";
+        center: {
+                type: string;
+                id: string;
+                summary: any;
+        };
+        /** Neighbors grouped by their subject type. */
+        groups: Record<string, Array<{
+                direction: "in" | "out";
+                rel: string;
+                type: string;
+                id: string;
+                summary?: any;
+                meta?: any;
+        }>>;
+        /** Totals per group. */
+        counts: Record<string, number>;
+        /** Absolute total of raw edges found. */
+        edge_count: number;
+        /** Captured if the traversal was partially degraded. */
+        edges_error?: string | null;
 }
 
 // ─── Discriminated union + helpers ──────────────────────────────────────
 
 export type RendererPayload =
-	| JobStatusPayload
-	| ConsoleStreamPayload
-	| TerminalSessionPayload
-	| ErrorHaltPayload
-	| InlineActionsPayload
-	| ReactCanvasPayload
-	| QueueCardPayload;
-
+        | JobStatusPayload
+        | ConsoleStreamPayload
+        | TerminalSessionPayload
+        | ErrorHaltPayload
+        | InlineActionsPayload
+        | ReactCanvasPayload
+        | QueueCardPayload
+        | SubjectConstellationPayload;
 export type RendererPayloadType = RendererPayload["type"];
 
 export const RENDERER_PAYLOAD_TYPES =

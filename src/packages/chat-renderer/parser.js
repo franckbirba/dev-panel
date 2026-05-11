@@ -19,6 +19,7 @@ export const RENDERER_PAYLOAD_TYPES = Object.freeze([
   'inline-actions',
   'react-canvas',
   'queue-card',
+  'subject-constellation',
 ]);
 
 function isObject(x) {
@@ -73,6 +74,10 @@ export function parseRendererPayload(input) {
     case 'queue-card':
       if (!hasStringField(input, 'title')) return null;
       if (!hasArrayField(input, 'items')) return null;
+      return input;
+    case 'subject-constellation':
+      if (!isObject(input.center)) return null;
+      if (!isObject(input.groups)) return null;
       return input;
     default:
       return null;

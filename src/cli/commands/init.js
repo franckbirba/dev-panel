@@ -96,9 +96,9 @@ export const initCommand = new Command('init')
     }
 
     // Initialize database
-    const { initDatabase } = await import('../../server/db.js');
-    initDatabase(storagePath);
-    console.log('✓ Initialized SQLite database (storage/tickets.db)');
+    const { initMasterDatabase } = await import('../../server/db.js');
+    initMasterDatabase(storagePath);
+    console.log('✓ Initialized SQLite database (storage/projects.db)');
 
     console.log('\n✨ DevPanel initialized successfully!\n');
     console.log('Next steps:');
