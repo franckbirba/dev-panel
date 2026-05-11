@@ -56,7 +56,8 @@ function envDefault() {
   return { provider, model };
 }
 
-// Returns { model } — an AI SDK LanguageModel ready to pass into streamText.
+// Returns { model, provider } — an AI SDK LanguageModel and the provider
+// kind so the caller can build a correct system prompt.
 //
 // The caller passes the raw header value (or null/undefined). On unknown
 // or unsupported choices, falls back to env default and logs once per
@@ -83,7 +84,7 @@ export function resolveChatModel(headerValue) {
     case 'deepinfra':
     case 'openai': {
       const client = getOpenAICompat(providerKind);
-      return { model: client.chat(modelName) };
+      return { model: client.chat(modelName), provider: providerKind };
     }
     case 'anthropic':
     case 'ollama': {
@@ -92,13 +93,17 @@ export function resolveChatModel(headerValue) {
       // the chat keeps responding instead of 500-ing on a UI choice.
       console.warn(`[chat-providers] ${providerKind} not yet plumbed, falling back to env default`);
       const env = envDefault();
-      const client = getOpenAICompat(env.provider === 'openai' ? 'openai' : 'deepinfra');
-      return { model: client.chat(env.model) };
+      providerKind = env.provider;
+      modelName = env.model;
+      const client = getOpenAICompat(providerKind === 'openai' ? 'openai' : 'deepinfra');
+      return { model: client.chat(modelName), provider: providerKind };
     }
     default: {
       const env = envDefault();
-      const client = getOpenAICompat(env.provider === 'openai' ? 'openai' : 'deepinfra');
-      return { model: client.chat(env.model) };
+      providerKind = env.provider;
+      modelName = env.model;
+      const client = getOpenAICompat(providerKind === 'openai' ? 'openai' : 'deepinfra');
+      return { model: client.chat(modelName), provider: providerKind };
     }
   }
 }

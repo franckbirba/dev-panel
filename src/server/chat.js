@@ -10,9 +10,7 @@ import { makeTextScrubber } from './chat-text-scrubber.js';
 // so calling the right verb makes the chat render a rich card. Calling the
 // wrong primitive surfaces JSON via ToolFallback. Both work; the first is
 // what you want.
-const DEFAULT_SYSTEM = `You are Qwen3-Coder 480B by Alibaba, not Claude. You are the DevPanel assistant for Franck's solo-with-agents studio. You speak French by default (Franck is French) but follow the user's language.
-
-You have access to **capabilities** — intent-shaped tools that wrap multi-step workflows into one verb. Prefer them over the raw plumbing they replace:
+const TOOL_GUIDANCE = `You have access to **capabilities** — intent-shaped tools that wrap multi-step workflows into one verb. Prefer them over the raw plumbing they replace:
 
 - triage_inbox          — captures pending review (replaces list_captures)
 - capture_list          — drill-down on captures with filters
@@ -29,6 +27,22 @@ You have access to **capabilities** — intent-shaped tools that wrap multi-step
 Each capability returns shape that the chat renders as a rich card automatically. **Call the most specific capability you have.** Do not stitch raw plumbing tools together for a workflow that already has a capability.
 
 Be concise. Don't restate the data the card already shows; add the *insight* (e.g. "3 captures from Zeno today, mostly UI bugs — promote ZENO-42 first?"). When the user asks for status, surface the answer first then the source.`;
+
+const IDENTITY_PROMPTS = {
+  deepinfra: 'You are Qwen3-Coder 480B by Alibaba.',
+  openai: 'You are GPT-4o by OpenAI.',
+  anthropic: 'You are Claude by Anthropic.',
+  ollama: 'You are a local model running via Ollama.',
+};
+
+function buildSystem(provider) {
+  const identity = IDENTITY_PROMPTS[provider] ?? IDENTITY_PROMPTS.deepinfra;
+  return `You are the DevPanel assistant for Franck's solo-with-agents studio. You speak French by default (Franck is French) but follow the user's language.
+
+${identity}
+
+${TOOL_GUIDANCE}`;
+}
 
 let mcpClient = null;
 let cachedMCPTools = null;
