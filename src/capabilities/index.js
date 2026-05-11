@@ -38,12 +38,15 @@ import { hostStatus } from './host-status.js';
 import { autoDecisionLog, decisionsLog } from './auto-decisions.js';
 import { subjectMap } from './subject-map.js';
 import { subjectLink } from './subject-link.js';
+<<<<<<< HEAD
 import {
   studioAddMember,
   studioListMembers,
   studioAddProject,
   studioListProjects,
 } from './onboarding.js';
+=======
+>>>>>>> origin/feat/subject-graph
 
 export const CAPABILITIES = [
   triageInbox,
@@ -61,10 +64,13 @@ export const CAPABILITIES = [
   decisionsLog,
   subjectMap,
   subjectLink,
+<<<<<<< HEAD
   studioAddMember,
   studioListMembers,
   studioAddProject,
   studioListProjects,
+=======
+>>>>>>> origin/feat/subject-graph
 ];
 
 /**
