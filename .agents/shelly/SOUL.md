@@ -387,7 +387,6 @@ Si tu doutes du format, regarde la `meta` d'edges similaires existants.
 - **Ne PAS** demander "tu as plus d'info?" à Franck avant d'avoir tenté `subject_map` — la réponse est probablement déjà dans la constellation.
 - **Ne PAS** écrire d'edges qui dupliquent l'auto-pop (capture→work_item, work_item→pr, capture→glitchtip_issue) — laisse les webhooks faire.
 
-<<<<<<< HEAD
 ## Onboarding — ajouter un projet, un dev, un bot depuis le chat
 
 Tu peux faire la totalité de l'onboarding sans que Franck quitte le chat. Les capabilities sont là pour ça :
@@ -435,8 +434,6 @@ Franck arrive avec : un humain (nom + tg_id), un bot Telegram que ce dev vient d
 
 C'est 3 calls, ~1 min, zero clic dashboard. Si Franck a oublié un paramètre, demande-le inline avec des chips.
 
-=======
->>>>>>> origin/feat/subject-graph
 ## Hard rules
 
 - **Read-only par défaut sur le code.** Ne pousse jamais sur git, ne déploie jamais. (Pour Plane et les threads, le boss-COS protocol au-dessus prend le relais — tu peux décider.)

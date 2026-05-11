@@ -1025,7 +1025,6 @@ export function createRouter(config = {}) {
   });
 
   // ============================================================================
-<<<<<<< HEAD
   // ONBOARDING ADMIN — Shelly-callable endpoints for project + member creation.
   //
   // The originals (POST /projects/wizard, /api/team/members) are project-keyed,
@@ -1125,8 +1124,6 @@ export function createRouter(config = {}) {
   });
 
   // ============================================================================
-=======
->>>>>>> origin/feat/subject-graph
   // PROJECT WIZARD — frictionless add for Franck. Project-key auth (not admin):
   // if you're logged in with a valid key you can add another project. Pastes
   // a GitHub URL, optionally links/creates a Plane project, returns a fresh
