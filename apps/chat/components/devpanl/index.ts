@@ -36,3 +36,11 @@ export {
   type ConstellationCenter,
   type ConstellationEdge,
 } from "./SubjectConstellationCard";
+// chat-renderer cards (DEVPA-218) — one per RendererPayload variant.
+export { JobStatusCard } from "./JobStatusCard";
+export { ConsoleStreamCard } from "./ConsoleStreamCard";
+export { TerminalSessionCard } from "./TerminalSessionCard";
+export { ErrorHaltCard } from "./ErrorHaltCard";
+export { InlineActionsCard } from "./InlineActionsCard";
+export { ReactCanvasCard } from "./ReactCanvasCard";
+export { QueueCard } from "./QueueCard";
