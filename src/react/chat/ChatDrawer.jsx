@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createChatStore } from './chatStore.js';
 import { ChatSSEClient } from './ChatSSEClient.js';
 import { postCapture } from '../captureFlow.js';
+import { RendererPayloadCard, extractRendererPayload } from './RendererCards.jsx';
 
 const BUG_TEMPLATE = 'Bug : \nÉtapes : \nRésultat : \nAttendu : ';
 
@@ -52,10 +53,24 @@ export function ChatDrawer({
       onMessage: (event) => {
         const st = useStore.getState();
         if (event.type === 'message') {
+          // Renderer payload extraction — accept the payload at three
+          // positions: `event.payload`, `event.content` (object), or a
+          // JSON string under `event.content`. Mirrors the dashboard's
+          // ToolFallback dispatch path so widget + dashboard handle the
+          // same payload shape with the same parser.
+          let payload = extractRendererPayload(event.payload ?? event.content);
+          if (!payload && typeof event.content === 'string') {
+            try {
+              payload = extractRendererPayload(JSON.parse(event.content));
+            } catch {
+              payload = null;
+            }
+          }
           st.appendMessage({
             id: event.id ?? `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             role: event.role || 'shelly',
             content: event.content ?? '',
+            payload,
             ts: event.ts ?? Date.now(),
           });
           st.setTyping(false);
@@ -243,7 +258,33 @@ export function ChatDrawer({
                   textAlign: m.role === 'user' ? 'right' : 'left',
                 }}
               >
-                <span style={bubbleStyle(m.role)}>{m.content}</span>
+                {m.payload ? (
+                  <RendererPayloadCard
+                    payload={m.payload}
+                    onAction={(action) => {
+                      // Chip click → post the chip payload (or label) as
+                      // a new user turn. Same contract as the dashboard's
+                      // capture-action handler; the server side sees this
+                      // as a normal /messages POST.
+                      const text = action.payload || action.label;
+                      const ts = Date.now();
+                      const localId = `u-${ts}-${Math.random().toString(36).slice(2, 8)}`;
+                      useStore.getState().appendMessage({
+                        id: localId, role: 'user', content: text, ts,
+                      });
+                      fetch(
+                        `${apiUrl}/api/widget/sessions/${encodeURIComponent(sessionId)}/messages`,
+                        {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+                          body: JSON.stringify({ id: localId, content: text, ts }),
+                        },
+                      ).catch(() => { /* offline — SSE will retry */ });
+                    }}
+                  />
+                ) : (
+                  <span style={bubbleStyle(m.role)}>{m.content}</span>
+                )}
               </li>
             ))}
             {typing && (
