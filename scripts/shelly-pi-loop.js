@@ -19,7 +19,8 @@
 //           --extension infra/pi-extensions/github
 //           --extension infra/pi-extensions/loop-guard
 //           --provider deepinfra --model Qwen3-Coder-480B-A35B-Instruct
-//           --mode json --no-session --no-context-files --no-skills
+//           --mode json --session shelly/<bot>/<user>
+//           --no-context-files --no-skills
 //      with PI_MCP_CONFIG=/home/deploy/.mcp-shelly-pi.json — a copy of
 //      ~/.mcp.json with the `telegram` entry STRIPPED. We do NOT let the
 //      per-pi-run mcp-bridge spawn its own telegram-multi (would be the
@@ -29,10 +30,11 @@
 //      exits.
 //   5. Loop.
 //
-// One-shot-per-message instead of a persistent REPL: no in-memory
-// conversation context, but Shelly's `transcript_replay_recent` MCP tool
-// already covers that — when needed, Pi-Shelly calls it to read the
-// recent backlog. SOUL.md documents this pattern.
+// One pi run per inbound, but each (bot_label, tg_user_id) shares a
+// persistent --session, so the model sees its own previous turns on the
+// next inbound. Sessions are JSONL trees auto-created on first reference
+// under ~/.pi/agent/sessions/shelly/. Cross-peer talk still goes through
+// the `transcript_replay_recent` MCP tool — sessions are per-peer.
 //
 // Started by infra/shelly-pi.service. The Claude variant
 // (infra/shelly.service) and this one are mutually exclusive — running
@@ -45,7 +47,7 @@
 // Updating the watchdog to be mode-aware is a follow-up.
 
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +203,28 @@ If you are confident no response is needed (extremely rare — only for non-acti
 This is mechanical, not optional. If you forget, the user thinks you are dead.
 `;
 
+// Pi sessions store turn history as JSONL trees in ~/.pi/agent/sessions/.
+// One session per (bot_label, tg_user_id) gives every Telegram peer a
+// persistent conversation: pi auto-creates the file on first --session
+// reference and resumes it on subsequent runs. Sanitize the id to a flat
+// slug so pi can pass it both as a path component and as a partial-id.
+//
+// Concurrency: pi's tree has an "active leaf" that races on concurrent
+// writes to the same id. The loop processes inbounds sequentially per
+// peer (the queue is FIFO on shelly_transcript.id and runPiForMessage
+// is awaited), so we never race ourselves. Different peers = different
+// session ids = naturally safe.
+const PI_SESSIONS_ROOT = join(homedir(), '.pi/agent/sessions/shelly');
+function safeSlug(v) {
+  return String(v ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'unknown';
+}
+function sessionIdFor(row) {
+  if (!existsSync(PI_SESSIONS_ROOT)) {
+    mkdirSync(PI_SESSIONS_ROOT, { recursive: true });
+  }
+  return `shelly/${safeSlug(row.bot_label)}/${safeSlug(row.tg_user_id)}`;
+}
+
 function runPiForMessage(row) {
   return new Promise((resolve) => {
     const soul = readFileSync(SOUL_PATH, 'utf8') + PI_REPLY_IMPERATIVE;
@@ -209,7 +233,7 @@ function runPiForMessage(row) {
       '--provider', PI_PROVIDER,
       '--model', PI_MODEL,
       '--mode', 'json',
-      '--no-session',
+      '--session', sessionIdFor(row),
       '--no-context-files',
       '--no-skills',
       '--no-prompt-templates',
