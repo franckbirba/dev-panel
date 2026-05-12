@@ -8,10 +8,10 @@
 // Phase 2 (claw, the model-agnostic harness) ships with empirical confidence.
 
 const CHEAP_TIER_ROLES = new Set([
-  'builder', 'designer', 'pm', 'merge-coordinator'
+  'builder', 'designer', 'pm'
 ]);
 const HARD_TIER_ROLES = new Set([
-  'reviewer', 'qa', 'architect', 'deploy'
+  'reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator'
 ]);
 const MODEL_ALIASES = {
   opus:   'claude-opus-4-7',

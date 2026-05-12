@@ -14,10 +14,10 @@
 // build confidence we can drop Claude Code entirely).
 
 const CHEAP_TIER_ROLES = new Set([
-  'builder', 'designer', 'pm', 'merge-coordinator'
+  'builder', 'designer', 'pm'
 ]);
 const HARD_TIER_ROLES = new Set([
-  'reviewer', 'qa', 'architect', 'deploy'
+  'reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator'
 ]);
 
 const CHEAP_DEFAULT = {
