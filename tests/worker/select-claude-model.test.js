@@ -10,14 +10,16 @@ describe('selectClaudeModel', () => {
     expect(selectClaudeModel('builder', {})).toBe('claude-haiku-4-5-20251001');
     expect(selectClaudeModel('designer', {})).toBe('claude-haiku-4-5-20251001');
     expect(selectClaudeModel('pm', {})).toBe('claude-haiku-4-5-20251001');
-    expect(selectClaudeModel('merge-coordinator', {})).toBe('claude-haiku-4-5-20251001');
   });
 
-  it('routes hard-tier roles to opus-4.7 by default', () => {
+  it('routes hard-tier roles (incl. merge-coordinator) to opus-4.7 by default', () => {
     expect(selectClaudeModel('reviewer', {})).toBe('claude-opus-4-7');
     expect(selectClaudeModel('qa', {})).toBe('claude-opus-4-7');
     expect(selectClaudeModel('architect', {})).toBe('claude-opus-4-7');
     expect(selectClaudeModel('deploy', {})).toBe('claude-opus-4-7');
+    // merge-coordinator: promoted from cheap to hard 2026-05-12 after the
+    // Zeno #78/#79 false-block incident — gh predicates are too subtle for haiku.
+    expect(selectClaudeModel('merge-coordinator', {})).toBe('claude-opus-4-7');
   });
 
   it('returns null for unknown roles so the caller falls back to ambient default', () => {

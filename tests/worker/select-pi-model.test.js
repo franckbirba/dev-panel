@@ -19,18 +19,20 @@ describe('selectPiModel', () => {
       provider: 'deepinfra',
       model: 'Qwen/Qwen3-Coder-480B-A35B-Instruct'
     });
-    expect(selectPiModel('merge-coordinator', {})).toEqual({
-      provider: 'deepinfra',
-      model: 'Qwen/Qwen3-Coder-480B-A35B-Instruct'
-    });
   });
 
-  it('routes hard-tier roles to anthropic/claude-opus-4-7 by default', () => {
+  it('routes hard-tier roles (incl. merge-coordinator) to anthropic/claude-opus-4-7 by default', () => {
     expect(selectPiModel('reviewer', {})).toEqual({
       provider: 'anthropic',
       model: 'claude-opus-4-7'
     });
     expect(selectPiModel('architect', {})).toEqual({
+      provider: 'anthropic',
+      model: 'claude-opus-4-7'
+    });
+    // merge-coordinator: promoted to hard tier 2026-05-12 after the Zeno #78/#79
+    // false-block incident — gh predicates too subtle for Qwen3 / haiku.
+    expect(selectPiModel('merge-coordinator', {})).toEqual({
       provider: 'anthropic',
       model: 'claude-opus-4-7'
     });

@@ -404,10 +404,14 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
   });
 }
 
+// Hard-tier roles require Claude Opus; never fall through to goose by default.
+const HARD_TIER_ROLES = new Set(['reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator']);
+
 export function shouldUseGoose(agentRole) {
   if (process.env.FORCE_TIER === 'opus') return false;
   const envKey = `DRIVER_${agentRole.toUpperCase().replace(/-/g, '_')}`;
   if (process.env[envKey] === 'goose') return true;
   if (process.env[envKey] === 'claude') return false;
+  if (HARD_TIER_ROLES.has(agentRole)) return false;
   return process.env.DRIVER_DEFAULT === 'goose';
 }

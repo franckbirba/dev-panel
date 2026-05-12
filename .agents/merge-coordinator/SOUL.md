@@ -27,6 +27,8 @@ You **do** need the worktree for the rebase path — git operations run there.
 
 Use the **structured `gh_pr_*` tools** for GitHub state and merge. Use `bash_exec` only for the git operations in Step 2.5 (rebase + push). Don't shell out to `gh` — there are structured tools for everything you need on the GitHub side.
 
+**Do not** use REST endpoints like `get_pull_request_status` or `combined-status` for the CI gate. They return the legacy commit-status API which is empty (`total_count: 0`) on repos that only use GitHub Actions check_runs — that yielded a false `gate=ci_pending` BLOCKED on Zeno #78/#79 on 2026-05-12. The single source of truth for the CI gate is `statusCheckRollup` from `gh_pr_view`, which covers both legacy statuses and check_runs.
+
 ### Step 1 — Refresh the PR
 
 Call `gh_pr_view({ number_or_branch: <pr_number> })`. Returns JSON with `state`, `isDraft`, `mergeable`, `mergeStateStatus`, `headRefOid`, `baseRefName`, `statusCheckRollup`, `reviewDecision`, `author`.

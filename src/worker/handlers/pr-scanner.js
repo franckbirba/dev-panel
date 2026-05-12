@@ -12,7 +12,8 @@ import { enqueueWorkflowStart } from '../dispatch.js';
 import {
   hasActiveInstance,
   syntheticWorkItemId,
-  extractPlaneRef
+  extractPlaneRef,
+  isAgentPR
 } from '../../server/webhooks-github.js';
 
 function buildOctokit() {
@@ -90,6 +91,14 @@ export async function handlePrScanner(_jobData = {}) {
     for (const pr of prs) {
       summary.prs_seen += 1;
       const synthetic = syntheticWorkItemId(repo, pr.number);
+
+      // Mirror webhook gate: agent PRs only. Octokit's pulls.list returns
+      // `labels` and `head.ref` so isAgentPR works on the same shape as the
+      // webhook payload. Skips human PRs (Franck/Edwin/Alex) silently.
+      if (!isAgentPR(pr)) {
+        summary.skipped_active += 1;
+        continue;
+      }
 
       if (await hasActiveInstance(repo, pr.number)) {
         summary.skipped_active += 1;

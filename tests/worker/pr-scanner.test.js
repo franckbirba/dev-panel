@@ -78,7 +78,8 @@ describe('handlePrScanner', () => {
         number: 6,
         title: 'feat: add upload retry',
         body: 'fixes EDMS-17',
-        head: { ref: 'feat/upload-retry', sha: 'abc123' }
+        head: { ref: 'feat/wi-12345678-1234-1234-1234-1234567890ab-upload-retry', sha: 'abc123' },
+        labels: []
       }]
     });
     mocks.hasActiveInstanceMock.mockResolvedValue(false);
@@ -101,7 +102,7 @@ describe('handlePrScanner', () => {
             repo: 'EpitechAfrik/EDMS',
             pr_number: 6,
             head_sha: 'abc123',
-            branch: 'feat/upload-retry'
+            branch: 'feat/wi-12345678-1234-1234-1234-1234567890ab-upload-retry'
           })
         })
       })
@@ -114,8 +115,8 @@ describe('handlePrScanner', () => {
     ]);
     mocks.octokitListMock.mockResolvedValue({
       data: [
-        { number: 6, title: 'PR 6', body: '', head: { ref: 'b1', sha: 's1' } },
-        { number: 7, title: 'PR 7', body: '', head: { ref: 'b2', sha: 's2' } }
+        { number: 6, title: 'PR 6', body: '', head: { ref: 'feat/wi-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa-x', sha: 's1' }, labels: [] },
+        { number: 7, title: 'PR 7', body: '', head: { ref: 'feat/wi-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb-y', sha: 's2' }, labels: [] }
       ]
     });
     mocks.hasActiveInstanceMock.mockImplementation(async (_repo, n) => n === 6);
@@ -142,7 +143,7 @@ describe('handlePrScanner', () => {
         err.status = 404;
         throw err;
       }
-      return { data: [{ number: 1, title: 'z1', body: '', head: { ref: 'b', sha: 's' } }] };
+      return { data: [{ number: 1, title: 'z1', body: '', head: { ref: 'feat/wi-cccccccc-cccc-cccc-cccc-cccccccccccc-z', sha: 's' }, labels: [] }] };
     });
     mocks.hasActiveInstanceMock.mockResolvedValue(false);
     mocks.enqueueWorkflowStartMock.mockResolvedValue({ ok: true, instance_id: 'i', job_id: 'j' });
@@ -171,6 +172,31 @@ describe('handlePrScanner', () => {
     expect(mocks.octokitListMock).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'foo', repo: 'bar', state: 'open' })
     );
+  });
+
+  it('skips human PRs (no agent branch, no agent-merge label)', async () => {
+    mockProjects([
+      { id: 'p1', name: 'zeno', github_owner: 'EpitechAfrik', github_repo: 'Zeno' }
+    ]);
+    mocks.octokitListMock.mockResolvedValue({
+      data: [
+        // Human PR: ordinary branch, no agent-merge label → must be skipped.
+        { number: 78, title: 'fix(candidate-portal): load admission form in parallel with settings', body: '', head: { ref: 'feature/campus', sha: 'h1' }, labels: [] },
+        // Agent PR via label: ordinary branch but explicit agent-merge label → dispatched.
+        { number: 100, title: 'human title', body: '', head: { ref: 'feature/manual', sha: 'h2' }, labels: [{ name: 'agent-merge' }] }
+      ]
+    });
+    mocks.hasActiveInstanceMock.mockResolvedValue(false);
+    mocks.enqueueWorkflowStartMock.mockResolvedValue({ ok: true, instance_id: 'i', job_id: 'j' });
+
+    const result = await handlePrScanner({});
+
+    expect(result.prs_seen).toBe(2);
+    expect(result.dispatched).toBe(1);
+    expect(result.skipped_active).toBe(1);
+    expect(mocks.enqueueWorkflowStartMock).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueWorkflowStartMock.mock.calls[0][0].plane.work_item_id)
+      .toBe('github:EpitechAfrik/Zeno#100');
   });
 
   it('records an error and returns empty when fetching projects fails', async () => {

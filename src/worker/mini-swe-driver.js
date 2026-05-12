@@ -275,10 +275,14 @@ export function spawnMiniSwe({ jobId, prompt, agentRole, cwd, activeProcesses, a
 // Mirror shouldUseGoose's gate semantics so the worker can pick mini-swe
 // per-role via DRIVER_<AGENT>=mini, with FORCE_TIER=opus as the kill switch
 // and DRIVER_DEFAULT=mini as the global opt-in.
+// Hard-tier roles require Claude Opus; never fall through to mini-swe by default.
+const HARD_TIER_ROLES = new Set(['reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator']);
+
 export function shouldUseMiniSwe(agentRole) {
   if (process.env.FORCE_TIER === 'opus') return false;
   const envKey = `DRIVER_${agentRole.toUpperCase().replace(/-/g, '_')}`;
   if (process.env[envKey] === 'mini') return true;
   if (process.env[envKey] === 'claude' || process.env[envKey] === 'goose') return false;
+  if (HARD_TIER_ROLES.has(agentRole)) return false;
   return process.env.DRIVER_DEFAULT === 'mini';
 }
