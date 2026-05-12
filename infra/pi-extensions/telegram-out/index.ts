@@ -309,6 +309,137 @@ const downloadAttachment = defineTool({
 	},
 });
 
+// ---------- dm_member ----------
+//
+// One-call shortcut for "DM another studio member" — the chain Shelly
+// would otherwise have to infer:
+//   1. resolve a fuzzy `member` ("alex", "Alex", "alexandre") to a
+//      studio_members row,
+//   2. pick the right `bot_label` (member's own paired bot if set, else
+//      fall back to Franck's bot which has the broadest allowlist),
+//   3. resolve the destination chat_id (member.default_dm_chat_id, which
+//      defaults to their tg_user_id for direct DMs),
+//   4. call sendMessage.
+//
+// Without this tool Qwen3 has to stitch four lookups + a reply call,
+// and in practice does none of them — it falls back to refusing in prose
+// ("As an AI I can't contact external people…"). With this tool there
+// is one obvious thing to call.
+//
+// Routing rule: prefer the recipient's own bot_label when set (so the
+// conversation lands in the bot the recipient already pairs with). If
+// the recipient has no bot_label, fall back to env DM_FALLBACK_BOT_LABEL
+// (defaults to "franck"). This mirrors notify-routing.js conventions.
+
+async function resolveMember(query: string): Promise<{
+	tg_user_id: string;
+	bot_label: string | null;
+	default_dm_chat_id: string;
+	display_name: string;
+} | null> {
+	if (!query) return null;
+	const q = query.trim();
+	// Exact bot_label or case-insensitive display_name match.
+	const r = await pool.query(
+		`SELECT tg_user_id, bot_label, default_dm_chat_id, display_name
+		 FROM studio_members
+		 WHERE bot_label = $1
+		    OR LOWER(display_name) = LOWER($1)
+		    OR LOWER(display_name) LIKE LOWER($1) || ' %'
+		    OR LOWER(display_name) LIKE LOWER($1) || '%'
+		 ORDER BY
+		   CASE WHEN bot_label = $1 THEN 0
+		        WHEN LOWER(display_name) = LOWER($1) THEN 1
+		        ELSE 2 END,
+		   display_name
+		 LIMIT 1`,
+		[q],
+	);
+	if (r.rows.length === 0) return null;
+	const row = r.rows[0];
+	return {
+		tg_user_id: String(row.tg_user_id),
+		bot_label: row.bot_label,
+		default_dm_chat_id: String(row.default_dm_chat_id ?? row.tg_user_id),
+		display_name: row.display_name,
+	};
+}
+
+const dmMember = defineTool({
+	name: "dm_member",
+	label: "DM a studio member",
+	promptSnippet:
+		"DM another studio member (Alex, Edwin, …) by name — resolves bot_label/chat_id from studio_members so you don't have to.",
+	promptGuidelines: [
+		"Use this when the user asks you to ping/notify/ask SOMEONE ELSE on the team (e.g. 'ping Alex', 'demande à Edwin'). DO NOT use `reply` for that — `reply` only goes back to the inbound sender.",
+		"`member` is a fuzzy name: 'alex', 'Alex', 'alexandre', or a bot_label all work. The tool does a studio_members lookup.",
+		"If `thread_subject` is set, the message is prefixed with `[thread:<subject>]` so the recipient's reply lands in the right thread (see SOUL.md 'Thread tag protocol').",
+		"You still owe a `reply` to the original inbound sender after this — `dm_member` is a side-channel, not a substitute for acknowledging the asker.",
+	],
+	description:
+		"Send a Telegram DM to ANOTHER studio member by fuzzy name. Use this when the user asks you to ping/notify a different teammate (NOT the inbound sender — for that use `reply`). The tool looks up tg_user_id + bot_label + chat_id from studio_members, falls back to env DM_FALLBACK_BOT_LABEL (default 'franck') if the member has no bot_label of their own. Returns {ok, member, bot_label, chat_id, message_ids} on success, or {ok:false, error:'member_not_found'} if no studio_members row matches.",
+	parameters: Type.Object({
+		member: Type.String({
+			description:
+				"Fuzzy name or bot_label of the recipient. 'alex', 'Alex', 'alexandre', or 'alex' (bot_label) all resolve to the same row if Alex is in studio_members.",
+		}),
+		text: Type.String({ description: "Message body (markdown ok)." }),
+		thread_subject: Type.Optional(
+			Type.String({
+				description:
+					"Optional thread tag, e.g. 'capture/42' or 'work_item/DEVPA-93'. When set, the message is prefixed with '[thread:<subject>] '.",
+			}),
+		),
+	}),
+	async execute(_id, params, signal) {
+		try {
+			const member = await resolveMember(params.member);
+			if (!member) {
+				return asError(
+					"dm_member",
+					`member_not_found: no studio_members row matches "${params.member}" (try the exact display_name or bot_label, or studio_list_members to enumerate)`,
+				);
+			}
+			const botLabel =
+				member.bot_label || process.env.DM_FALLBACK_BOT_LABEL || "franck";
+			const token = await tokenFor(botLabel);
+			const prefix = params.thread_subject
+				? `[thread:${params.thread_subject}] `
+				: "";
+			const body = prefix + params.text;
+			const chunks: string[] = [];
+			let s = body;
+			while (s.length > 4096) {
+				chunks.push(s.slice(0, 4096));
+				s = s.slice(4096);
+			}
+			chunks.push(s);
+			const sent: number[] = [];
+			for (const chunk of chunks) {
+				const r = (await tgCall(
+					token,
+					"sendMessage",
+					{ chat_id: member.default_dm_chat_id, text: chunk },
+					signal,
+				)) as { message_id?: number };
+				if (r.message_id != null) sent.push(r.message_id);
+			}
+			return ok({
+				ok: true,
+				member: {
+					display_name: member.display_name,
+					tg_user_id: member.tg_user_id,
+				},
+				bot_label: botLabel,
+				chat_id: member.default_dm_chat_id,
+				message_ids: sent,
+			});
+		} catch (err) {
+			return asError("dm_member", (err as Error).message);
+		}
+	},
+});
+
 // keep readFileSync imported in case future tools (sendDocument, sendPhoto) need it.
 void readFileSync;
 
@@ -396,6 +527,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(react);
 	pi.registerTool(editMessage);
 	pi.registerTool(downloadAttachment);
+	pi.registerTool(dmMember);
 	attachReplyFallback(pi);
 	process.on("exit", () => {
 		void pool.end().catch(() => undefined);
