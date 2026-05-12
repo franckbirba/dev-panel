@@ -11,13 +11,17 @@
 // refuse to mount — running unauthenticated would expose dispatch/memory
 // tools to anyone who can reach devpanl.dev.
 //
-// Stateless mode (sessionIdGenerator: undefined): each request opens a fresh
-// transport, no Mcp-Session-Id tracking. Fine for our workload (request/
-// response tool calls), avoids the in-memory session map that would be lost
-// on every plane-api recreate.
+// Stateful sessions: an MCP handshake is initialize → notifications/initialized
+// → tool calls. The SDK requires the same transport instance across all three
+// hops, otherwise the second hop returns "Server not initialized" (the SDK
+// only flips its internal initialized flag on the transport that handled the
+// init). We keep transports in an in-memory Map keyed by mcp-session-id, the
+// pattern shown in the SDK's streamableHttp examples. State is lost on
+// container recreate — clients reconnect via a fresh initialize, no big deal.
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { timingSafeEqual } from 'crypto';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { randomUUID, timingSafeEqual } from 'crypto';
 
 function safeEqual(a, b) {
   const aBuf = Buffer.from(a);
@@ -33,6 +37,8 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     return false;
   }
 
+  const transports = new Map();
+
   const handler = async (req, res) => {
     const authz = req.headers.authorization || '';
     const m = /^Bearer\s+(.+)$/i.exec(authz);
@@ -46,13 +52,31 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
 
     try {
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-      });
-      res.on('close', () => {
-        transport.close().catch(() => {});
-      });
-      await server.connect(transport);
+      const sessionId = req.headers['mcp-session-id'];
+      let transport;
+
+      if (sessionId && transports.has(sessionId)) {
+        transport = transports.get(sessionId);
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id) => {
+            transports.set(id, transport);
+          },
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) transports.delete(transport.sessionId);
+        };
+        await server.connect(transport);
+      } else {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+          id: null,
+        });
+        return;
+      }
+
       await transport.handleRequest(req, res, req.body);
     } catch (err) {
       console.error('[mcp-http] handler error:', err);
@@ -66,22 +90,28 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
     }
   };
 
-  // GET — OpenCode's MCP SDK uses StreamableHTTP transport which expects
-  // GET to return an SSE stream with an "endpoint" event containing the
-  // POST URL. We can't route GET through the MCP transport (it needs
-  // POST-first initialization), so we return the correct SSE handshake.
-  app.get(path, (req, res) => {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-    // MCP Streamable HTTP spec: GET must return an endpoint event
-    const endpointUrl = `${req.protocol}://${req.get('host')}${path}`;
-    res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
-    res.end();
-  });
+  // SSE-style GET and DELETE are part of the streamable-http spec for
+  // server-initiated notifications and session termination. We support both
+  // via the same auth check + session lookup; the transport itself handles
+  // the protocol semantics.
+  const sessionDispatch = async (req, res) => {
+    const authz = req.headers.authorization || '';
+    const m = /^Bearer\s+(.+)$/i.exec(authz);
+    if (!m || !safeEqual(m[1].trim(), token)) {
+      res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null });
+      return;
+    }
+    const sessionId = req.headers['mcp-session-id'];
+    const transport = sessionId ? transports.get(sessionId) : undefined;
+    if (!transport) {
+      res.status(400).send('Invalid or missing session ID');
+      return;
+    }
+    await transport.handleRequest(req, res);
+  };
 
+  app.get(path, sessionDispatch);
+  app.delete(path, sessionDispatch);
   app.post(path, handler);
 
   console.log(`[mcp-http] mounted at ${path}`);

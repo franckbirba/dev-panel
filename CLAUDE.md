@@ -202,11 +202,17 @@ The same MCP server that runs in stdio for Shelly (`src/mcp/server.js`, 23+ tool
 # Replace <token> with the studio's ADMIN_API_KEY. Once added, restart
 # Claude Code so it re-runs MCP discovery; tools surface as
 # `mcp__devpanel-prod__<tool_name>`.
-claude mcp add --transport http devpanel-prod https://devpanl.dev/mcp \
+#
+# `--scope user` is intentional: this is studio-wide, you want it visible
+# from every project. Without `--scope user`, the entry lands in the
+# CURRENT project only (default scope is `local`), and the next time you
+# `cd` into a different repo it disappears — exactly the trap that kept
+# the entry hidden for months in DEVPA-211.
+claude mcp add --transport http --scope user devpanel-prod https://devpanl.dev/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-**Or the JSON-form** (each dev's `~/.claude.json` under the `"mcpServers"` key, scope `user` or `project`):
+**Or the JSON-form** (each dev's `~/.claude.json` under the top-level `"mcpServers"` key for user scope — NOT under a project block, see scope warning above):
 ```json
 {
   "mcpServers": {
