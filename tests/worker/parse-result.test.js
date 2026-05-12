@@ -63,4 +63,49 @@ describe('parseResult', () => {
     expect(out.ok).toBe(true);
     expect(out.data.summary).toBe('see {bug} in {code}');
   });
+
+  it('synthesizes summary from pr_url + commit when LLM drops the field', () => {
+    const noSummary = {
+      ...VALID,
+      artifacts: {
+        ...VALID.artifacts,
+        commits: ['abc1234567890'],
+        pr_url: 'https://github.com/foo/bar/pull/42'
+      }
+    };
+    delete noSummary.summary;
+    const out = parseResult('x\n' + JSON.stringify(noSummary));
+    expect(out.ok).toBe(true);
+    expect(out.data.summary).toContain('PR https://github.com/foo/bar/pull/42');
+    expect(out.data.summary).toContain('abc1234567');
+  });
+
+  it('synthesizes summary when summary is present but empty string', () => {
+    const empty = { ...VALID, summary: '   ', artifacts: { ...VALID.artifacts, pr_url: 'https://x/pr/1' } };
+    const out = parseResult('x\n' + JSON.stringify(empty));
+    expect(out.ok).toBe(true);
+    expect(out.data.summary).toContain('PR https://x/pr/1');
+  });
+
+  it('does not synthesize when no artifact context is available', () => {
+    const bare = {
+      ...VALID,
+      artifacts: { files_created: [], files_modified: [], commits: [], branch: null, tests_passed: false, pr_url: null }
+    };
+    delete bare.summary;
+    const out = parseResult('x\n' + JSON.stringify(bare));
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/summary/);
+  });
+
+  it('handles commits as objects with sha field', () => {
+    const objCommits = {
+      ...VALID,
+      artifacts: { ...VALID.artifacts, commits: [{ sha: 'def9876543210', message: 'fix' }], pr_url: null }
+    };
+    delete objCommits.summary;
+    const out = parseResult('x\n' + JSON.stringify(objCommits));
+    expect(out.ok).toBe(true);
+    expect(out.data.summary).toContain('def9876543');
+  });
 });
