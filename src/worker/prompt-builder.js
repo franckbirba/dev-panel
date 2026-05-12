@@ -158,6 +158,29 @@ function validate(obj) {
   return null;
 }
 
+// Models occasionally drop or empty `summary` on otherwise-valid output
+// (observed on Opus 4.7 merge-coordinator runs). The action already happened
+// — failing the whole job over a missing label is wasteful. Synthesize a
+// fallback from the artifacts that did make it, so downstream alerts stay
+// readable. Only fires when status is success-ish and artifacts are present.
+function coerceSummary(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (typeof obj.summary === 'string' && obj.summary.trim()) return obj;
+  if (!STATUS_ENUM.includes(obj.status)) return obj;
+  const a = obj.artifacts;
+  if (!a || typeof a !== 'object') return obj;
+  const parts = [];
+  if (a.pr_url) parts.push(`PR ${a.pr_url}`);
+  if (Array.isArray(a.commits) && a.commits.length) {
+    const first = a.commits[0];
+    const sha = typeof first === 'string' ? first : (first && first.sha) || null;
+    if (sha) parts.push(`commit ${String(sha).slice(0, 10)}`);
+  }
+  if (a.branch) parts.push(`branch ${a.branch}`);
+  if (!parts.length) return obj;
+  return { ...obj, summary: `[${obj.status}] ${parts.join(', ')}` };
+}
+
 /**
  * Parse the JSON result from claude -p output
  * @param {string} output - Raw stdout from claude -p
@@ -167,8 +190,9 @@ export function parseResult(output) {
   const lines = output.trim().split('\n').map(l => l.trim()).filter(Boolean);
   for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
     try {
-      const parsed = JSON.parse(lines[i]);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const raw = JSON.parse(lines[i]);
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const parsed = coerceSummary(raw);
         const err = validate(parsed);
         if (!err) return { ok: true, data: parsed };
         return { ok: false, error: err, raw: parsed };
@@ -179,7 +203,7 @@ export function parseResult(output) {
   const m = output.match(/```json\s*\n?([\s\S]*?)\n?```\s*$/);
   if (m) {
     try {
-      const parsed = JSON.parse(m[1]);
+      const parsed = coerceSummary(JSON.parse(m[1]));
       const err = validate(parsed);
       if (!err) return { ok: true, data: parsed };
       return { ok: false, error: err, raw: parsed };
@@ -191,8 +215,9 @@ export function parseResult(output) {
   const multilineCandidate = extractTrailingJsonObject(output);
   if (multilineCandidate) {
     try {
-      const parsed = JSON.parse(multilineCandidate);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const raw = JSON.parse(multilineCandidate);
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const parsed = coerceSummary(raw);
         const err = validate(parsed);
         if (!err) return { ok: true, data: parsed };
         return { ok: false, error: err, raw: parsed };
