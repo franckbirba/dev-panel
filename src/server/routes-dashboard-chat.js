@@ -28,6 +28,7 @@ import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
 import { makeTextScrubber } from './chat-text-scrubber.js';
 import { gateToolWithPermission } from './chat-permissions.js';
+import { compactIfNeeded } from './chat-compaction.js';
 import {
   getOrCreateThread,
   listMessages,
@@ -481,10 +482,22 @@ export function mountDashboardChat(app) {
       const mcpTools = await getMCPTools();
       const { model } = resolveChatModel(req.get('x-devpanl-provider'));
 
+      // Same compaction pass as /api/chat. Long dashboard threads (50+
+      // turns with screenshot widgets) will trip this; short threads are
+      // a near-instant char-count check.
+      const { messages: compactedMessages, systemAddendum } = await compactIfNeeded({
+        messages: messages ?? [],
+        model,
+      });
+      const baseSystem = system ?? DEFAULT_SYSTEM;
+      const finalSystem = systemAddendum
+        ? `${baseSystem}\n\n${systemAddendum}`
+        : baseSystem;
+
       const result = streamText({
         model,
-        messages: await convertToModelMessages(messages ?? []),
-        system: system ?? DEFAULT_SYSTEM,
+        messages: await convertToModelMessages(compactedMessages),
+        system: finalSystem,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
         experimental_transform: makeTextScrubber,
