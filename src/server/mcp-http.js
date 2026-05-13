@@ -1,9 +1,9 @@
 // HTTP transport for the devpanel MCP server.
 //
 // The MCP server in src/mcp/server.js was originally stdio-only. This module
-// mounts the same `server` object on Express via StreamableHTTPServerTransport
-// so remote Claude Code / Claude Desktop instances can reach it over HTTPS at
-// devpanl.dev/mcp instead of needing a local clone of this repo.
+// mounts an McpServer instance on Express via StreamableHTTPServerTransport
+// so remote Claude Code / Claude Desktop / opencode instances can reach it
+// over HTTPS at devpanl.dev/mcp instead of needing a local clone of this repo.
 //
 // Auth: Authorization: Bearer <ADMIN_API_KEY>. The traefik router for this
 // path is wired WITHOUT oauth-google@docker (a Bearer client can't satisfy
@@ -19,18 +19,18 @@
 // pattern shown in the SDK's streamableHttp examples. State is lost on
 // container recreate — clients reconnect via a fresh initialize, no big deal.
 //
-// One-server-per-session constraint: an `McpServer` can only be `connect()`ed
-// to ONE transport at a time — the SDK throws "Already connected to a
-// transport". We're given a singleton `server` (the stdio one), so we
-// SERIALIZE init across HTTP sessions: before connecting the singleton to a
-// new transport, we close any prior transport. Sessions are short-lived in
-// Claude Code's pattern (init → tools/list → call → close) so the practical
-// impact is minimal; if we ever need true parallelism we'd refactor
-// src/mcp/server.js into a `buildServer()` factory and use that here.
+// Per-session McpServer: an `McpServer` can only be `connect()`ed to ONE
+// transport at a time — the SDK throws "Already connected" if reused. So we
+// call `buildServer()` (from src/mcp/server.js) for each new session and
+// connect that fresh instance to the new transport. This lets multiple
+// HTTP clients (e.g. opencode opening parallel sessions for parallel tool
+// calls) coexist without the activeTransport-serialization wart that the
+// previous implementation needed when there was only one shared singleton.
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID, timingSafeEqual } from 'crypto';
+import { buildServer } from '../mcp/server.js';
 
 function safeEqual(a, b) {
   const aBuf = Buffer.from(a);
@@ -39,16 +39,16 @@ function safeEqual(a, b) {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
-  if (!server) throw new Error('mountMcpHttp: server is required');
+export async function mountMcpHttp(app, { server: _legacyServer, token, path = '/mcp' } = {}) {
+  // _legacyServer is kept in the signature for back-compat with callers but
+  // unused — we now spin up one McpServer per session via buildServer().
   if (!token) {
     console.warn(`[mcp-http] ADMIN_API_KEY not set — ${path} disabled`);
     return false;
   }
 
-  const transports = new Map();
-  let activeTransport = null;
-  let initLock = Promise.resolve();
+  // sessionId -> { transport, server } so we can close both on session end.
+  const sessions = new Map();
 
   const handler = async (req, res) => {
     const authz = req.headers.authorization || '';
@@ -66,33 +66,24 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
       const sessionId = req.headers['mcp-session-id'];
       let transport;
 
-      if (sessionId && transports.has(sessionId)) {
-        transport = transports.get(sessionId);
+      if (sessionId && sessions.has(sessionId)) {
+        transport = sessions.get(sessionId).transport;
       } else if (!sessionId && isInitializeRequest(req.body)) {
-        // Serialize init: an McpServer can only be connected to one transport
-        // at a time. Wait for any in-flight init to settle, then take over.
-        const myInit = (async () => {
-          await initLock.catch(() => {});
-          // Disconnect prior transport from the singleton McpServer before
-          // reusing it. close() flips Protocol._transport back to undefined.
-          if (activeTransport) {
-            try { await activeTransport.close(); } catch { /* already closed */ }
-          }
-          transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (id) => {
-              transports.set(id, transport);
-            },
-          });
-          transport.onclose = () => {
-            if (transport.sessionId) transports.delete(transport.sessionId);
-            if (activeTransport === transport) activeTransport = null;
-          };
-          activeTransport = transport;
-          await server.connect(transport);
-        })();
-        initLock = myInit;
-        await myInit;
+        // Fresh session: new McpServer, new transport, no shared state with
+        // any other session. The SDK's transports.set callback fires after
+        // the session-id is assigned in the init response.
+        const sessionServer = buildServer();
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id) => {
+            sessions.set(id, { transport, server: sessionServer });
+          },
+        });
+        transport.onclose = async () => {
+          if (transport.sessionId) sessions.delete(transport.sessionId);
+          try { await sessionServer.close?.(); } catch { /* ignore */ }
+        };
+        await sessionServer.connect(transport);
       } else {
         res.status(400).json({
           jsonrpc: '2.0',
@@ -127,12 +118,12 @@ export async function mountMcpHttp(app, { server, token, path = '/mcp' } = {}) {
       return;
     }
     const sessionId = req.headers['mcp-session-id'];
-    const transport = sessionId ? transports.get(sessionId) : undefined;
-    if (!transport) {
+    const entry = sessionId ? sessions.get(sessionId) : undefined;
+    if (!entry) {
       res.status(400).send('Invalid or missing session ID');
       return;
     }
-    await transport.handleRequest(req, res);
+    await entry.transport.handleRequest(req, res);
   };
 
   app.get(path, sessionDispatch);

@@ -188,21 +188,25 @@ const STORAGE_PATH = process.env.DEVPANEL_STORAGE || './storage';
 // Initialize DB
 initMasterDatabase(STORAGE_PATH);
 
-const server = new McpServer({
-  name: 'dev-panel',
-  version: '2.0.0'
-});
+// buildServer() returns a fresh McpServer with all tools, capabilities and
+// runtime hooks registered. The HTTP transport (src/server/mcp-http.js) calls
+// it per session so each HTTP client gets its own server instance — the
+// SDK's `McpServer.connect(transport)` throws "Already connected" if reused
+// across transports, and serializing across sessions caused stale-session
+// failures with clients that open new sessions per tool call (opencode).
+// The stdio entrypoint still calls buildServer() once at module load.
+export function buildServer() {
+  const server = new McpServer({
+    name: 'dev-panel',
+    version: '2.0.0'
+  });
 
-// Filter tool registrations by MCP_PROFILE. With MCP_PROFILE=public, the
-// public Shelly process boots with only the FAQ-safe whitelist (see
-// profile.js). Without the env var (or with anything other than "public"),
-// the legacy full surface is registered — internal Shelly + worker keep
-// every dispatch / write / memory tool they had before.
-wrapServerWithProfile(server);
-export { server };
-export function getRegisteredToolNames() {
-  return server.getRegisteredToolNames();
-}
+  // Filter tool registrations by MCP_PROFILE. With MCP_PROFILE=public, the
+  // public Shelly process boots with only the FAQ-safe whitelist (see
+  // profile.js). Without the env var (or with anything other than "public"),
+  // the legacy full surface is registered — internal Shelly + worker keep
+  // every dispatch / write / memory tool they had before.
+  wrapServerWithProfile(server);
 
 // ============================================================================
 // TOOLS
@@ -1356,7 +1360,7 @@ server.tool(
 // THREAD APPEND — inbound Telegram message → dashboard thread
 // ============================================================================
 
-export async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
+async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
   const parsed = parseTag(raw_text);
   if (!parsed) {
     await recordUntaggedDrop({ raw_text, role, telegram_message_id });
@@ -1778,7 +1782,18 @@ registerRuntimeTools(server);
 // 1:1 by `renderHint`. See src/capabilities/index.js.
 // ============================================================================
 
-registerCapabilities(server);
+  registerCapabilities(server);
+
+  return server;
+}
+
+// Module-scope singleton for stdio + any importer that grabs `{ server }`.
+// HTTP callers should use buildServer() directly to get fresh instances.
+const server = buildServer();
+export { server };
+export function getRegisteredToolNames() {
+  return server.getRegisteredToolNames();
+}
 
 // ============================================================================
 // START
