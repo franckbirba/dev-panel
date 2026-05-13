@@ -48,6 +48,40 @@ export function appendMessage({ thread_id, role, source, content, telegram_messa
   return info.lastInsertRowid;
 }
 
+// Copy messages from `source_thread_id` whose id is <= `upToMessageId`
+// (or all messages if `upToMessageId` is null) into `target_thread_id`.
+// Preserves role, source, content, metadata, but assigns a fresh id and
+// created_at to the copies. Used by the chat-fork endpoint to seed a new
+// thread with a prefix of an existing one (DEVPA-262).
+//
+// Returns the number of rows copied. The target thread's last_message_at
+// is updated to "now" so the new thread sorts to the top in the sidebar.
+export function copyMessagesIntoThread({ source_thread_id, target_thread_id, upToMessageId = null }) {
+  const db = getMasterDatabase();
+  const rows = upToMessageId == null
+    ? db.prepare(
+        `SELECT role, source, content, metadata FROM thread_messages
+          WHERE thread_id = ? ORDER BY id ASC`
+      ).all(source_thread_id)
+    : db.prepare(
+        `SELECT role, source, content, metadata FROM thread_messages
+          WHERE thread_id = ? AND id <= ? ORDER BY id ASC`
+      ).all(source_thread_id, upToMessageId);
+  if (rows.length === 0) return 0;
+  const insert = db.prepare(
+    `INSERT INTO thread_messages (thread_id, role, source, content, metadata)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+  const tx = db.transaction((items) => {
+    for (const r of items) insert.run(target_thread_id, r.role, r.source, r.content, r.metadata);
+  });
+  tx(rows);
+  db.prepare(
+    `UPDATE threads SET last_message_at = CURRENT_TIMESTAMP WHERE thread_id = ?`
+  ).run(target_thread_id);
+  return rows.length;
+}
+
 // Idempotent insert keyed on telegram_message_id (the unique partial index
 // on thread_messages.telegram_message_id will reject duplicates; we swallow
 // the constraint error so callers don't have to think about retries).
