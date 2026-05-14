@@ -2,6 +2,7 @@
 // MONITORING & HEALTH CHECKS
 // ============================================================================
 
+import fs from 'fs';
 import { getProjectDatabase } from './db.js';
 
 /**
@@ -18,7 +19,6 @@ export function getHealthStatus(storagePath = './storage') {
 
   // 1. Database health
   try {
-    const fs = (await import('fs')).default;
     const masterDbPath = `${storagePath}/projects.db`;
     const masterExists = fs.existsSync(masterDbPath);
 
@@ -47,7 +47,6 @@ export function getHealthStatus(storagePath = './storage') {
 
   // 3. Filesystem health
   try {
-    const fs = (await import('fs')).default;
     const stats = fs.statSync(storagePath);
     checks.components.storage = {
       status: 'up',

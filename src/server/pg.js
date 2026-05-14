@@ -12,6 +12,14 @@ export const pool = new Pool({
   max: 10
 });
 
+// Prevent unhandled connection errors from crashing the API process when
+// Postgres is unreachable (dev mode without local pg). Handlers that depend
+// on pg already wrap their queries in try/catch; we just need a listener so
+// node doesn't terminate on the EventEmitter 'error'.
+pool.on('error', (err) => {
+  if (process.env.DEBUG_PG) console.warn('[pg pool error]', err.message);
+});
+
 function vecLiteral(arr) {
   return `[${arr.join(',')}]`;
 }

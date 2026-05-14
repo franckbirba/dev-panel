@@ -129,7 +129,7 @@ services:
         required: false
     environment:
       NODE_ENV: production
-      ALLOWED_ORIGINS: https://devpanl.dev,https://edms.epitools.bj,https://candidat.epitools.bj,https://zeno.epitools.bj
+      ALLOWED_ORIGINS: https://devpanl.dev,https://edms.epitools.bj,https://candidat.epitools.bj,https://zeno.epitools.bj,http://localhost:3000,http://localhost:3030
       ADMIN_API_KEY: ${ADMIN_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       # External MCP servers the dashboard chat connects to so Qwen sees
@@ -141,6 +141,11 @@ services:
       ENABLE_MONITORING: "true"
       ENABLE_BULLMQ: "true"
       ENABLE_MCP_HTTP: "true"
+      # Chat backend MCP — connect to ourselves directly (localhost) rather
+      # than going through Traefik/Cloudflare. The @ai-sdk/mcp client's
+      # Streamable HTTP transport breaks when routed through the external
+      # proxy chain (HTTP 400 "Server not initialized").
+      DEVPANEL_MCP_URL: http://localhost:3030/mcp
       # Chat backend (apps/chat → /api/chat). Defaults to Qwen3-Coder via
       # DeepInfra (cheap-tier). User can flip in the chat header dropdown
       # (DEVPA-206 frontend wiring).

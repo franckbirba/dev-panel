@@ -2,6 +2,7 @@ import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
 import { makeTextScrubber } from './chat-text-scrubber.js';
+import { listMcpServers } from './db.js';
 
 // Default system prompt — nudges the LLM toward intent-shaped capability
 // tools (the ones in `src/capabilities/`) rather than fishing through the
@@ -44,33 +45,54 @@ ${identity}
 ${TOOL_GUIDANCE}`;
 }
 
-let mcpClient = null;
+let mcpClients = new Map(); // name -> client
 let cachedMCPTools = null;
 
 async function getMCPTools() {
   if (cachedMCPTools) return cachedMCPTools;
 
-  const url = process.env.DEVPANEL_MCP_URL ?? 'https://devpanl.dev/mcp';
+  const servers = listMcpServers(true);
+  const legacyUrl = process.env.DEVPANEL_MCP_URL ?? 'https://devpanl.dev/mcp';
   const token = process.env.ADMIN_API_KEY;
-  if (!token) {
-    console.warn('[chat] ADMIN_API_KEY missing — MCP tools disabled');
+
+  // Add legacy server if it's not already in the list
+  if (token && !servers.some(s => s.url === legacyUrl)) {
+    servers.unshift({
+      name: 'legacy-devpanel',
+      url: legacyUrl,
+      headers: JSON.stringify({ Authorization: `Bearer ${token}` }),
+    });
+  }
+
+  if (servers.length === 0) {
+    console.warn('[chat] No MCP servers configured');
     return {};
   }
 
-  try {
-    mcpClient = await createMCPClient({
-      transport: {
-        type: 'http',
-        url,
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    });
-    cachedMCPTools = await mcpClient.tools();
-    return cachedMCPTools;
-  } catch (e) {
-    console.warn('[chat] MCP connect failed:', e.message);
-    return {};
+  const allTools = {};
+  for (const server of servers) {
+    try {
+      let client = mcpClients.get(server.name);
+      if (!client) {
+        const headers = server.headers ? JSON.parse(server.headers) : {};
+        client = await createMCPClient({
+          transport: {
+            type: 'http',
+            url: server.url,
+            headers,
+          },
+        });
+        mcpClients.set(server.name, client);
+      }
+      const tools = await client.tools();
+      Object.assign(allTools, tools);
+    } catch (e) {
+      console.warn(`[chat] MCP server "${server.name}" connect failed:`, e.message);
+    }
   }
+
+  cachedMCPTools = allTools;
+  return allTools;
 }
 
 export function mountChat(app) {

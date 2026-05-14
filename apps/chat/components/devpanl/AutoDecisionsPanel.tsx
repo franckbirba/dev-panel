@@ -56,7 +56,7 @@ export function AutoDecisionsPanel() {
 
   async function refresh() {
     try {
-      const r = await fetch("/api/admin/auto-decisions", {
+      const r = await fetch("api/admin/auto-decisions", {
         credentials: "include",
       });
       if (!r.ok) {
@@ -84,7 +84,7 @@ export function AutoDecisionsPanel() {
   async function rollback(id: number) {
     setPending(id);
     try {
-      await fetch(`/api/admin/auto-decisions/${id}/rollback`, {
+      await fetch(`api/admin/auto-decisions/${id}/rollback`, {
         method: "POST",
         credentials: "include",
       });

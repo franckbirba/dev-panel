@@ -320,14 +320,22 @@ export function createRouter(config = {}) {
   });
 
   // Queue health
-  router.get('/health/queues', authenticateAdmin, async (req, res) => {
+  router.get('/health/queues', authenticateSpaBootstrap, async (req, res) => {
     try {
       const { getAllQueuesHealth } = await import('./bullmq.js');
-      const health = await getAllQueuesHealth();
-
+      // Bound the queue check — Redis may be unreachable in local dev, and
+      // BullMQ retries silently before timing out, so the request would
+      // otherwise hang for tens of seconds.
+      const timeoutMs = 2500;
+      const health = await Promise.race([
+        getAllQueuesHealth(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`redis unreachable (>${timeoutMs}ms)`)), timeoutMs),
+        ),
+      ]);
       res.status(health.status === 'critical' ? 503 : 200).json(health);
     } catch (error) {
-      res.status(500).json({ error: error.message, status: 'unknown' });
+      res.status(200).json({ status: 'unknown', queues: [], error: error.message });
     }
   });
 
@@ -632,6 +640,74 @@ export function createRouter(config = {}) {
     } catch (err) {
       res.status(502).type('text/plain').send(`worker unreachable: ${err.message}`);
     }
+  });
+
+  // Local log tail — SPA bootstrap auth, reads on-disk dev log files. Used by
+  // the Workbench Logs view to surface local backend/next output without
+  // proxying to the prod worker (which is unreachable from a dev laptop).
+  router.get('/admin/local-log', authenticateSpaBootstrap, async (req, res) => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const SOURCES = {
+      backend: '/tmp/devpanel-backend.log',
+      next: '/tmp/next-chat-dev.log',
+      worker: '/tmp/devpanel-worker.log',
+    };
+    const source = String(req.query.source || 'backend');
+    const file = SOURCES[source];
+    if (!file) {
+      return res.status(400).type('text/plain')
+        .send(`unknown source: ${source}. allowed: ${Object.keys(SOURCES).join(', ')}`);
+    }
+    const lines = Math.min(2000, Math.max(1, parseInt(req.query.lines, 10) || 500));
+    try {
+      if (!fs.existsSync(file)) {
+        return res.status(200).type('text/plain')
+          .send(`# ${path.basename(file)} not found yet — process may not have logged anything.\n`);
+      }
+      const buf = fs.readFileSync(file, 'utf8');
+      const all = buf.split('\n');
+      const tail = all.slice(-lines).join('\n');
+      res.status(200).type('text/plain').send(tail);
+    } catch (err) {
+      res.status(500).type('text/plain').send(`local-log error: ${err.message}`);
+    }
+  });
+
+  // Local sandboxed shell — SPA bootstrap auth, allowlisted commands only.
+  // Used by the Workbench Shell view.
+  router.post('/admin/shell', authenticateSpaBootstrap, async (req, res) => {
+    const { execFile } = await import('node:child_process');
+    const ALLOW = new Set([
+      'ls','pwd','cat','echo','date','uname','node','npm','git',
+      'curl','ps','df','du','head','tail','grep','find',
+    ]);
+    const cmd = String(req.body?.cmd || '').trim();
+    if (!cmd) return res.status(400).json({ error: 'empty command' });
+    if (cmd.length > 2000) return res.status(400).json({ error: 'command too long' });
+    if (/[;&|`$><\n\r]/.test(cmd)) {
+      return res.status(400).json({ error: 'shell metacharacters not allowed' });
+    }
+    const parts = cmd.split(/\s+/);
+    const head = parts[0];
+    const args = parts.slice(1);
+    if (!ALLOW.has(head)) {
+      return res.status(400).json({ error: `'${head}' not in allowlist` });
+    }
+    execFile(head, args, {
+      timeout: 10_000,
+      maxBuffer: 100 * 1024,
+      cwd: process.cwd(),
+    }, (err, stdout, stderr) => {
+      if (err && err.killed) {
+        return res.status(504).json({ error: 'timed out (10s)', stdout, stderr });
+      }
+      res.status(200).json({
+        stdout: String(stdout || ''),
+        stderr: String(stderr || ''),
+        exit_code: err?.code ?? 0,
+      });
+    });
   });
 
   // Metrics (Prometheus-compatible)
@@ -1460,7 +1536,7 @@ export function createRouter(config = {}) {
   defineTeamRoutes(router, authenticateProject);
   defineInboxRoutes(router, authenticateProject);
   defineMemoryRoutes(router, authenticateProject);
-  defineFleetRoutes(router, authenticateProject, authenticateAdmin);
+  defineFleetRoutes(router, authenticateProject, authenticateAdmin, authenticateSpaBootstrap);
   defineCommandRoutes(router, authenticateProject);
   defineWidgetRoutes(router);
   defineWidgetBridgeRoutes(router, authenticateProject);
@@ -2190,12 +2266,82 @@ export function createRouter(config = {}) {
   // Per-job agent event timeline. ?after=<seq> for incremental fetch,
   // ?stream=1 turns the request into an SSE tail-follow. Backed by
   // agent_job_events, which is populated as claude -p emits stream-json.
-  router.get('/admin/jobs/:id/events', authenticateAdmin, async (req, res) => {
-    const { listEvents, subscribe } = await import('./jobs-events.js');
+  // Auth flexibility: admin key (header or ?key= for EventSource), OR SSO
+  // session (X-Forwarded-User from oauth2-proxy / dashboard bypass) — the
+  // dashboard streams logs without an admin key.
+  router.get('/admin/jobs/:id/events', authenticateSpaBootstrap, async (req, res) => {
     const id = String(req.params.id);
-    if (req.query.stream === '1') {
-      // Flush historical events first, then attach for live updates.
-      const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
+    const isStream = req.query.stream === '1';
+    const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
+    const limit = Math.min(50000, Math.max(1, parseInt(req.query.limit, 10) || 10000));
+
+    // Try local Postgres first.
+    let useProd = false;
+    let listEvents, subscribe;
+    try {
+      ({ listEvents, subscribe } = await import('./jobs-events.js'));
+      // Quick liveness probe — if Pg is down, listEvents will throw.
+      await listEvents(id, { after: -1, limit: 1 });
+    } catch (err) {
+      const base = process.env.PROD_API_BASE;
+      const key = process.env.ADMIN_API_KEY;
+      useProd = Boolean(base && key);
+      if (!useProd) {
+        if (isStream) {
+          res.status(503).type('text/event-stream').send('');
+        } else {
+          res.status(503).json({ error: 'pg unavailable, no prod fallback', detail: err.message });
+        }
+        return;
+      }
+    }
+
+    if (useProd) {
+      // Proxy to prod. For SSE, stream the upstream body verbatim. For JSON,
+      // forward the response. Prod accepts ?key= for GETs, so EventSource works.
+      const base = process.env.PROD_API_BASE.replace(/\/$/, '');
+      const key = process.env.ADMIN_API_KEY;
+      const qs = new URLSearchParams();
+      if (isStream) qs.set('stream', '1');
+      if (after >= 0) qs.set('after', String(after));
+      if (!isStream && limit) qs.set('limit', String(limit));
+      qs.set('key', key);
+      const upstream = await fetch(`${base}/api/admin/jobs/${encodeURIComponent(id)}/events?${qs}`, {
+        headers: { 'X-Admin-Key': key, 'Accept': isStream ? 'text/event-stream' : 'application/json' },
+      }).catch((e) => ({ ok: false, statusText: e.message, status: 502 }));
+      if (!upstream.ok) {
+        const body = upstream.text ? await upstream.text().catch(() => '') : '';
+        if (isStream) {
+          res.status(upstream.status || 502).type('text/event-stream').send('');
+        } else {
+          res.status(upstream.status || 502).json({ error: 'prod proxy failed', detail: body });
+        }
+        return;
+      }
+      if (isStream) {
+        res.status(200).set({
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+        });
+        res.flushHeaders?.();
+        const reader = upstream.body.getReader();
+        req.on('close', () => reader.cancel().catch(() => {}));
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+        res.end();
+      } else {
+        res.status(200).type('application/json').send(await upstream.text());
+      }
+      return;
+    }
+
+    // Local Pg path.
+    if (isStream) {
       subscribe(id, res);
       const past = await listEvents(id, { after });
       for (const ev of past) {
@@ -2203,8 +2349,6 @@ export function createRouter(config = {}) {
       }
       return;
     }
-    const after = Number.isFinite(parseInt(req.query.after, 10)) ? parseInt(req.query.after, 10) : -1;
-    const limit = Math.min(50000, Math.max(1, parseInt(req.query.limit, 10) || 10000));
     res.json({ job_id: id, events: await listEvents(id, { after, limit }) });
   });
 

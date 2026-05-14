@@ -55,14 +55,14 @@ export function MessageChips() {
   }
 
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5 px-2">
+    <div className="mt-3 flex flex-wrap gap-2 px-0">
       {chips.map((chip) => (
         <Button
           key={chip}
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-7 px-3 text-[12px]"
+          className="h-7 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-surface-2)] px-4 font-mono text-[10px] font-bold uppercase tracking-wider text-[var(--color-brand)] transition-all hover:bg-[var(--color-brand-soft)] hover:text-[var(--color-brand-hover)]"
           onClick={() => send(chip)}
         >
           {chip}

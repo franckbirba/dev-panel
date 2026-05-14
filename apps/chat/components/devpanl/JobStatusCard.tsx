@@ -23,39 +23,40 @@ export function JobStatusCard({ job }: { job: JobStatusPayload }) {
     (job.state === "running" || job.state === "queued");
 
   return (
-    <Card className="w-full">
-      <CardHeader className="flex-row items-center justify-between gap-2 py-2">
+    <Card className="w-full border-l-2" style={{ borderLeftColor: `var(--color-${tone})` }}>
+      <CardHeader className="flex-row items-center justify-between gap-2 py-2.5">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-[12.5px] font-semibold">{job.name}</span>
-          <span className="font-mono text-[11px] text-[var(--color-foreground-faint)]">
-            {job.job_id}
+          <span className="truncate text-[13px] font-bold tracking-tight">{job.name}</span>
+          <span className="font-mono text-[10px] uppercase tracking-tighter text-[var(--color-foreground-faint)]">
+            ID: {job.job_id}
           </span>
         </div>
-        <Badge tone={tone}>{job.state}</Badge>
+        <Badge tone={tone} className="px-2 py-0">{job.state}</Badge>
       </CardHeader>
-      <CardContent className="space-y-2 pb-3 pt-0">
+      <CardContent className="space-y-3 pb-3 pt-0">
         {showProgress && (
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-border)]">
+          <div className="flex items-center gap-2.5">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
               <div
-                className="h-full bg-[var(--color-brand)] transition-[width] duration-500"
+                className={`h-full bg-[var(--color-${tone})] shadow-[0_0_8px_var(--color-${tone})] transition-[width] duration-500`}
                 style={{ width: `${Math.max(0, Math.min(100, job.progress!))}%` }}
               />
             </div>
-            <span className="font-mono text-[11px] text-[var(--color-foreground-muted)]">
+            <span className="font-mono text-[10px] font-bold text-[var(--color-foreground-muted)]">
               {Math.round(job.progress!)}%
             </span>
           </div>
         )}
         {job.detail && (
-          <p className="text-[11.5px] text-[var(--color-foreground-muted)]">
+          <p className="font-sans text-[12px] leading-relaxed text-[var(--color-foreground-muted)]">
             {job.detail}
           </p>
         )}
         {job.updated_at && (
-          <p className="font-mono text-[10.5px] text-[var(--color-foreground-faint)]">
-            updated {job.updated_at}
-          </p>
+          <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-tighter text-[var(--color-foreground-faint)]">
+            <span className="size-1 rounded-full bg-[var(--color-foreground-faint)]" />
+            <span>Updated {job.updated_at}</span>
+          </div>
         )}
       </CardContent>
     </Card>

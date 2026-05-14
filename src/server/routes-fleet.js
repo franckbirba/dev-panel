@@ -31,7 +31,144 @@ async function safeQuery(sql, params) {
   }
 }
 
-export function defineFleetRoutes(router, authenticateProject, authenticateAdmin = null) {
+// Local-dev fallback: when local Postgres isn't running (Mac dev), proxy the
+// fleet view from prod. Two transports tried in order:
+//   1. PROD_API_BASE + /api/admin/fleet (admin-keyed alias) — once deployed.
+//   2. PROD_MCP_URL via Bearer admin → tools/call list_jobs — works today.
+// Either source returns a { agents } shape the UI can render. Source 2
+// returns BullMQ jobs (live workers), source 1 returns workflow_instances.
+async function fetchProdFleet(query) {
+  const base = process.env.PROD_API_BASE;
+  const mcpUrl = process.env.PROD_MCP_URL || (base ? `${base.replace(/\/$/, '')}/mcp` : null);
+  const key = process.env.ADMIN_API_KEY;
+  if (!key) return null;
+
+  // 1. Prefer the admin alias if it exists.
+  if (base) {
+    try {
+      const url = new URL('/api/admin/fleet', base);
+      if (query.status) url.searchParams.set('status', query.status);
+      if (query.limit) url.searchParams.set('limit', String(query.limit));
+      const r = await fetch(url, {
+        headers: { 'X-Admin-Key': key },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (r.ok) return await r.json();
+    } catch { /* fall through to MCP */ }
+  }
+
+  // 2. MCP transport — call list_jobs and project the result into the
+  //    {agents:[]} shape the UI consumes. We map BullMQ jobs onto the
+  //    same row schema (instance_id ← job id, workflow ← name prefix,
+  //    work_item_id ← name suffix, status ← active|waiting|delayed).
+  if (mcpUrl) {
+    try {
+      const sid = await mcpInitialize(mcpUrl, key);
+      if (!sid) return null;
+      const jobs = await mcpCallListJobs(mcpUrl, key, sid, query);
+      if (!Array.isArray(jobs)) return null;
+      const agents = jobs.map((j) => {
+        const [workflow, work_item_id] = String(j.name || '').split(':');
+        return {
+          instance_id: j.id,
+          work_item_id: work_item_id || null,
+          identifier: null,
+          title: null,
+          project_name: null,
+          plane_url: null,
+          workflow: workflow || j.agent || 'job',
+          revision: null,
+          current_step: j.agent || null,
+          status: 'running',
+          started_at: j.created || null,
+          last_event_at: j.created || null,
+          exhausted_at: null,
+          last_job_id: j.id,
+          agent: j.agent || null,
+          last_step_status: null,
+          last_step_error: null,
+          last_step_duration_ms: null,
+          autonomy: 'med',
+        };
+      });
+      return { agents, shelly: { state: 'unknown' } };
+    } catch { /* swallow */ }
+  }
+
+  return null;
+}
+
+async function mcpInitialize(url, key) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'devpanel-local-dev', version: '1' },
+      },
+    }),
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!r.ok) return null;
+  const sid = r.headers.get('mcp-session-id');
+  // consume body so the SSE stream closes
+  await r.text().catch(() => {});
+  // send initialized notification
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'Mcp-Session-Id': sid,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    signal: AbortSignal.timeout(3000),
+  }).then((rr) => rr.text()).catch(() => {});
+  return sid;
+}
+
+async function mcpCallListJobs(url, key, sid, query) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'Mcp-Session-Id': sid,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: {
+        name: 'list_jobs',
+        arguments: {
+          state: query.status === 'all' ? 'all' : 'active',
+          limit: query.limit || 100,
+        },
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) return null;
+  const text = await r.text();
+  // SSE: parse "data: {...}" lines, take last one with a result.
+  const lines = text.split('\n').filter(l => l.startsWith('data: '));
+  if (!lines.length) return null;
+  const last = lines[lines.length - 1].slice(6);
+  const env = JSON.parse(last);
+  const content = env?.result?.content?.[0]?.text;
+  if (!content) return null;
+  return JSON.parse(content);
+}
+
+export function defineFleetRoutes(router, authenticateProject, authenticateAdmin = null, authenticateSpaBootstrap = null) {
   // Auth helper for inbox endpoints: dashboard uses project key (X-API-Key),
   // the agent's MCP context uses admin key (X-Admin-Key). Accept either.
   // If authenticateAdmin isn't provided (older callers / tests), fall back
@@ -43,10 +180,22 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
     return authenticateProject(req, res, next);
   }
 
+  // Read-only fleet view: SSO session (forwarded user) or admin/project keys.
+  // Falls back to project-auth in older callers / tests where SPA bootstrap
+  // wasn't provided.
+  const fleetReadAuth = authenticateSpaBootstrap
+    ? function (req, res, next) {
+        if (req.headers['x-api-key']) return authenticateProject(req, res, next);
+        return authenticateSpaBootstrap(req, res, next);
+      }
+    : authenticateProject;
+
   // GET /api/fleet?status=active|all&limit=
   // Returns { agents: [...], shelly: {...} }
   // Each agent row: workflow + last step + autonomy + recency.
-  router.get('/fleet', authenticateProject, async (req, res) => {
+  // Also mounted as /api/admin/fleet (admin-key auth) so local dev sessions
+  // can proxy this view from prod when local Postgres is unavailable.
+  async function fleetHandler(req, res) {
     const status = req.query.status === 'all' ? 'all' : 'active';
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
 
@@ -67,6 +216,10 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
     `, [limit]);
 
     if (!wf.ok) {
+      const prod = await fetchProdFleet({ status, limit });
+      if (prod && Array.isArray(prod.agents)) {
+        return res.json({ ...prod, source: 'prod' });
+      }
       return res.json({ agents: [], shelly: { state: 'unknown' }, degraded: true, error: wf.error });
     }
 
@@ -138,7 +291,12 @@ export function defineFleetRoutes(router, authenticateProject, authenticateAdmin
     // workflow_instance activity.
     const shelly = { state: 'unknown' };
     res.json({ agents, shelly });
-  });
+  }
+
+  router.get('/fleet', fleetReadAuth, fleetHandler);
+  if (authenticateAdmin) {
+    router.get('/admin/fleet', authenticateAdmin, fleetHandler);
+  }
 
   // POST /api/fleet/:instance_id/cancel  — admin-equivalent action wired to
   // workflow cancellation via BullMQ. For now we just record the intent;
