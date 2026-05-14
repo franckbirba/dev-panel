@@ -519,6 +519,93 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Rescue path — when parseResult fails, the agent's closing JSON envelope is
+// missing or malformed, so the normal runAutomation pipeline never fires and
+// the work-in-worktree gets discarded by index.js's finally-cleanup. Before
+// that happens we inspect the worktree directly: if there's any diff vs base
+// (committed or uncommitted), commit-all + push + open a PR flagged for
+// review. This trades "lose 30 min of agent work" for "leave a PR a human
+// must triage" — which is the right trade. Used only on parseResult failure.
+// ---------------------------------------------------------------------------
+
+export function rescueWorktreeOnParseFailure({ jobData, output, parseError }) {
+  const wtPath = jobData.context?.worktree_path;
+  const branch = jobData.context?.branch;
+  const workItemId = jobData.plane?.work_item_id;
+  if (!wtPath || !branch || !existsSync(wtPath)) {
+    return { rescued: false, reason: 'no_worktree' };
+  }
+  const baseBranch = jobData.context?.default_branch || 'main';
+
+  function hasAnyChange() {
+    try {
+      execSync(`git diff --quiet "origin/${baseBranch}"...HEAD`,
+               { cwd: wtPath, stdio: 'pipe' });
+      const status = execSync('git status --porcelain',
+                              { cwd: wtPath, stdio: 'pipe', encoding: 'utf8' }).trim();
+      return { committed: false, dirty: status.length > 0, status };
+    } catch (err) {
+      if (err.status === 1) return { committed: true, dirty: true, status: '' };
+      return { committed: false, dirty: false, status: '', err: err.message };
+    }
+  }
+
+  const before = hasAnyChange();
+  if (!before.committed && !before.dirty) {
+    return { rescued: false, reason: 'no_changes' };
+  }
+
+  if (before.dirty) {
+    try {
+      execSync('git add -A', { cwd: wtPath, stdio: 'pipe' });
+      const subject = `[needs-review] agent ${jobData.agent} work (parse failure)`;
+      const msg = `${subject}\n\nparseResult error: ${parseError}\nThis commit was made by the worker rescue path because the agent did not emit a closing JSON envelope. A human must verify the diff is correct before merging.\n\nCo-authored-by: ${jobData.agent} <agent@devpanl.dev>`;
+      execSync('git commit -F -', {
+        cwd: wtPath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        input: msg,
+      });
+    } catch (err) {
+      console.warn(`[rescue] git add/commit failed: ${err.message?.slice(0, 200)}`);
+    }
+  }
+
+  const after = hasAnyChange();
+  if (!after.committed) {
+    return { rescued: false, reason: 'no_commits_after_rescue' };
+  }
+
+  let prUrl = null;
+  try {
+    pushBranch(branch, wtPath);
+  } catch (err) {
+    return { rescued: false, reason: `push_failed: ${err.message?.slice(0, 200)}` };
+  }
+
+  const title = `[NEEDS REVIEW] ${jobData.work_item?.title || workItemId || 'agent work'}`.slice(0, 100);
+  const rawTail = (output || '').slice(-2000);
+  const body =
+    `**This PR was opened by the worker rescue path** because the agent ` +
+    `(${jobData.agent}) did not emit a parseable closing JSON envelope.\n\n` +
+    `- Work item: \`${workItemId || 'n/a'}\`\n` +
+    `- Workflow: \`${jobData.workflow || 'n/a'}\`\n` +
+    `- Parse error: \`${parseError}\`\n\n` +
+    `The diff is whatever the agent left in the worktree. **A human must verify ` +
+    `it before merging** — the worker's normal review/QA pipeline did not run.\n\n` +
+    `<details><summary>Last 2000 chars of agent output</summary>\n\n\`\`\`\n${rawTail}\n\`\`\`\n</details>\n`;
+
+  const repo = jobData.context?.github_repo;
+  try {
+    prUrl = createPullRequest({ branch, title, body, repo, baseBranch, cwd: wtPath });
+  } catch (err) {
+    return { rescued: false, reason: `pr_create_failed: ${err.message?.slice(0, 200)}` };
+  }
+
+  console.log(`[rescue] opened review PR for job ${jobData.job_id}: ${prUrl}`);
+  return { rescued: true, pr_url: prUrl, branch };
+}
+
 // --- public entrypoint ---
 
 export async function runAutomation({ jobData, result, startedAt }) {

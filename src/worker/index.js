@@ -76,7 +76,7 @@ async function enrichWorkItemFromPlane(jobData) {
     console.warn(`[enrich] plane lookup failed for ${id}: ${err.message}`);
   }
 }
-import { runAutomation } from './automation.js';
+import { runAutomation, rescueWorktreeOnParseFailure } from './automation.js';
 import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
 import { initMasterDatabase } from '../server/db.js';
@@ -405,14 +405,31 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // Parse result (strict: returns { ok, data } | { ok: false, error })
     const parsed = parseResult(output);
     if (!parsed.ok) {
+      // Rescue first, throw second. The agent may have done real work in the
+      // worktree even without emitting the closing JSON; the finally block
+      // below will delete the worktree shortly, so this is our only chance
+      // to preserve a diff as a review PR. The throw still marks the BullMQ
+      // job failed so telemetry is honest — the rescue PR is an artifact for
+      // a human to triage, not a "success".
+      let rescue = { rescued: false };
+      try {
+        rescue = rescueWorktreeOnParseFailure({
+          jobData, output, parseError: parsed.error
+        });
+      } catch (e) {
+        console.warn(`[Worker] rescue threw for job ${jobData.job_id}: ${e.message}`);
+      }
       await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
                 status: 'error', error: parsed.error });
+      const rescueNote = rescue.rescued
+        ? ` rescued: ${rescue.pr_url}`
+        : (rescue.reason ? ` no_rescue:${rescue.reason}` : '');
       await notifyJob({
         job_id: jobData.job_id, agent: jobData.agent,
         work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
         title: jobData.work_item?.title || jobData.task?.title,
         status: 'failed',
-        extra: `parseResult: ${parsed.error}`
+        extra: `parseResult: ${parsed.error}${rescueNote}`
       });
       throw new Error(`parseResult failed: ${parsed.error}`);
     }
@@ -431,9 +448,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
 
     return result;
   } finally {
-    // Cleanup runs even on parseResult/spawn failures. Push + PR already
-    // happened inside the worktree by this point (publishWorkItem ran
-    // through runAutomation), so removing the worktree is safe.
+    // Cleanup runs even on parseResult/spawn failures. On the success path,
+    // runAutomation already ran publishWorkItem (push + PR). On parseResult
+    // failure, the rescue path above already pushed + opened a review PR.
+    // Either way the worktree's contents are preserved remotely before we
+    // delete the local copy here.
     if (worktree) {
       try { await worktree.cleanup(); }
       catch (err) { console.warn(`[Worker] worktree cleanup failed for ${job.id}: ${err.message}`); }
