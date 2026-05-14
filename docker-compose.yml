@@ -191,12 +191,16 @@ services:
       - "traefik.enable=true"
       # Single backend service shared by all routers below.
       - "traefik.http.services.devpanel.loadbalancer.server.port=3030"
-      # ── SPA-bootstrap router: /api/projects, /api/projects/summary.
+      # ── SPA-bootstrap router: browser endpoints that need X-Forwarded-User.
       # Highest priority. Goes through oauth-google so traefik-forward-auth
       # injects X-Forwarded-User; the Express middleware then trusts it
-      # (TRUST_FORWARDED_USER=true). Without this, the SPA's first call
-      # after Google sign-in 401s and the user sees no projects.
-      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`))"
+      # (TRUST_FORWARDED_USER=true). Covers SPA-bootstrap (/api/projects,
+      # /api/dashboard), workbench admin tools (/api/admin/*), live engine
+      # views (/api/fleet, /api/health/queues), and dashboard pulse
+      # (/api/today, /api/metrics). The widget paths (/api/captures,
+      # /api/threads, /api/widget/*, /api/team/*, /api/tickets) stay on the
+      # M2M router below — they auth via X-API-Key, not SSO.
+      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`) || PathPrefix(`/api/admin`) || PathPrefix(`/api/fleet`) || PathPrefix(`/api/health/queues`) || Path(`/api/today`) || Path(`/api/metrics`))"
       - "traefik.http.routers.devpanel-api-spa.entrypoints=websecure"
       - "traefik.http.routers.devpanel-api-spa.tls=true"
       - "traefik.http.routers.devpanel-api-spa.tls.certresolver=letsencrypt"
