@@ -195,12 +195,15 @@ services:
       # Highest priority. Goes through oauth-google so traefik-forward-auth
       # injects X-Forwarded-User; the Express middleware then trusts it
       # (TRUST_FORWARDED_USER=true). Covers SPA-bootstrap (/api/projects,
-      # /api/dashboard), workbench admin tools (/api/admin/*), live engine
-      # views (/api/fleet, /api/health/queues), and dashboard pulse
-      # (/api/today, /api/metrics). The widget paths (/api/captures,
-      # /api/threads, /api/widget/*, /api/team/*, /api/tickets) stay on the
-      # M2M router below — they auth via X-API-Key, not SSO.
-      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`) || PathPrefix(`/api/admin`) || PathPrefix(`/api/fleet`) || PathPrefix(`/api/health/queues`) || Path(`/api/today`) || Path(`/api/metrics`))"
+      # /api/dashboard), live engine views (/api/fleet, /api/health/queues),
+      # dashboard pulse (/api/today, /api/metrics), and the two
+      # browser-exclusive admin tools (/api/admin/local-log, /api/admin/shell).
+      # Most /api/admin/* paths stay on the M2M router below because they
+      # are dual-use (browser + agents-host worker via X-Admin-Key); putting
+      # them behind SSO would break the worker's lookupProjectByPlaneId path.
+      # Widget paths (/api/captures, /api/threads, /api/widget/*, /api/team/*,
+      # /api/tickets) also stay on M2M — they auth via X-API-Key.
+      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`) || PathPrefix(`/api/fleet`) || PathPrefix(`/api/health/queues`) || Path(`/api/today`) || Path(`/api/metrics`) || Path(`/api/admin/local-log`) || Path(`/api/admin/shell`))"
       - "traefik.http.routers.devpanel-api-spa.entrypoints=websecure"
       - "traefik.http.routers.devpanel-api-spa.tls=true"
       - "traefik.http.routers.devpanel-api-spa.tls.certresolver=letsencrypt"
