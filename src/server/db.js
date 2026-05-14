@@ -275,12 +275,20 @@ export function initMasterDatabase(storagePath = './storage') {
       content_hash  TEXT,
       ts            DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE INDEX IF NOT EXISTS widget_audit_session_ts
-      ON widget_audit(session_id, ts DESC);
-    CREATE INDEX IF NOT EXISTS widget_audit_project_session_ts
-      ON widget_audit(project_id, session_id, ts DESC);
     CREATE INDEX IF NOT EXISTS widget_audit_project_type_ts
       ON widget_audit(project_id, type, ts DESC);
+
+    -- MCP Servers — allows dynamically adding remote MCP toolsets (like Google
+    -- Stitch) via the dashboard UI. Stored in masterDb so they're available
+    -- to all threads. headers is JSON-stringified object (e.g. {"X-Goog-Api-Key": "..."}).
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      name        TEXT PRIMARY KEY,
+      url         TEXT NOT NULL,
+      headers     TEXT,
+      enabled     INTEGER DEFAULT 1,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Bearer-auth columns added by DEVPA-161. The original v7 (DEVPA-160)
@@ -790,6 +798,34 @@ export function updateProject(id, updates) {
 export function deleteProject(id) {
   const stmt = masterDb.prepare('DELETE FROM projects WHERE id = ?');
   return stmt.run(id);
+}
+
+// ============================================================================
+// MCP SERVER OPERATIONS
+// ============================================================================
+
+export function listMcpServers(onlyEnabled = false) {
+  const query = onlyEnabled 
+    ? 'SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY name ASC'
+    : 'SELECT * FROM mcp_servers ORDER BY name ASC';
+  return masterDb.prepare(query).all();
+}
+
+export function upsertMcpServer({ name, url, headers = null, enabled = 1 }) {
+  const stmt = masterDb.prepare(`
+    INSERT INTO mcp_servers (name, url, headers, enabled, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(name) DO UPDATE SET
+      url = excluded.url,
+      headers = excluded.headers,
+      enabled = excluded.enabled,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  return stmt.run(name, url, headers ? JSON.stringify(headers) : null, enabled);
+}
+
+export function deleteMcpServer(name) {
+  return masterDb.prepare('DELETE FROM mcp_servers WHERE name = ?').run(name);
 }
 
 // ============================================================================

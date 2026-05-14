@@ -1,103 +1,117 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* DevPanel design system — tokens live in :root, exposed to Tailwind v4
-   via the @theme block below. shadcn primitives reference --color-card,
-   --color-foreground, etc. directly; we drop the dual --x → --color-x
-   indirection that the scaffold shipped. Source of truth for these
-   values: src/dashboard/app.css + colors_and_type.css. */
+/* DevPanel design system — Stitch DevPanel (Material You dark)
+   Source: /Users/franckbirba/Downloads/stitch_conversational_dev_panel/DESIGN.md
+   Hybrid Minimalism + Glassmorphism, dark-by-default, single-accent violet. */
 
 :root {
   color-scheme: dark;
 
-  /* Surface hierarchy */
-  --color-background:           #0a0a0b;
-  --color-surface-1:            #111114;
-  --color-surface-2:            #16161a;
-  --color-surface-3:            #1c1c22;
+  /* Surface hierarchy — Material You M3 dark */
+  --color-background:                 #131314;
+  --color-surface-dim:                #131314;
+  --color-surface:                    #131314;
+  --color-surface-bright:             #3a393a;
+  --color-surface-container-lowest:   #0e0e0f;
+  --color-surface-container-low:      #1c1b1c;
+  --color-surface-container:          #201f20;
+  --color-surface-container-high:     #2a2a2b;
+  --color-surface-container-highest:  #353436;
 
-  /* shadcn-compat aliases */
-  --color-card:                 #111114;
-  --color-card-foreground:      #f4f4f5;
-  --color-popover:              #16161a;
-  --color-popover-foreground:   #f4f4f5;
-  --color-muted:                #16161a;
-  --color-muted-foreground:     #a1a1aa;
-  --color-accent:               #1c1c22;
-  --color-accent-foreground:    #f4f4f5;
-  --color-secondary:            #16161a;
-  --color-secondary-foreground: #f4f4f5;
+  /* Compat aliases used through the existing component tree */
+  --color-surface-1:                  var(--color-surface-container-low);
+  --color-surface-2:                  var(--color-surface-container);
+  --color-surface-3:                  var(--color-surface-container-high);
+
+  --color-on-surface:                 #e5e2e3;
+  --color-on-surface-variant:         #c9c4d8;
+  --color-outline:                    #938ea1;
+  --color-outline-variant:            #484555;
 
   /* Text */
-  --color-foreground:           #f4f4f5;
-  --color-foreground-muted:     #a1a1aa;
-  --color-foreground-faint:     #71717a;
+  --color-foreground:                 #e5e2e3;
+  --color-foreground-muted:           #c9c4d8;
+  --color-foreground-faint:           #938ea1;
 
-  --color-primary:              #f4f4f5;
-  --color-primary-foreground:   #0a0a0b;
+  /* shadcn-compat aliases */
+  --color-card:                       var(--color-surface-container-low);
+  --color-card-foreground:            var(--color-on-surface);
+  --color-popover:                    var(--color-surface-container);
+  --color-popover-foreground:         var(--color-on-surface);
+  --color-muted:                      var(--color-surface-container);
+  --color-muted-foreground:           var(--color-on-surface-variant);
+  --color-accent:                     var(--color-surface-container-high);
+  --color-accent-foreground:          var(--color-on-surface);
+  --color-secondary:                  var(--color-surface-container);
+  --color-secondary-foreground:       var(--color-on-surface);
 
-  /* Borders / inputs */
-  --color-border:               #26262e;
-  --color-border-subtle:        #1f1f26;
-  --color-input:                #1c1c22;
-  --color-ring:                 #7c5cff;
+  --color-primary:                    var(--color-on-surface);
+  --color-primary-foreground:         var(--color-surface-container-lowest);
 
-  /* Brand */
-  --color-brand:                #7c5cff;
-  --color-brand-foreground:     #ffffff;
-  --color-brand-soft:           rgba(124, 92, 255, 0.12);
-  --color-brand-border:         rgba(124, 92, 255, 0.32);
-  --color-brand-hover:          #6b4dff;
+  /* Borders — ultra-thin outline-variant */
+  --color-border:                     rgba(72, 69, 85, 0.45);
+  --color-border-subtle:              rgba(72, 69, 85, 0.22);
+  --color-input:                      var(--color-surface-container);
+  --color-ring:                       #cabeff;
+
+  /* Brand — Stitch Vibrant Violet */
+  --color-brand:                      #cabeff;
+  --color-brand-foreground:           #31009a;
+  --color-brand-soft:                 rgba(202, 190, 255, 0.12);
+  --color-brand-border:               rgba(202, 190, 255, 0.30);
+  --color-brand-hover:                #d6ccff;
+  --color-brand-container:            #947dff;
+  --color-brand-container-fg:         #2a0088;
+
+  /* Tertiary — high-energy orange for warnings/highlights */
+  --color-tertiary:                   #ffb780;
+  --color-tertiary-fg:                #4e2600;
+  --color-tertiary-container:         #d7791f;
 
   /* Status */
-  --color-success:              #22c55e;
-  --color-success-soft:         rgba(34, 197, 94, 0.12);
-  --color-success-border:       rgba(34, 197, 94, 0.32);
-  --color-warning:              #f59e0b;
-  --color-warning-soft:         rgba(245, 158, 11, 0.12);
-  --color-warning-border:       rgba(245, 158, 11, 0.32);
-  --color-error:                #ef4444;
-  --color-error-soft:           rgba(239, 68, 68, 0.12);
-  --color-error-border:         rgba(239, 68, 68, 0.32);
-  --color-destructive:          #ef4444;
-  --color-destructive-foreground:#ffffff;
-  --color-info:                 #3b82f6;
-  --color-info-soft:            rgba(59, 130, 246, 0.12);
-  --color-info-border:          rgba(59, 130, 246, 0.32);
+  --color-success:                    #7dd3a5;
+  --color-success-soft:               rgba(125, 211, 165, 0.15);
+  --color-warning:                    #ffb780;
+  --color-warning-soft:               rgba(255, 183, 128, 0.14);
+  --color-error:                      #ffb4ab;
+  --color-error-soft:                 rgba(255, 180, 171, 0.14);
+  --color-destructive:                #ffb4ab;
+  --color-destructive-foreground:     #690005;
+  --color-info:                       #cabeff;
+  --color-info-soft:                  rgba(202, 190, 255, 0.12);
 
-  /* Sidebar shadcn aliases */
-  --color-sidebar:              #0a0a0b;
-  --color-sidebar-foreground:   #f4f4f5;
-  --color-sidebar-primary:      #7c5cff;
-  --color-sidebar-primary-foreground:#ffffff;
-  --color-sidebar-accent:       #1c1c22;
-  --color-sidebar-accent-foreground:#f4f4f5;
-  --color-sidebar-border:       #1f1f26;
-  --color-sidebar-ring:         #7c5cff;
+  /* Sidebar */
+  --color-sidebar:                    var(--color-surface-container-lowest);
+  --color-sidebar-foreground:         var(--color-on-surface-variant);
+  --color-sidebar-primary:            var(--color-brand);
+  --color-sidebar-primary-foreground: var(--color-brand-foreground);
+  --color-sidebar-accent:             var(--color-surface-container);
+  --color-sidebar-accent-foreground:  var(--color-on-surface);
+  --color-sidebar-border:             transparent;
+  --color-sidebar-ring:               var(--color-brand);
 
-  /* Radii */
-  --radius-sm:                  4px;
-  --radius-md:                  6px;
-  --radius-lg:                  8px;
-  --radius-xl:                  12px;
-  --radius:                     8px;
+  /* Radii — Stitch geometric, 0.25rem standard / 0.5rem containers */
+  --radius-sm:                        0.125rem;
+  --radius:                           0.25rem;
+  --radius-md:                        0.375rem;
+  --radius-lg:                        0.5rem;
+  --radius-xl:                        0.75rem;
+  --radius-full:                      9999px;
 
-  /* Type */
-  --font-sans:     'Inter', 'InterVariable', system-ui, -apple-system,
-                   'Segoe UI', sans-serif;
-  --font-mono:     'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', monospace;
-  --font-headline: 'Inter', 'InterVariable', system-ui, sans-serif;
+  /* Type — Stitch dual-font */
+  --font-sans:        'Inter', 'InterVariable', system-ui, -apple-system, sans-serif;
+  --font-mono:        'JetBrains Mono', ui-monospace, monospace;
+  --font-headline:    'Inter', 'InterVariable', system-ui, sans-serif;
 
-  --body-size:        13px;
-  --body-line-height: 1.45;
-  --body-features:    'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  --body-size:        14px;
+  --body-line-height: 1.55;
 
-  /* Motion */
-  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
-  --duration-1:  120ms;
-  --duration-2:  160ms;
-  --duration-3:  180ms;
-  --duration-4:  220ms;
+  /* Spacing — 4px base, 16px gutter */
+  --space-unit:       4px;
+  --space-gutter:     16px;
+  --container-max:    1440px;
+  --focus-column:     800px;
 }
 
 @theme inline {
@@ -159,8 +173,105 @@
     font-size: var(--body-size);
     line-height: var(--body-line-height);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: var(--body-features);
     text-rendering: optimizeLegibility;
+  }
+
+  /* Glassmorphism — 12px backdrop blur, 40% opaque */
+  .glass {
+    background: rgba(28, 27, 28, 0.55) !important;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .glass-header {
+    background: rgba(14, 14, 15, 0.72) !important;
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-bottom: 1px solid var(--color-border-subtle) !important;
+  }
+
+  .glass-panel {
+    background: rgba(32, 31, 32, 0.62);
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid rgba(202, 190, 255, 0.08);
+  }
+
+  /* Glow states — backlit feel from Stitch DESIGN.md */
+  .glow-primary {
+    box-shadow: 0 0 12px 0 rgba(202, 190, 255, 0.22);
+  }
+
+  .active-glow {
+    box-shadow:
+      0 0 0 1px rgba(202, 190, 255, 0.35),
+      0 0 10px 0 rgba(202, 190, 255, 0.30);
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.55; transform: scale(1.25); }
+  }
+
+  /* No-Line transitions */
+  .tonal-sep {
+    border: none !important;
+    background: var(--color-surface-1);
+  }
+
+  /* Scrollbar — slim, dark */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-surface-container-high);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Technical chip — JetBrains Mono uppercase mini-label */
+  .tech-chip {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--color-surface-container-low);
+    color: var(--color-foreground-muted);
+    border: 1px solid var(--color-border-subtle);
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+
+  .tech-chip-brand {
+    background: var(--color-brand-soft);
+    color: var(--color-brand);
+    border-color: var(--color-brand-border);
+  }
+
+  .tech-chip-warning {
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    border-color: rgba(255, 183, 128, 0.28);
+  }
+
+  .hotkey {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--color-surface-container);
+    color: var(--color-foreground-muted);
+    border: 1px solid var(--color-border-subtle);
+    letter-spacing: 0.02em;
   }
 }

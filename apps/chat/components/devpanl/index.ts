@@ -96,3 +96,8 @@ export {
 	WorkflowInstancesCard,
 } from "./WorkflowCards";
 export { type WorkItem, WorkItemCard } from "./WorkItemCard";
+export { WorkbenchEngine } from "./WorkbenchEngine";
+export { WorkbenchLogs } from "./WorkbenchLogs";
+export { WorkbenchShell } from "./WorkbenchShell";
+export { CommandPalette } from "./CommandPalette";
+export { type WorkbenchView } from "./DashboardThreadList";

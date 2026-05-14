@@ -31,79 +31,76 @@ export function CaptureCard({
     capture.status === "new" || capture.status === "triaging";
 
   return (
-    <Card className="w-full">
-      <CardHeader>
+    <Card className="w-full overflow-hidden">
+      <CardHeader className="bg-[var(--color-surface-2)]/30 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Badge tone="brand">{capture.project_name}</Badge>
-            <Badge tone={KIND_TONE[capture.kind]}>{capture.kind}</Badge>
+          <div className="flex items-center gap-1.5">
+            <Badge tone="brand" className="px-1.5 py-0 font-bold">{capture.project_name}</Badge>
+            <Badge tone={KIND_TONE[capture.kind]} className="px-1.5 py-0">{capture.kind}</Badge>
           </div>
           <StatusBadge status={capture.status} />
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Full content — no clamp, no modal. Triage needs the whole text in
-            view, especially for multi-line bug reports like the EDMS captures. */}
-        <pre className="whitespace-pre-wrap break-words font-sans text-[12.5px] leading-relaxed text-[var(--color-foreground)]">
+      <CardContent className="space-y-4 pt-4">
+        <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-[var(--color-foreground)]">
           {capture.content}
         </pre>
         {capture.screenshot_url && (
-          <a
-            href={capture.screenshot_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block overflow-hidden rounded-md border border-[var(--color-border)] transition-opacity hover:opacity-90"
-            aria-label="Open screenshot full size in a new tab"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={capture.screenshot_url}
-              alt="capture screenshot"
-              className="max-h-80 w-full object-contain bg-black"
-            />
-          </a>
+          <div className="group relative">
+            <a
+              href={capture.screenshot_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block overflow-hidden rounded-lg border border-[var(--color-border-subtle)] bg-black/40 p-1 transition-all hover:border-[var(--color-brand-border)] hover:bg-black/60"
+              aria-label="Open screenshot full size in a new tab"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={capture.screenshot_url}
+                alt="capture screenshot"
+                className="max-h-80 w-full rounded-md object-contain"
+              />
+            </a>
+          </div>
         )}
-        <div className="flex items-center justify-between font-mono text-[11px] text-[var(--color-foreground-faint)]">
-          <span>{capture.reporter?.name ?? "anonymous"}</span>
+        <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-tighter text-[var(--color-foreground-faint)]">
+          <div className="flex items-center gap-1.5">
+            <span className="size-1 rounded-full bg-[var(--color-foreground-faint)]" />
+            <span>{capture.reporter?.name ?? "anonymous"}</span>
+          </div>
           <span>{capture.created_at}</span>
         </div>
       </CardContent>
-      <CardFooter className="gap-2 border-t border-[var(--color-border-subtle)] pt-3">
+      <CardFooter className="gap-2 border-t border-[var(--color-border-subtle)] bg-[var(--color-surface-2)]/10 py-2">
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 px-2 text-[11px]"
+          className="h-7 px-3 font-mono text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface-3)]"
           onClick={() => onAction?.("talk", capture.id)}
         >
-          Talk about it
+          Talk
         </Button>
-        {isActionable && (
-          <>
-            <Button
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => onAction?.("promote", capture.id)}
-            >
-              Promote
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => onAction?.("approve", capture.id)}
-            >
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => onAction?.("defer", capture.id)}
-            >
-              Defer
-            </Button>
-          </>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {isActionable && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-3 font-mono text-[10px] uppercase tracking-wider hover:bg-[var(--color-surface-3)] hover:text-[var(--color-error)]"
+                onClick={() => onAction?.("defer", capture.id)}
+              >
+                Defer
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 bg-[var(--color-brand)] px-4 font-mono text-[10px] uppercase tracking-widest text-white shadow-[0_0_15px_rgba(124,92,255,0.3)] hover:bg-[var(--color-brand-hover)]"
+                onClick={() => onAction?.("promote", capture.id)}
+              >
+                Promote
+              </Button>
+            </>
+          )}
+        </div>
       </CardFooter>
     </Card>
   );
