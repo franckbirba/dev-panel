@@ -871,7 +871,7 @@ export function createRouter(config = {}) {
   // signal she watches for in the next turn).
   // ============================================================================
 
-  router.get('/admin/auto-decisions', authenticateAdmin, (req, res) => {
+  router.get('/admin/auto-decisions', authenticateSpaBootstrap, (req, res) => {
     try {
       const db = getMasterDatabase();
       const sinceISO = req.query.since
@@ -912,7 +912,7 @@ export function createRouter(config = {}) {
     }
   });
 
-  router.post('/admin/auto-decisions/:id/rollback', authenticateAdmin, (req, res) => {
+  router.post('/admin/auto-decisions/:id/rollback', authenticateSpaBootstrap, (req, res) => {
     try {
       const db = getMasterDatabase();
       const row = db.prepare(`SELECT * FROM auto_decisions WHERE id = ?`).get(req.params.id);

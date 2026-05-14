@@ -32,7 +32,8 @@ const STATUS_TONE = {
 
 type Status = keyof typeof STATUS_TONE;
 
-export function StatusBadge({ status }: { status: Status | string }) {
-  const tone = (STATUS_TONE as Record<string, "neutral" | "success" | "warning" | "error" | "info" | "brand">)[status] ?? "neutral";
-  return <Badge tone={tone}>{status.replace(/_/g, " ")}</Badge>;
+export function StatusBadge({ status }: { status: Status | string | null | undefined }) {
+  const key = typeof status === "string" && status.length > 0 ? status : "unknown";
+  const tone = (STATUS_TONE as Record<string, "neutral" | "success" | "warning" | "error" | "info" | "brand">)[key] ?? "neutral";
+  return <Badge tone={tone}>{key.replace(/_/g, " ")}</Badge>;
 }
