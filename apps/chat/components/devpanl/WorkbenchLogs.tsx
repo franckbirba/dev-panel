@@ -230,8 +230,16 @@ export function WorkbenchLogs({
   );
   const [jobId, setJobId] = useState<string>(initialAgentJobId ?? "");
   const [jobInput, setJobInput] = useState<string>(initialAgentJobId ?? "");
+  const [streamDone, setStreamDone] = useState<{
+    reason: "job_done" | "idle";
+    lastSeq: string;
+    count: number;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const entryCounter = useRef(0);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSeqRef = useRef<string>("");
+  const countRef = useRef<number>(0);
 
   useEffect(() => {
     if (initialAgentJobId) {
@@ -254,10 +262,32 @@ export function WorkbenchLogs({
     setLoading(true);
     setError(null);
     setEntries([]);
+    setStreamDone(null);
     entryCounter.current = 0;
+    countRef.current = 0;
+    lastSeqRef.current = "";
 
     const url = `api/admin/jobs/${encodeURIComponent(jobId)}/events?stream=1`;
     const es = new EventSource(url, { withCredentials: true });
+
+    function armIdleTimer() {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      // 3s after the last event with no new arrivals = stream is settled.
+      // Past completed jobs never receive job_done (worker already exited
+      // before we subscribed), so this is the only way to signal "this is
+      // the whole log".
+      idleTimer.current = setTimeout(() => {
+        if (cancelled) return;
+        if (countRef.current === 0) return;
+        setStreamDone((prev) =>
+          prev ?? {
+            reason: "idle",
+            lastSeq: lastSeqRef.current,
+            count: countRef.current,
+          },
+        );
+      }, 3000);
+    }
 
     es.onopen = () => {
       if (cancelled) return;
@@ -274,6 +304,8 @@ export function WorkbenchLogs({
         const subtype = (data.event_subtype as string) || "";
         const { body, isError } = extractBody(data, ev.data);
         entryCounter.current += 1;
+        countRef.current += 1;
+        if (seq) lastSeqRef.current = seq;
         const entry: AgentEntry = {
           id: `${entryCounter.current}-${seq || ts}`,
           ts,
@@ -284,8 +316,11 @@ export function WorkbenchLogs({
           isError,
         };
         setEntries((prev) => [...prev, entry]);
+        setStreamDone(null);
+        armIdleTimer();
       } catch {
         entryCounter.current += 1;
+        countRef.current += 1;
         setEntries((prev) => [
           ...prev,
           {
@@ -298,23 +333,55 @@ export function WorkbenchLogs({
             isError: false,
           },
         ]);
+        setStreamDone(null);
+        armIdleTimer();
       }
+    }
+
+    function handleDone() {
+      if (cancelled) return;
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      setStreamDone({
+        reason: "job_done",
+        lastSeq: lastSeqRef.current,
+        count: countRef.current,
+      });
     }
 
     es.onmessage = handleEvent;
     es.addEventListener("job_event", handleEvent as EventListener);
+    es.addEventListener("job_done", handleDone as EventListener);
 
     es.onerror = () => {
       if (cancelled) return;
+      // EventSource fires onerror on normal close too. If we already have
+      // events and an idle marker, treat that as "stream complete", not a
+      // failure. Otherwise surface the disconnect.
+      if (countRef.current > 0) {
+        setLoading(false);
+        if (!streamDone) {
+          setStreamDone({
+            reason: "idle",
+            lastSeq: lastSeqRef.current,
+            count: countRef.current,
+          });
+        }
+        return;
+      }
       setError("stream disconnected");
       setLoading(false);
     };
 
     return () => {
       cancelled = true;
+      if (idleTimer.current) clearTimeout(idleTimer.current);
       es.removeEventListener("job_event", handleEvent as EventListener);
+      es.removeEventListener("job_done", handleDone as EventListener);
       es.close();
     };
+    // streamDone is intentionally excluded — re-running the effect on every
+    // event would tear the EventSource down mid-stream.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, jobId]);
 
   useEffect(() => {
@@ -388,6 +455,19 @@ export function WorkbenchLogs({
         {source === "agent" && entries.length > 0 && (
           <span className="font-mono text-[10px] text-[var(--color-foreground-faint)]">
             · {entries.length} events
+          </span>
+        )}
+        {source === "agent" && streamDone && (
+          <span
+            className="font-mono text-[10px] uppercase tracking-wider text-emerald-300"
+            title={
+              streamDone.reason === "job_done"
+                ? "Worker emitted job_done"
+                : "No new events for 3s — replay complete"
+            }
+          >
+            · stream complete
+            {streamDone.lastSeq ? ` · seq ${streamDone.lastSeq}` : ""}
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
