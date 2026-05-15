@@ -435,9 +435,16 @@ export function WorkbenchLogs({
 
   const isNotFoundSentinel =
     source !== "agent" &&
-    /(log not found yet|process may not have logged|no log file|^# log not)/i.test(
+    /(log not found yet|process may not have logged|no log file|^# log not|has no fallback file path|has no recent output)/i.test(
       logs.slice(0, 240),
     );
+
+  const sourceHint =
+    source === "worker"
+      ? "Worker runs as systemd on the agents host. Use the Agent tab with a job ID to see per-job stderr — the worker doesn't expose a global tail through this endpoint."
+      : source === "next"
+        ? "Next.js dev output is only available locally (npm run dev tees to /tmp/next-chat-dev.log). In prod the chat is statically exported and served by the API container."
+        : null;
 
   const localEntries =
     source !== "agent" && logs && !isNotFoundSentinel ? parseLocalLog(logs) : [];
@@ -540,7 +547,14 @@ export function WorkbenchLogs({
             </div>
           ) : isNotFoundSentinel ? (
             <div className="flex h-full items-center justify-center px-6 text-center text-[var(--color-foreground-faint)]">
-              <pre className="whitespace-pre-wrap font-mono text-[11px]">{logs}</pre>
+              <div className="max-w-xl space-y-3">
+                <pre className="whitespace-pre-wrap font-mono text-[11px]">{logs}</pre>
+                {sourceHint && (
+                  <p className="font-mono text-[11px] leading-relaxed text-[var(--color-foreground-muted)]">
+                    {sourceHint}
+                  </p>
+                )}
+              </div>
             </div>
           ) : localEntries.length > 0 ? (
             <div className="flex flex-col">

@@ -664,24 +664,96 @@ export function createRouter(config = {}) {
     }
   });
 
-  // Local log tail — SPA bootstrap auth, reads on-disk dev log files. Used by
-  // the Workbench Logs view to surface local backend/next output without
-  // proxying to the prod worker (which is unreachable from a dev laptop).
+  // Local log tail — SPA bootstrap auth. Two paths:
+  //   1. Docker socket mounted (production): query Docker engine API for
+  //      stdout/stderr of a hardcoded set of container names.
+  //   2. Fallback (dev laptop): read /tmp/devpanel-*.log files tee'd by
+  //      `npm run dev` and friends.
   router.get('/admin/local-log', authenticateSpaBootstrap, async (req, res) => {
     const fs = await import('node:fs');
     const path = await import('node:path');
+    // source → { container: <prod container name>, file: <dev fallback path> }
+    // worker has no `container` because in prod it runs as systemd on the
+    // agents host (10.0.0.3), unreachable from services' docker socket.
+    // The agents-host worker streams its per-job stderr into Pg
+    // (agent_job_events) so use the /api/admin/jobs/:id/events stream for
+    // worker output; this endpoint surfaces only services-host containers.
     const SOURCES = {
-      backend: '/tmp/devpanel-backend.log',
-      next: '/tmp/next-chat-dev.log',
-      worker: '/tmp/devpanel-worker.log',
+      backend: { container: 'devpanel-api',     file: '/tmp/devpanel-backend.log' },
+      next:    { container: null,               file: '/tmp/next-chat-dev.log' },
+      worker:  { container: null,               file: '/tmp/devpanel-worker.log' },
     };
     const source = String(req.query.source || 'backend');
-    const file = SOURCES[source];
-    if (!file) {
+    const spec = SOURCES[source];
+    if (!spec) {
       return res.status(400).type('text/plain')
         .send(`unknown source: ${source}. allowed: ${Object.keys(SOURCES).join(', ')}`);
     }
     const lines = Math.min(2000, Math.max(1, parseInt(req.query.lines, 10) || 500));
+
+    const sockPath = '/var/run/docker.sock';
+    const hasDockerSock = spec.container && fs.existsSync(sockPath);
+
+    if (hasDockerSock) {
+      // Docker Engine API: GET /containers/<name>/logs?stdout=1&stderr=1&tail=N
+      // Returns a multiplexed stream with 8-byte frame headers when stdin
+      // is not attached (which is our case for service containers).
+      try {
+        const http = await import('node:http');
+        const url = `/containers/${encodeURIComponent(spec.container)}/logs` +
+          `?stdout=1&stderr=1&timestamps=0&tail=${lines}`;
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          const req2 = http.request({
+            socketPath: sockPath,
+            path: url,
+            method: 'GET',
+          }, (resp) => {
+            if (resp.statusCode !== 200) {
+              return reject(new Error(`docker engine HTTP ${resp.statusCode}`));
+            }
+            resp.on('data', (c) => chunks.push(c));
+            resp.on('end', resolve);
+            resp.on('error', reject);
+          });
+          req2.on('error', reject);
+          req2.setTimeout(5000, () => req2.destroy(new Error('docker engine timeout')));
+          req2.end();
+        });
+        // De-multiplex: each frame is [stream(1), 0,0,0, size(4be), payload].
+        // For TTY containers Docker returns raw bytes (no header). Detect
+        // by checking the first byte: 1/2 = stdout/stderr framing.
+        const buf = Buffer.concat(chunks);
+        let out = '';
+        if (buf.length === 0) {
+          out = `# ${spec.container} has no recent output (last ${lines} lines).\n`;
+        } else if (buf[0] === 0 || buf[0] === 1 || buf[0] === 2) {
+          // Framed
+          let i = 0;
+          while (i + 8 <= buf.length) {
+            const size = buf.readUInt32BE(i + 4);
+            const end = i + 8 + size;
+            if (end > buf.length) break;
+            out += buf.slice(i + 8, end).toString('utf8');
+            i = end;
+          }
+        } else {
+          out = buf.toString('utf8');
+        }
+        return res.status(200).type('text/plain').send(out);
+      } catch (err) {
+        return res.status(500).type('text/plain')
+          .send(`docker logs error for ${spec.container}: ${err.message}\n` +
+                `# falling back to ${spec.file} if available…\n`);
+      }
+    }
+
+    // Dev-laptop fallback
+    const file = spec.file;
+    if (!file) {
+      return res.status(404).type('text/plain')
+        .send(`# source '${source}' has no fallback file path.\n`);
+    }
     try {
       if (!fs.existsSync(file)) {
         return res.status(200).type('text/plain')

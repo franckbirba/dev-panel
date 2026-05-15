@@ -168,6 +168,14 @@ services:
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist
+      # Read-only docker socket for /api/admin/local-log — lets the API
+      # surface docker-managed stdout of services-host containers
+      # (devpanel-api itself) to the Workbench Logs view. The endpoint
+      # runs under SPA-SSO auth and only allows a hardcoded set of
+      # container names. Worker logs aren't here: the worker runs as
+      # systemd on the agents host, surface them via the per-job
+      # /api/admin/jobs/:id/events stream instead.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       # Expose on private LAN only (10.0.0.2) so Shelly's MCP and the worker
       # on the agents node (10.0.0.3) can reach /api/* without going through
@@ -196,14 +204,17 @@ services:
       # injects X-Forwarded-User; the Express middleware then trusts it
       # (TRUST_FORWARDED_USER=true). Covers SPA-bootstrap (/api/projects,
       # /api/dashboard), live engine views (/api/fleet, /api/health/queues),
-      # dashboard pulse (/api/today, /api/metrics), and the two
-      # browser-exclusive admin tools (/api/admin/local-log, /api/admin/shell).
+      # dashboard pulse (/api/today, /api/metrics), and the
+      # browser-exclusive admin tools (/api/admin/local-log, /api/admin/shell,
+      # /api/admin/jobs/* for tail-logs SSE streams).
       # Most /api/admin/* paths stay on the M2M router below because they
       # are dual-use (browser + agents-host worker via X-Admin-Key); putting
       # them behind SSO would break the worker's lookupProjectByPlaneId path.
+      # /api/admin/jobs/* is browser-exclusive (workers don't subscribe to
+      # their own event streams), so it's safe to gate behind SSO.
       # Widget paths (/api/captures, /api/threads, /api/widget/*, /api/team/*,
       # /api/tickets) also stay on M2M — they auth via X-API-Key.
-      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`) || PathPrefix(`/api/fleet`) || PathPrefix(`/api/health/queues`) || Path(`/api/today`) || Path(`/api/metrics`) || Path(`/api/admin/local-log`) || Path(`/api/admin/shell`))"
+      - "traefik.http.routers.devpanel-api-spa.rule=Host(`devpanl.dev`) && (Path(`/api/projects`) || PathPrefix(`/api/projects/summary`) || PathPrefix(`/api/dashboard`) || PathPrefix(`/api/fleet`) || PathPrefix(`/api/health/queues`) || Path(`/api/today`) || Path(`/api/metrics`) || Path(`/api/admin/local-log`) || Path(`/api/admin/shell`) || PathPrefix(`/api/admin/jobs`))"
       - "traefik.http.routers.devpanel-api-spa.entrypoints=websecure"
       - "traefik.http.routers.devpanel-api-spa.tls=true"
       - "traefik.http.routers.devpanel-api-spa.tls.certresolver=letsencrypt"
