@@ -5,11 +5,11 @@
 // so remote Claude Code / Claude Desktop / opencode instances can reach it
 // over HTTPS at devpanl.dev/mcp instead of needing a local clone of this repo.
 //
-// Auth: Authorization: Bearer <ADMIN_API_KEY>. The traefik router for this
-// path is wired WITHOUT oauth-google@docker (a Bearer client can't satisfy
-// Google SSO), so auth lives entirely here. If ADMIN_API_KEY is unset we
-// refuse to mount — running unauthenticated would expose dispatch/memory
-// tools to anyone who can reach devpanl.dev.
+// Auth: Authorization: Bearer <ADMIN_API_KEY> OR OAuth 2.1 access token. 
+// The traefik router for this path is wired WITHOUT oauth-google@docker 
+// (a Bearer client can't satisfy Google SSO), so auth lives entirely here. 
+// If ADMIN_API_KEY is unset we refuse to mount — running unauthenticated 
+// would expose dispatch/memory tools to anyone who can reach devpanl.dev.
 //
 // Stateful sessions: an MCP handshake is initialize → notifications/initialized
 // → tool calls. The SDK requires the same transport instance across all three
@@ -31,6 +31,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { buildServer } from '../mcp/server.js';
+import { generateAuthUrl, exchangeCodeForTokens, getUserInfo, createAccessToken, verifyAccessToken, oauthSessions } from '../mcp/oauth.js';
 
 function safeEqual(a, b) {
   const aBuf = Buffer.from(a);
@@ -52,11 +53,37 @@ export async function mountMcpHttp(app, { server: _legacyServer, token, path = '
 
   const handler = async (req, res) => {
     const authz = req.headers.authorization || '';
-    const m = /^Bearer\s+(.+)$/i.exec(authz);
-    if (!m || !safeEqual(m[1].trim(), token)) {
+    let isAuthenticated = false;
+    let authError = null;
+    
+    // Try Bearer token authentication first
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authz);
+    if (bearerMatch) {
+      if (safeEqual(bearerMatch[1].trim(), token)) {
+        isAuthenticated = true;
+      } else {
+        authError = 'Invalid Bearer token';
+      }
+    }
+    
+    // Try OAuth 2.1 access token authentication if Bearer failed
+    if (!isAuthenticated && bearerMatch) {
+      try {
+        const accessToken = bearerMatch[1].trim();
+        const payload = verifyAccessToken(accessToken);
+        // Successfully verified OAuth token
+        isAuthenticated = true;
+        // Add user info to request for logging/audit purposes
+        req.oauthUser = payload;
+      } catch (err) {
+        authError = `Invalid OAuth token: ${err.message}`;
+      }
+    }
+    
+    if (!isAuthenticated) {
       res.status(401).json({
         jsonrpc: '2.0',
-        error: { code: -32001, message: 'Unauthorized' },
+        error: { code: -32001, message: 'Unauthorized' + (authError ? `: ${authError}` : '') },
         id: null,
       });
       return;
@@ -125,6 +152,72 @@ export async function mountMcpHttp(app, { server: _legacyServer, token, path = '
     }
     await entry.transport.handleRequest(req, res);
   };
+
+  // OAuth 2.1 routes
+  app.get(`${path}/oauth/login`, async (req, res) => {
+    try {
+      const { url, sessionId } = generateAuthUrl();
+      // Store session ID in cookie
+      res.cookie('mcp_oauth_session', sessionId, {
+        httpOnly: true,
+        secure: true,
+        maxAge: 60 * 60 * 1000 // 1 hour
+      });
+      res.redirect(url);
+    } catch (err) {
+      console.error('[mcp-http] OAuth login error:', err);
+      res.status(500).json({ error: 'OAuth login failed' });
+    }
+  });
+
+  app.get(`${path}/oauth/callback`, async (req, res) => {
+    try {
+      const { code, state, error } = req.query;
+      
+      if (error) {
+        return res.status(400).json({ error: `OAuth error: ${error}` });
+      }
+      
+      if (!code || !state) {
+        return res.status(400).json({ error: 'Missing required OAuth parameters' });
+      }
+      
+      // Get session ID from cookie
+      const sessionId = req.cookies?.mcp_oauth_session;
+      if (!sessionId) {
+        return res.status(400).json({ error: 'Missing OAuth session' });
+      }
+      
+      // Get session data
+      const session = oauthSessions.get(sessionId);
+      if (!session) {
+        return res.status(400).json({ error: 'Invalid or expired OAuth session' });
+      }
+      
+      // Exchange code for tokens
+      const tokens = await exchangeCodeForTokens(code, state, session.state, session.codeVerifier);
+      
+      // Get user info
+      const userInfo = await getUserInfo(tokens.id_token);
+      
+      // Create access token for MCP
+      const accessToken = createAccessToken(userInfo, sessionId);
+      
+      // Clean up session data
+      oauthSessions.delete(sessionId);
+      
+      // Return access token
+      res.json({ 
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 86400, // 24 hours
+        user: userInfo
+      });
+    } catch (err) {
+      console.error('[mcp-http] OAuth callback error:', err);
+      res.status(500).json({ error: `OAuth callback failed: ${err.message}` });
+    }
+  });
 
   app.get(path, sessionDispatch);
   app.delete(path, sessionDispatch);
