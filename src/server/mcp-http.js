@@ -31,7 +31,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { buildServer } from '../mcp/server.js';
-import { generateAuthUrl, exchangeCodeForTokens, getUserInfo, createAccessToken, verifyAccessToken, oauthSessions } from '../mcp/oauth.js';
+import { generateAuthUrl, exchangeCodeForTokens, getUserInfo, createAccessToken, verifyAccessToken, oauthSessions, oauthTokenSecretConfigured, startCleanupTimer } from '../mcp/oauth.js';
 
 function safeEqual(a, b) {
   const aBuf = Buffer.from(a);
@@ -46,6 +46,18 @@ export async function mountMcpHttp(app, { server: _legacyServer, token, path = '
   if (!token) {
     console.warn(`[mcp-http] ADMIN_API_KEY not set — ${path} disabled`);
     return false;
+  }
+
+  // OAuth path is opt-in: only enabled when OAUTH_TOKEN_SECRET is set with
+  // ≥32 chars. When absent, OAuth verification is skipped entirely and only
+  // the Bearer ADMIN_API_KEY path is accepted. This avoids the prior
+  // failure mode where the OAuth verifier accepted unsigned base64 JSON
+  // as a valid token (95dbc46 → fixed forward in this PR).
+  const oauthEnabled = oauthTokenSecretConfigured();
+  if (oauthEnabled) {
+    startCleanupTimer();
+  } else {
+    console.warn(`[mcp-http] OAUTH_TOKEN_SECRET not configured — OAuth verification disabled, only Bearer ADMIN_API_KEY accepted on ${path}`);
   }
 
   // sessionId -> { transport, server } so we can close both on session end.
@@ -66,14 +78,14 @@ export async function mountMcpHttp(app, { server: _legacyServer, token, path = '
       }
     }
     
-    // Try OAuth 2.1 access token authentication if Bearer failed
-    if (!isAuthenticated && bearerMatch) {
+    // Try OAuth 2.1 access token authentication if Bearer failed AND the
+    // OAuth path is enabled (OAUTH_TOKEN_SECRET configured). Without the
+    // secret, OAuth tokens can't be verified safely so we don't try.
+    if (!isAuthenticated && bearerMatch && oauthEnabled) {
       try {
         const accessToken = bearerMatch[1].trim();
         const payload = verifyAccessToken(accessToken);
-        // Successfully verified OAuth token
         isAuthenticated = true;
-        // Add user info to request for logging/audit purposes
         req.oauthUser = payload;
       } catch (err) {
         authError = `Invalid OAuth token: ${err.message}`;
