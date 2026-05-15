@@ -32,6 +32,7 @@ import {
   SuggestionPrimitive,
   ThreadPrimitive,
   useAuiState,
+  useThreadRuntime,
 } from "@assistant-ui/react";
 import {
   ArrowDownIcon,
@@ -51,9 +52,28 @@ import {
   Cpu,
   Settings2,
 } from "lucide-react";
-import type { FC } from "react";
+import { useEffect, type FC } from "react";
 
 export const Thread: FC = () => {
+  const runtime = useThreadRuntime();
+
+  // Listen for chat-prompt CustomEvents fired by the CommandPalette
+  // ("Triage capture inbox", "Show fleet status", …). The palette can't
+  // call runtime.append directly because it lives outside the thread tree.
+  useEffect(() => {
+    function onPrompt(e: Event) {
+      const ce = e as CustomEvent<{ text?: string }>;
+      const text = ce.detail?.text;
+      if (!text) return;
+      runtime.append({
+        role: "user",
+        content: [{ type: "text", text }],
+      });
+    }
+    window.addEventListener("devpanl:chat-prompt", onPrompt);
+    return () => window.removeEventListener("devpanl:chat-prompt", onPrompt);
+  }, [runtime]);
+
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root @container flex h-full flex-col bg-[var(--color-background)]"
