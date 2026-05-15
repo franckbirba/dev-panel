@@ -741,10 +741,10 @@ export function createRouter(config = {}) {
           out = buf.toString('utf8');
         }
         return res.status(200).type('text/plain').send(out);
-      } catch (err) {
-        return res.status(500).type('text/plain')
-          .send(`docker logs error for ${spec.container}: ${err.message}\n` +
-                `# falling back to ${spec.file} if available…\n`);
+      } catch {
+        // Fall through to the dev-laptop file fallback. Common when the
+        // docker.sock is mounted (e.g. Docker Desktop on a dev machine)
+        // but the target container isn't running locally.
       }
     }
 
