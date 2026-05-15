@@ -60,6 +60,20 @@ export function createServer(storagePath = './storage') {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // Strip the Next `basePath: "/dashboard"` prefix from API calls. The chat
+  // app is served at /dashboard/ and its components issue relative fetches
+  // like `api/dashboard/chat/turn` which the browser resolves to
+  // `/dashboard/api/dashboard/chat/turn`. In `next dev` the basePath: false
+  // rewrite in next.config.ts strips the leading /dashboard; in the
+  // production static export served by Express there is no such layer, so
+  // we strip it here. Works for every relative `api/...` fetch in the app.
+  app.use((req, _res, next) => {
+    if (req.url.startsWith('/dashboard/api/')) {
+      req.url = req.url.slice('/dashboard'.length);
+    }
+    next();
+  });
+
   // Remote MCP transport — exposes the same tools as the stdio MCP server
   // at /mcp via StreamableHTTPServerTransport. Bearer auth, no SSO. The
   // server module self-bootstraps on import (stdio); MCP_NO_AUTOSTART=1
