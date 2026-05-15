@@ -37,6 +37,7 @@ export type DashboardThread = {
 };
 
 import { ActiveAgent, ActiveAgentsRail } from "./ActiveAgentsRail";
+import { UserProfile } from "./UserProfile";
 
 export type WorkbenchView = "chat" | "engine" | "logs" | "shell";
 
@@ -255,8 +256,9 @@ export function DashboardThreadList({
         </SidebarGroup>
       </SidebarContent>
 
-      {/* ── Footer — Documentation + System Status ─────────────────────── */}
+      {/* ── Footer — Profile + Documentation + System Status ────────────── */}
       <SidebarFooter className="px-3 pb-3 pt-2 group-data-[collapsible=icon]:hidden">
+        <UserProfile />
         <a
           href="https://github.com/franckbirba/dev-panel"
           target="_blank"

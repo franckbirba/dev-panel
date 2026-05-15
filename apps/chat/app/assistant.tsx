@@ -25,6 +25,7 @@ import {
   WorkbenchLogs,
   WorkbenchShell,
   type WorkbenchView,
+  UserProfile,
 } from "@/components/devpanl";
 import { ToolUIRegistry } from "@/lib/tool-ui-registry";
 import {

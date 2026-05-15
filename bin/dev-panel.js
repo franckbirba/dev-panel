@@ -3,12 +3,33 @@
 import { Command } from 'commander';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkgPath = join(__dirname, '../package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+
+// Load .env from the repo root so `dev-panel serve` picks up local config
+// (ADMIN_API_KEY, DASHBOARD_DEV_BYPASS_SSO, LLM_PROVIDER, etc.) without
+// the caller having to `export` everything. Without this, the local dev
+// stack runs with TRUST_FORWARDED_USER undefined → every SPA call 401s
+// and the chat UI shows no profile / no threads.
+const envPath = join(__dirname, '../.env');
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq < 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = val;
+  }
+}
 
 const program = new Command();
 
