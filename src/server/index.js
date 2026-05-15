@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { initMasterDatabase, getMasterDatabase } from './db.js';
@@ -24,6 +25,9 @@ export function createServer(storagePath = './storage') {
 
   // Trust proxy (required for Traefik reverse proxy)
   app.set('trust proxy', 1);
+
+  // Parse cookies
+  app.use(cookieParser());
 
   // Security headers — disable CSP (Cloudflare handles it)
   app.use(helmet({
