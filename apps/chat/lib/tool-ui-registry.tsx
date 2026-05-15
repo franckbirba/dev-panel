@@ -50,8 +50,6 @@ import {
 	type TranscriptRow,
 	WorkflowDispatchCard,
 	type WorkflowDispatchResult,
-	type WorkflowInstance,
-	WorkflowInstancesCard,
 	WorkItemCard,
 } from "@/components/devpanl";
 import {
@@ -1038,51 +1036,6 @@ const TranscriptReplayRecentUI = transcriptUI("transcript_replay_recent");
 
 // ─── Workflows ───────────────────────────────────────────────────────────────
 
-function useWorkflowActionHandler() {
-	const runtime = useThreadRuntime();
-	return (instanceId: string) => {
-		runtime.append({
-			role: "user",
-			content: [
-				{
-					type: "text",
-					text: `Show me the last 50 lines of workflow instance ${instanceId} via job_log_snapshot.`,
-				},
-			],
-		});
-	};
-}
-
-function WorkflowInstancesView({
-	instances,
-}: {
-	instances: WorkflowInstance[];
-}) {
-	const onTail = useWorkflowActionHandler();
-	return <WorkflowInstancesCard instances={instances} onTail={onTail} />;
-}
-
-const WorkflowListInstancesUI = makeAssistantToolUI<unknown, unknown>({
-	toolName: "devpanel_workflow_list_instances",
-	render: ({ result, args, status }) => {
-		const data = parseToolText(result) as
-			| { instances?: WorkflowInstance[]; ok?: boolean }
-			| WorkflowInstance[]
-			| null;
-		const instances = Array.isArray(data) ? data : (data?.instances ?? null);
-		if (!instances || status.type === "running")
-			return (
-				<ToolFallback
-					toolName="devpanel_workflow_list_instances"
-					args={args}
-					result={result}
-					status={status}
-				/>
-			);
-		return <WorkflowInstancesView instances={instances} />;
-	},
-});
-
 const WorkflowDispatchUI = makeAssistantToolUI<unknown, unknown>({
 	toolName: "devpanel_workflow_dispatch",
 	render: ({ result, args, status }) => {
@@ -1516,7 +1469,6 @@ export function ToolUIRegistry() {
 			<TranscriptSearchUI />
 			<TranscriptRangeUI />
 			<TranscriptReplayRecentUI />
-			<WorkflowListInstancesUI />
 			<WorkflowDispatchUI />
 			{AffineUIRegistry.map(({ id, UI }) => (
 				<UI key={id} />

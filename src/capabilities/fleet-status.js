@@ -13,6 +13,12 @@ export const fleetStatus = {
     limit: z.number().int().min(1).max(200).default(50),
   }),
   renderHint: 'FleetList',
+  // Models often hallucinate `devpanel_workflow_list_instances` as a sibling
+  // of `devpanel_workflow_dispatch` (which does exist), or `list_jobs` from
+  // training-data familiarity. Alias both to the real capability so the call
+  // succeeds and renders the FleetList card instead of returning "tool not
+  // found" and prompting an apology.
+  replaces: ['devpanel_workflow_list_instances', 'list_workflow_instances'],
   async handler({ state = 'active', limit = 50 }) {
     // Use the admin workflows endpoint which surfaces instance state
     // without a project key. Per src/server/routes.js#2147.
