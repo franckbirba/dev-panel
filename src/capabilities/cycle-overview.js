@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { adminGet, planeProjectGet } from './_http.js';
+import { planeProjectGet, planeWorkspaceGet } from './_http.js';
 
 const STATE_GROUP_ALIAS = {
   backlog: 'backlog',
@@ -30,18 +30,21 @@ export const cycleOverview = {
   renderHint: 'SprintProgress',
   replaces: ['list_cycles', 'list_cycle_work_items', 'list_states'],
   async handler({ project_short, cycle_id }) {
-    // 1. Resolve project_short → plane_project_id via managed projects
-    const projects = (await adminGet('/api/admin/projects')).projects || [];
-    const proj = projects.find(
-      (p) =>
-        p.plane_short === project_short ||
-        p.short === project_short ||
-        (p.name || '').toUpperCase().startsWith(project_short.toUpperCase())
+    // Resolve project_short → plane_project_id by asking Plane directly. The
+    // managed-projects table (`/api/admin/projects`) doesn't store the Plane
+    // identifier ("DEVPA"/"ZENO"/...), only the UUID + repo name, so we
+    // can't match on it. Plane's `/projects/` endpoint has `identifier`.
+    const upper = project_short.toUpperCase();
+    const planeProjects = (await planeWorkspaceGet('/projects/')).results || [];
+    const planeProj = planeProjects.find(
+      (p) => (p.identifier || '').toUpperCase() === upper
     );
-    if (!proj || !proj.plane_project_id) {
-      throw new Error(`No managed project found for short "${project_short}"`);
+    if (!planeProj) {
+      throw new Error(
+        `No Plane project found with identifier "${project_short}". Known: ${planeProjects.map((p) => p.identifier).filter(Boolean).join(', ')}`
+      );
     }
-    const planeProjectId = proj.plane_project_id;
+    const planeProjectId = planeProj.id;
 
     // 2. Resolve cycle (active by default)
     let cycle;
