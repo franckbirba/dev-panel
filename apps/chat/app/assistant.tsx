@@ -21,6 +21,7 @@ import {
   AutoDecisionsPanel,
   type ActiveAgent,
   CommandPalette,
+  SettingsPanel,
   WorkbenchEngine,
   WorkbenchLogs,
   WorkbenchShell,
@@ -314,7 +315,16 @@ export const Assistant = () => {
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeView, setActiveView] = useState<WorkbenchView>("chat");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<
+    "members" | "dev_bots" | "project"
+  >("members");
   const [tailJobId, setTailJobId] = useState<string | null>(null);
+
+  function openSettings(tab?: "members" | "dev_bots" | "project") {
+    if (tab) setSettingsTab(tab);
+    setSettingsOpen(true);
+  }
 
   const metrics = useWorkbenchMetrics();
 
@@ -407,6 +417,7 @@ export const Assistant = () => {
           agents={activeAgents}
           activeView={activeView}
           onViewChange={setActiveView}
+          onOpenSettings={() => openSettings()}
         />
 
         <SidebarInset className="bg-[var(--color-background)]">
@@ -449,6 +460,16 @@ export const Assistant = () => {
           }}
           onCreate={createThread}
           onNavigate={(v) => setActiveView(v)}
+          onOpenSettings={(tab) => {
+            setPaletteOpen(false);
+            openSettings(tab);
+          }}
+        />
+
+        <SettingsPanel
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          initialTab={settingsTab}
         />
       </div>
     </SidebarProvider>

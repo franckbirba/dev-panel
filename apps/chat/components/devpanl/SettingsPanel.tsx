@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -44,17 +44,30 @@ export function SettingsPanel({
   members = [],
   devBots = [],
   project,
+  open,
+  onOpenChange,
+  initialTab,
 }: {
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
   members?: StudioMember[];
   devBots?: DevBot[];
   project?: ProjectSettings;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("members");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "members");
+
+  // Sync tab when the parent re-opens the panel with a deep-link from the
+  // palette (e.g. "Settings → Dev bots"). Without this, the panel keeps the
+  // last-clicked tab between openings.
+  useEffect(() => {
+    if (open && initialTab) setTab(initialTab);
+  }, [open, initialTab]);
 
   return (
-    <Sheet>
-      <SheetTrigger asChild>{trigger}</SheetTrigger>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      {trigger ? <SheetTrigger asChild>{trigger}</SheetTrigger> : null}
       <SheetContent side="right" className="w-[480px] sm:max-w-[480px]">
         <SheetHeader>
           <SheetTitle>Settings</SheetTitle>
@@ -83,7 +96,14 @@ export function SettingsPanel({
         <div className="mt-4 space-y-3 overflow-y-auto pr-1">
           {tab === "members" && <MembersTab members={members} />}
           {tab === "dev_bots" && <DevBotsTab bots={devBots} />}
-          {tab === "project" && project && <ProjectTab project={project} />}
+          {tab === "project" &&
+            (project ? (
+              <ProjectTab project={project} />
+            ) : (
+              <p className="text-[12.5px] text-[var(--color-foreground-muted)]">
+                No project selected.
+              </p>
+            ))}
         </div>
       </SheetContent>
     </Sheet>

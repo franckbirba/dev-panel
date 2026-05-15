@@ -9,6 +9,7 @@ import {
   FileText,
   MessageSquare,
   Rocket,
+  Settings,
   Sparkles,
   CornerDownLeft,
   type LucideIcon,
@@ -31,6 +32,7 @@ export function CommandPalette({
   onSelectThread,
   onCreate,
   onNavigate,
+  onOpenSettings,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -38,17 +40,23 @@ export function CommandPalette({
   onSelectThread: (n: number) => void;
   onCreate: () => void;
   onNavigate: (view: WorkbenchView) => void;
+  onOpenSettings?: (tab?: "members" | "dev_bots" | "project") => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Global cmd+K listener
+  // Global cmd+K / cmd+, listeners
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         onOpenChange(!open);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        if (onOpenSettings) {
+          e.preventDefault();
+          onOpenSettings();
+        }
       } else if (e.key === "Escape" && open) {
         e.preventDefault();
         onOpenChange(false);
@@ -56,7 +64,7 @@ export function CommandPalette({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, onOpenSettings]);
 
   useEffect(() => {
     if (open) {
@@ -125,6 +133,42 @@ export function CommandPalette({
         run: () => sendChatPrompt("what's the fleet status?"),
       },
     ];
+    if (onOpenSettings) {
+      base.push(
+        {
+          id: "settings.open",
+          label: "Open Settings",
+          hint: "⌘,",
+          group: "Navigation",
+          icon: Settings,
+          run: () => onOpenSettings(),
+        },
+        {
+          id: "settings.members",
+          label: "Settings → Members",
+          hint: "Studio team",
+          group: "Navigation",
+          icon: Settings,
+          run: () => onOpenSettings("members"),
+        },
+        {
+          id: "settings.dev_bots",
+          label: "Settings → Dev bots",
+          hint: "Telegram pairing",
+          group: "Navigation",
+          icon: Settings,
+          run: () => onOpenSettings("dev_bots"),
+        },
+        {
+          id: "settings.project",
+          label: "Settings → Project",
+          hint: "Repo + env config",
+          group: "Navigation",
+          icon: Settings,
+          run: () => onOpenSettings("project"),
+        },
+      );
+    }
     for (const t of threads.slice(0, 10)) {
       base.push({
         id: `thread.${t.n}`,
@@ -136,7 +180,7 @@ export function CommandPalette({
       });
     }
     return base;
-  }, [threads, onSelectThread, onCreate, onNavigate]);
+  }, [threads, onSelectThread, onCreate, onNavigate, onOpenSettings]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

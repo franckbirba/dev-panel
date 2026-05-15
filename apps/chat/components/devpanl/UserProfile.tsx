@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut, User } from "lucide-react";
+import { LogOut, Settings, User } from "lucide-react";
 
 type Me = {
   type: string;
@@ -14,7 +14,11 @@ type Me = {
 // arrives through Google SSO and traefik-forward-auth injects
 // X-Forwarded-User; in local dev DASHBOARD_DEV_BYPASS_SSO=true mints a
 // synthetic dev@localhost. Either way /api/me is the truth-source.
-export function UserProfile() {
+export function UserProfile({
+  onOpenSettings,
+}: {
+  onOpenSettings?: () => void;
+} = {}) {
   const [me, setMe] = useState<Me | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -104,6 +108,22 @@ export function UserProfile() {
               {isDev ? "dev bypass" : me.type.replace(/_/g, " ")}
             </div>
           </div>
+          {onOpenSettings ? (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+              className="flex w-full items-center gap-2 border-b border-[var(--color-border-subtle)] px-3 py-2 text-left text-[11px] text-[var(--color-foreground-muted)] transition-colors hover:bg-[var(--color-surface-container-high)] hover:text-[var(--color-foreground)]"
+            >
+              <Settings className="size-3.5" />
+              Settings
+              <kbd className="ml-auto rounded border border-[var(--color-border-subtle)] bg-[var(--color-surface-container-low)] px-1 font-mono text-[9px] text-[var(--color-foreground-faint)]">
+                ⌘,
+              </kbd>
+            </button>
+          ) : null}
           {me.logout_url ? (
             <a
               href={me.logout_url}

@@ -59,6 +59,7 @@ export function DashboardThreadList({
   agents = [],
   activeView = "chat",
   onViewChange,
+  onOpenSettings,
 }: {
   threads: DashboardThread[];
   activeN: number;
@@ -68,6 +69,7 @@ export function DashboardThreadList({
   agents?: ActiveAgent[];
   activeView?: WorkbenchView;
   onViewChange?: (view: WorkbenchView) => void;
+  onOpenSettings?: () => void;
 }) {
   const [query, setQuery] = useState("");
 
@@ -258,7 +260,7 @@ export function DashboardThreadList({
 
       {/* ── Footer — Profile + Documentation + System Status ────────────── */}
       <SidebarFooter className="px-3 pb-3 pt-2 group-data-[collapsible=icon]:hidden">
-        <UserProfile />
+        <UserProfile onOpenSettings={onOpenSettings} />
         <a
           href="https://github.com/franckbirba/dev-panel"
           target="_blank"
