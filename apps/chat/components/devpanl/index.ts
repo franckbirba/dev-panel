@@ -101,3 +101,4 @@ export { WorkbenchLogs } from "./WorkbenchLogs";
 export { WorkbenchShell } from "./WorkbenchShell";
 export { CommandPalette } from "./CommandPalette";
 export { type WorkbenchView } from "./DashboardThreadList";
+export { UserProfile } from "./UserProfile";

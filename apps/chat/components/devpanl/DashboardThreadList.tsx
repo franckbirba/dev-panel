@@ -37,6 +37,7 @@ export type DashboardThread = {
 };
 
 import { ActiveAgent, ActiveAgentsRail } from "./ActiveAgentsRail";
+import { UserProfile } from "./UserProfile";
 
 export type WorkbenchView = "chat" | "engine" | "logs" | "shell";
 
@@ -58,6 +59,7 @@ export function DashboardThreadList({
   agents = [],
   activeView = "chat",
   onViewChange,
+  onOpenSettings,
 }: {
   threads: DashboardThread[];
   activeN: number;
@@ -67,6 +69,7 @@ export function DashboardThreadList({
   agents?: ActiveAgent[];
   activeView?: WorkbenchView;
   onViewChange?: (view: WorkbenchView) => void;
+  onOpenSettings?: () => void;
 }) {
   const [query, setQuery] = useState("");
 
@@ -255,8 +258,9 @@ export function DashboardThreadList({
         </SidebarGroup>
       </SidebarContent>
 
-      {/* ── Footer — Documentation + System Status ─────────────────────── */}
+      {/* ── Footer — Profile + Documentation + System Status ────────────── */}
       <SidebarFooter className="px-3 pb-3 pt-2 group-data-[collapsible=icon]:hidden">
+        <UserProfile onOpenSettings={onOpenSettings} />
         <a
           href="https://github.com/franckbirba/dev-panel"
           target="_blank"

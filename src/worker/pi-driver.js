@@ -81,8 +81,21 @@ const DEFAULT_PI_EXTENSIONS = [
   join(PI_EXTENSIONS_ROOT, 'work-items'),
   join(PI_EXTENSIONS_ROOT, 'github'),
   join(PI_EXTENSIONS_ROOT, 'bash'),
-  join(PI_EXTENSIONS_ROOT, 'loop-guard')
+  join(PI_EXTENSIONS_ROOT, 'loop-guard'),
+  // create-file: safe new-file tool that replaces Pi's built-in `write`
+  // (which is hidden via the --tools allowlist on the spawn argv below).
+  // Rejects >200 lines and rejects pseudo-JSON-shaped content — the exact
+  // Qwen3 failure mode that wasted job 4168 on DEVPA-225. See the
+  // extension's index.ts header comment for the incident.
+  join(PI_EXTENSIONS_ROOT, 'create-file')
 ];
+
+// Pi built-in tool allowlist (passed via --tools). We keep everything
+// EXCEPT `write` — the built-in write is a Claude-tuned whole-file tool
+// that weak coders catastrophically fail. Replaced by our `create_file`
+// extension above; modifications go through Pi's built-in `edit` (which
+// is already Aider-style SEARCH/REPLACE).
+const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
 
 export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir }) {
   return new Promise((resolve, reject) => {
@@ -113,6 +126,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
       '--no-context-files',
       '--no-skills',
       '--no-prompt-templates',
+      '--tools', PI_BUILTIN_ALLOWLIST,
       ...extensionFlags,
       '--append-system-prompt', soul,
       '-p', prompt

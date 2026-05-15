@@ -311,6 +311,28 @@ export function createRouter(config = {}) {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Identity for the SPA. Returns whoever the request resolved to via
+  // authenticateSpaBootstrap — that's either the SSO email (traefik) or
+  // the synthetic dev@localhost user (DASHBOARD_DEV_BYPASS_SSO). The chat
+  // sidebar renders this in the footer; without it there's no profile
+  // surface in the UI.
+  router.get('/me', authenticateSpaBootstrap, (req, res) => {
+    const user = req.user || {};
+    const email = user.email || null;
+    const name = email ? email.split('@')[0].replace(/[._-]+/g, ' ') : 'admin';
+    // DASHBOARD_DEV_BYPASS_SSO mints a synthetic forwarded_user, but there
+    // is no Google session behind it — hide the sign-out link in that
+    // mode so the UI doesn't link to a dead /_oauth/logout.
+    const realSso = user.type === 'forwarded_user'
+      && process.env.TRUST_FORWARDED_USER === 'true';
+    res.json({
+      type: user.type || 'unknown',
+      email,
+      name,
+      logout_url: realSso ? '/_oauth/logout' : null,
+    });
+  });
+
   // Health check — detailed (admin only)
   router.get('/health/detailed', authenticateAdmin, async (req, res) => {
     const { getHealthStatus } = await import('./monitoring.js');
