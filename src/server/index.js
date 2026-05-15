@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { createRequire } from 'module';
 import { initMasterDatabase, getMasterDatabase } from './db.js';
 import { createRouter } from './routes.js';
 import { mountDevBotsRoutes } from './routes-dev-bots.js';
@@ -10,6 +11,36 @@ import { mountGitHubWebhook } from './webhooks-github.js';
 import { mountGlitchTipWebhook } from './webhooks-glitchtip.js';
 import { mountChat } from './chat.js';
 import { mountDashboardChat } from './routes-dashboard-chat.js';
+
+// Suppress ECONNREFUSED stack-spam from every ioredis client process-wide.
+// BullMQ opens internal `bclient`/`subscriber` connections that we can't
+// hand-attach error handlers on. With Redis down in local dev, each refused
+// reconnect prints a 7-line stack — hundreds per minute. Patch ioredis'
+// `emit('error')` once at module load so every instance gets a rate-limited
+// ECONNREFUSED swallow; other errors pass through to the registered listeners.
+const _require = createRequire(import.meta.url);
+const _RedisCtor = _require('ioredis');
+if (!_RedisCtor.__econnSuppressorInstalled) {
+  _RedisCtor.__econnSuppressorInstalled = true;
+  const _origEmit = _RedisCtor.prototype.emit;
+  let _lastEconnLog = 0;
+  _RedisCtor.prototype.emit = function patchedEmit(event, ...args) {
+    if (event === 'error') {
+      const err = args[0];
+      if (err?.code === 'ECONNREFUSED') {
+        const now = Date.now();
+        if (now - _lastEconnLog > 60_000) {
+          _lastEconnLog = now;
+          const host = this.options?.host || '?';
+          const port = this.options?.port || '?';
+          console.warn(`[ioredis] ECONNREFUSED ${host}:${port} (suppressing repeats for 60s)`);
+        }
+        return true; // swallow — node would otherwise log the unhandled error
+      }
+    }
+    return _origEmit.call(this, event, ...args);
+  };
+}
 
 export function createServer(storagePath = './storage') {
   // Initialize master database (projects.db)
