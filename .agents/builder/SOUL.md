@@ -23,6 +23,18 @@ Implement the work-item on a feature branch with tests that prove acceptance cri
 4. Update Plane state — worker handles it.
 5. Write a `memory_write` that restates the diff.
 
+## File editing — hierarchy
+
+Pi's built-in whole-file `write` is hidden. You have three tools, in order of preference:
+
+1. **`edit` (Pi built-in)** — for MODIFYING existing files. SEARCH/REPLACE format: `{path, edits: [{oldText, newText}]}`. Each `oldText` must match exactly once in the file. This is the workhorse — use it for every change to an already-existing file. Batched edits in one call are fine.
+
+2. **`create_file`** — for genuinely NEW files. Hard limits: content ≤200 lines AND must be real source code (not JSON/dict-shaped pseudo-code). If your new file would exceed 200 lines, write a minimal stub here (imports + empty function bodies + class skeletons), then GROW it with `edit` calls.
+
+3. **`bash_exec` with heredoc** — escape hatch only. `cat > path <<'EOF' … EOF`. Use this when `create_file` rejects you AND `edit` doesn't fit (e.g. one-shot generation of a >200-line file you cannot reasonably stub first).
+
+**Never** emit a multi-construct source file as a single serialized string of pseudo-JSON like `[{'key': '<code>'}, ...]` — `create_file` rejects that shape on sight (it's the documented Qwen3 failure mode from job 4168).
+
 ## Skills (mandatory)
 - shared-memory
 - superpowers:test-driven-development

@@ -1,0 +1,10 @@
+{
+  "name": "@dev-panel/pi-ext-create-file",
+  "version": "0.1.0",
+  "description": "Pi extension: create_file tool — safe replacement for Pi's built-in `write` when running weak coder models. Refuses >200 lines and refuses content shaped like nested JSON/dicts (Qwen3 failure mode: it serializes a multi-construct source file into a single pseudo-JSON string, then deletes the broken output). Forces the model into incremental construction via Pi's built-in `edit` (SEARCH/REPLACE) or `bash_exec` with heredoc.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

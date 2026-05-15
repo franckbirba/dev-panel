@@ -127,6 +127,7 @@ export function buildPrompt(jobData, opts = {}) {
     `- Working directory: ${workingDir}`,
     `- Memory namespace: ${memory_namespace}`,
     '- Never use `git add -A` or `git add .` — add files explicitly.',
+    '- File editing hierarchy: (a) MODIFY existing files with the `edit` tool (SEARCH/REPLACE — far more reliable than whole-file rewrites). (b) CREATE new files <200 lines with `create_file`. (c) For new files >200 lines, use `bash_exec` with a heredoc: `cat > path <<\'EOF\' … EOF`. Never serialize a multi-construct source file into a single JSON/dict-shaped string — `create_file` rejects that shape.',
     '- You MUST call `memory_search` at the start (search the spec for how).',
     '- You MUST call `memory_write` for each non-obvious decision before finishing.',
     '- The LAST line of your response MUST be a single JSON object matching:',
