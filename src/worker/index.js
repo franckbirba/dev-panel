@@ -148,15 +148,23 @@ try { mkdirSync(AGENT_LOG_DIR, { recursive: true }); } catch { /* ignore */ }
  *  - Subscribers on SSE /api/admin/jobs/:id/events?stream=1 receive events live.
  */
 function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, meta = {}) {
-  // Cheap-tier harness routing:
-  //   DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3 (legacy cheap path;
-  //                           40s/$0.002 on toys, unproven on real DEVPA)
-  //   DRIVER_<AGENT>=pi     → pi (@earendil-works/pi-coding-agent) × Qwen3
-  //                           via DeepInfra by default. Phase 2 of the
-  //                           harness migration (plan ok-anyway-we-need-...)
-  //   DRIVER_<AGENT>=goose  → legacy goose path, kept for fallback only
-  //   anything else         → Claude Code (Anthropic, default)
-  // FORCE_TIER=opus globally overrides everything to Claude.
+  // Routing is two orthogonal axes:
+  //   1. WHETHER to containerize (isolation): shouldUseContainer wins first
+  //      so per-job docker isolation wraps the model choice. The container
+  //      driver reads CONTAINER_INNER_DRIVER=claude|pi to pick which CLI
+  //      runs inside.
+  //   2. WHICH CLI to run natively (no container):
+  //        DRIVER_<AGENT>=mini   → mini-swe-agent × Qwen3
+  //        DRIVER_<AGENT>=pi     → pi × Qwen3 via DeepInfra
+  //        DRIVER_<AGENT>=goose  → legacy goose path
+  //        anything else         → Claude Code (default)
+  // FORCE_TIER=opus globally overrides everything to native Claude.
+  if (shouldUseContainer(agentRole)) {
+    return spawnContainer({
+      jobId, prompt, agentRole, cwd,
+      activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
+    });
+  }
   if (shouldUseMiniSwe(agentRole)) {
     return spawnMiniSwe({
       jobId, prompt, agentRole, cwd,
@@ -173,12 +181,6 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
     return spawnGoose({
       jobId, prompt, agentRole, cwd,
       activeProcesses, agentLogDir: AGENT_LOG_DIR,
-    });
-  }
-  if (shouldUseContainer(agentRole)) {
-    return spawnContainer({
-      jobId, prompt, agentRole, cwd,
-      activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
     });
   }
   return new Promise((resolve, reject) => {
