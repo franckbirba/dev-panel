@@ -28,6 +28,8 @@ import {
   type WorkbenchView,
 } from "@/components/devpanl";
 import { ToolUIRegistry } from "@/lib/tool-ui-registry";
+import { FleetStatusSidebar } from "@/components/devpanl/FleetStatusSidebar";
+import { CanvasDock } from "@/components/devpanl/CanvasDock";
 import {
   dashboardThreadListAdapter,
   loadThreadHistory,
@@ -300,8 +302,13 @@ function ThreadView({
           <AutoDecisionsPanel />
         </div>
 
-        <div className="flex-1 overflow-hidden bg-[var(--color-background)]">
-          <Thread />
+        <div className="flex flex-1 overflow-hidden bg-[var(--color-background)]">
+          <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <Thread />
+            </div>
+            <CanvasDock />
+          </div>
         </div>
         <StatusBar usage={usage} />
       </div>
