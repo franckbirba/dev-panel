@@ -619,6 +619,33 @@ export async function runAutomation({ jobData, result, startedAt }) {
   // routing) then sees the corrected status.
   verifyAndCommit({ result, jobData });
 
+  // Synthesizer safety net (DEVPA-227). When pi-driver synthesized the result
+  // (agent skipped its closing envelope), verifyAndCommit may still downgrade
+  // to blocked if the porcelain-derived manifest didn't translate to a clean
+  // diff (e.g. binary-only changes, half-staged renames, ignored paths).
+  // Rather than tear down the worktree, fall back to the parse-failure rescue:
+  // git add -A + commit + push + open a NEEDS REVIEW PR. The original
+  // synthesized state stays on `result` for downstream Plane/Shelly updates.
+  if (result._synthesized && result.status === 'blocked' && context?.worktree_path) {
+    try {
+      const rescue = rescueWorktreeOnParseFailure({
+        jobData,
+        output: result.summary || '',
+        parseError: 'pi-synthesized result downgraded by verifier (no diff after commit attempt)',
+      });
+      if (rescue.rescued) {
+        result.artifacts = result.artifacts || {};
+        result.artifacts.pr_url = rescue.pr_url;
+        result.summary = `[rescue-pr] Opened ${rescue.pr_url} for human review. ${result.summary || ''}`.slice(0, 2000);
+        console.log(`[runAutomation] synthesizer-rescue PR opened for job ${job_id}: ${rescue.pr_url}`);
+      } else {
+        console.warn(`[runAutomation] synthesizer-rescue skipped for job ${job_id}: ${rescue.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[runAutomation] synthesizer-rescue threw: ${err.message?.slice(0, 200)}`);
+    }
+  }
+
   publishEvent('job.finished', { job_id, agent, status: result.status, summary: result.summary });
 
   await runStep(job_id, agent, 'plane.update_work_item',
