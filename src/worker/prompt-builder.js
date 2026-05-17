@@ -1,6 +1,7 @@
 // src/worker/prompt-builder.js
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { renderParentContextBlock } from './parent-context.js';
 
 const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 
@@ -114,6 +115,15 @@ export function buildPrompt(jobData, opts = {}) {
     context.parent_job_id ? `**Parent job:** ${context.parent_job_id}` : '',
     context.previous_agent_output ? `**Previous agent output:**\n\`\`\`json\n${JSON.stringify(context.previous_agent_output, null, 2)}\n\`\`\`` : ''
   ].filter(Boolean).join('\n'));
+
+  // 3b. DEVPA-228: parent context (caller-controlled inheritance from a parent
+  // BullMQ job). Rendered as a `## Parent context` block — see parent-context.js.
+  // Distinct from the legacy engine-side handoff fields above (parent_job_id /
+  // previous_agent_output), which are populated automatically by triggerNext.
+  if (context.parent_context) {
+    const block = renderParentContextBlock(context.parent_context);
+    if (block) sections.push(block);
+  }
 
   // 4. Allowed MCP allowlist
   if (allowed_mcp.length) {

@@ -85,6 +85,9 @@ describe('engine.triggerNext — context isolation', () => {
             default_branch: 'main',
             project_root: '/repo',
             github_issue_number: 42,
+            // DEVPA-228: parent_context is caller-controlled inheritance for
+            // the INITIAL dispatch only. Engine-driven forwards must strip it.
+            parent_context: { parent_job_id: 'p1', thread_context: { messages: [] } },
           }
         },
         result: { status: 'done', summary: 'built', memory_writes_count: 0 },
@@ -96,6 +99,7 @@ describe('engine.triggerNext — context isolation', () => {
       expect(payload.agent).toBe('reviewer');
       // The whole point: worktree_path is gone.
       expect(payload.context).not.toHaveProperty('worktree_path');
+      expect(payload.context).not.toHaveProperty('parent_context');
       // Workflow-level fields propagate.
       expect(payload.context.branch).toBe('feat/wi-12345678-thing');
       expect(payload.context.default_branch).toBe('main');
@@ -120,6 +124,7 @@ describe('engine.triggerNext — context isolation', () => {
             worktree_path: '/tmp/dead-worktree',
             branch: 'feat/x',
             default_branch: 'main',
+            parent_context: { parent_job_id: 'p2' },
           }
         },
         result: { status: 'blocked', summary: 'need clarification', memory_writes_count: 0, blockers: [] },
@@ -130,6 +135,7 @@ describe('engine.triggerNext — context isolation', () => {
       const payload = enqueue.mock.calls[0][0];
       expect(payload.workflow).toBe('replan');
       expect(payload.context).not.toHaveProperty('worktree_path');
+      expect(payload.context).not.toHaveProperty('parent_context');
       expect(payload.context.branch).toBe('feat/x');
     } finally {
       cleanup();
