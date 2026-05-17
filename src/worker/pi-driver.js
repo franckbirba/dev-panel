@@ -70,13 +70,32 @@ function synthesizePiResult({ cwd, lastAssistantText, toolUseCount, exitCode }) 
   let branch = null;
   let hasChanges = false;
   let commits = [];
+  // Parsed from `git status --porcelain` when the agent skipped its closing
+  // envelope. Without these, automation.js#verifyAndCommit sees an empty
+  // manifest and refuses to commit by design (it won't `git add -A` blindly),
+  // so the worktree gets torn down with the agent's edits inside. DEVPA-227.
+  let filesModified = [];
+  let filesCreated = [];
   try {
     const branchOut = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8' });
     if (branchOut.status === 0) branch = branchOut.stdout.trim() || null;
   } catch { /* not a git dir */ }
   try {
-    const status = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
-    if (status.status === 0 && status.stdout.trim()) hasChanges = true;
+    const porcelain = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
+    if (porcelain.status === 0 && porcelain.stdout.trim()) {
+      hasChanges = true;
+      // Porcelain format: XY␣<path>, where XY is the two-char status. `??` is
+      // untracked (created); anything else with M/A/R/C in either column is
+      // modified-or-staged. Renames look like `R  old -> new` — take the new.
+      for (const raw of porcelain.stdout.split('\n')) {
+        if (raw.length < 4) continue;
+        const xy = raw.slice(0, 2);
+        const rest = raw.slice(3);
+        const path = rest.includes(' -> ') ? rest.split(' -> ').pop() : rest;
+        if (xy === '??' || xy[0] === 'A' || xy[1] === 'A') filesCreated.push(path);
+        else filesModified.push(path);
+      }
+    }
   } catch { /* ignore */ }
   try {
     // Commits ahead of the upstream tracking branch (or origin/main fallback).
@@ -111,8 +130,8 @@ function synthesizePiResult({ cwd, lastAssistantText, toolUseCount, exitCode }) 
     status,
     summary: `[pi-synthesized] ${summarySnippet}`,
     artifacts: {
-      files_created: [],
-      files_modified: [],
+      files_created: filesCreated,
+      files_modified: filesModified,
       commits,
       branch,
       tests_passed: false,
