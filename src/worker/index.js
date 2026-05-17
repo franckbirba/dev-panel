@@ -85,6 +85,7 @@ import { updateInstance } from '../server/workflow-instances.js';
 import { spawnGoose, shouldUseGoose } from './goose-driver.js';
 import { spawnMiniSwe, shouldUseMiniSwe } from './mini-swe-driver.js';
 import { spawnPi, shouldUsePi } from './pi-driver.js';
+import { spawnContainer, shouldUseContainer } from './container-driver.js';
 import { selectClaudeModel } from './select-claude-model.js';
 
 const require = createRequire(import.meta.url);
@@ -172,6 +173,12 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
     return spawnGoose({
       jobId, prompt, agentRole, cwd,
       activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    });
+  }
+  if (shouldUseContainer(agentRole)) {
+    return spawnContainer({
+      jobId, prompt, agentRole, cwd,
+      activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
     });
   }
   return new Promise((resolve, reject) => {
