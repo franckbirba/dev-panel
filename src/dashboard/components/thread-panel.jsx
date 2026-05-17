@@ -5,6 +5,9 @@ import { getAdminKey } from '@/lib/projects-store';
 import { IconClose, IconSend, IconArrowLeft } from './icons';
 import { CaptureMetaPanel, CaptureScreenshot, parseMessageMetadata } from './capture-meta-panel';
 
+// Import the ReactCanvas component
+import { ReactCanvas } from './react-canvas';
+
 function timeAgo(iso) {
   if (!iso) return '\u2014';
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -122,6 +125,23 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
         {messages.map((m, i) => {
           const meta = parseMessageMetadata(m.metadata);
+          
+          // Check if this message contains a react-canvas payload
+          let reactCanvasPayload = null;
+          if (meta && meta.parts) {
+            const lastPart = meta.parts[meta.parts.length - 1];
+            if (lastPart && lastPart.type === 'text') {
+              try {
+                const parsed = JSON.parse(lastPart.text);
+                if (parsed.type === 'react-canvas') {
+                  reactCanvasPayload = parsed;
+                }
+              } catch (e) {
+                // Not a JSON payload, ignore
+              }
+            }
+          }
+          
           return (
             <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
               style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s` }}>
@@ -130,6 +150,11 @@ export function ThreadPanel({ subject, apiUrl, apiKey, onClose }) {
                   <div className="text-[10px] font-mono uppercase tracking-wider opacity-50 mb-1">{ROLE_LABEL[m.role] || m.role}</div>
                 )}
                 <div className="whitespace-pre-wrap">{m.content}</div>
+                {reactCanvasPayload && (
+                  <div className="mt-3">
+                    <ReactCanvas payload={reactCanvasPayload} />
+                  </div>
+                )}
                 <CaptureScreenshot meta={meta} />
                 <CaptureMetaPanel meta={meta} />
                 <div className="text-[10px] opacity-40 mt-1.5 font-mono">{timeAgo(m.created_at)}</div>

@@ -146,12 +146,29 @@ function QueueCard({ payload, onAction }) {
   );
 }
 
-// Registry — widget surface only knows these three. Adding others later
-// (job-status, console-stream) is a follow-up; the schema admits them.
+function ReactCanvasCard({ payload }) {
+  // Simple preview for react-canvas in widget
+  return (
+    <div style={cardBoxStyle}>
+      <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, opacity: 0.8 }}>
+        {payload.filename || 'Component.tsx'}
+      </div>
+      <div style={{ marginTop: 4 }}>
+        React component preview (shown in dashboard)
+      </div>
+      <div style={{ marginTop: 6, opacity: 0.9 }}>
+        Bundle size: {payload.bundle_size ? (payload.bundle_size / 1024).toFixed(1) + 'kb' : 'N/A'}
+      </div>
+    </div>
+  );
+}
+
+// Registry — widget surface only knows these types.
 export const WIDGET_RENDERER_REGISTRY = {
   'error-halt': ErrorHaltCard,
   'inline-actions': InlineActionsCard,
   'queue-card': QueueCard,
+  'react-canvas': ReactCanvasCard,
 };
 
 export function RendererPayloadCard({ payload, registry = WIDGET_RENDERER_REGISTRY, onAction }) {
