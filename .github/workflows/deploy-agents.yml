@@ -188,6 +188,32 @@ jobs:
     if: needs.decide.outputs.mode == 'full'
     runs-on: [self-hosted, hetzner-agents]
     steps:
+      - name: Ensure deploy SSH key is installed (self-heal after wipe)
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          # scripts/deploy-agents.sh runs `ssh deploy@services-VPS` to pull
+          # secrets. After a host wipe (or first runner provision) the
+          # private key is missing — restore it from GH secrets so the
+          # workflow is self-healing instead of needing manual recovery.
+          # Runner unit runs as `deploy`; no sudo needed.
+          install -d -m 700 "$HOME/.ssh"
+          if [ ! -s "$HOME/.ssh/id_ed25519" ]; then
+            echo "==> installing deploy SSH key from VPS_SSH_KEY secret"
+            printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+            chmod 600 "$HOME/.ssh/id_ed25519"
+          else
+            echo "==> deploy SSH key already present, skipping install"
+          fi
+          # Pre-seed known_hosts for services-VPS so the first ssh doesn't
+          # prompt or fail StrictHostKeyChecking.
+          if ! ssh-keygen -F 77.42.46.87 >/dev/null 2>&1; then
+            ssh-keyscan -H 77.42.46.87 2>/dev/null >> "$HOME/.ssh/known_hosts"
+          fi
+          ssh -o BatchMode=yes -o ConnectTimeout=5 \
+            deploy@77.42.46.87 'echo ssh-ok'
+
       - name: Run scripts/deploy-agents.sh
         run: |
           set -euo pipefail
