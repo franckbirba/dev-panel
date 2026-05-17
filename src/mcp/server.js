@@ -540,9 +540,19 @@ server.tool(
     skills: z.array(z.string()).default([]).describe('Skill names to inject'),
     priority: z.enum(['p0', 'p1', 'p2', 'p3']).default('p2').describe('Job priority'),
     branch: z.string().optional().describe('Git branch name'),
-    source: z.enum(['telegram', 'dashboard', 'cron']).default('telegram')
+    source: z.enum(['telegram', 'dashboard', 'cron']).default('telegram'),
+    // DEVPA-228: caller-controlled context inheritance from a parent BullMQ job.
+    // Both fields are optional and default-absent — backwards compatible.
+    parent_job_id: z.string().optional().describe('BullMQ job id of the parent. Required when inherit_context is set.'),
+    inherit_context: z.object({
+      thread_context: z.boolean().optional().describe('Pull parent thread tail (last 10 messages on parent work_item).'),
+      files: z.array(z.string()).optional().describe('Relative paths under parent worktree to snapshot (≤20 files, ≤64KB each).'),
+      custom: z.record(z.string(), z.string()).optional().describe('Free-form key/value blobs the caller wants surfaced verbatim.'),
+      field_schema: z.boolean().optional().describe('Best-effort placeholder — surfaces a note until DEVPA-226 ships pr_merge_conflict harvesting.'),
+      conflict_diff: z.boolean().optional().describe('Forward-compat placeholder — pr_merge_conflict tool ships in DEVPA-226.')
+    }).optional().describe('Which slices of the parent job to inherit. Resolved against parent_job_id and rendered as a `## Parent context` block in the prompt.')
   },
-  async ({ agent, task_id, task_title, task_description, skills, priority, branch, source }) => {
+  async ({ agent, task_id, task_title, task_description, skills, priority, branch, source, parent_job_id, inherit_context }) => {
     // Guard: empty-payload dispatches (jobs 42, 44, 113, 114) waste a builder
     // run and get blocked immediately. Force Shelly to bring a real spec.
     const tid = (task_id || '').trim();
@@ -587,6 +597,14 @@ server.tool(
         isError: true
       };
     }
+    // DEVPA-228: resolve parent context if requested. Errors do not block the
+    // dispatch — they surface as `parent_context.error` in the prompt so the
+    // agent sees what was asked for and what failed.
+    let parent_context = null;
+    if (parent_job_id && inherit_context) {
+      const { resolveParentContext } = await import('../worker/parent-context.js');
+      parent_context = await resolveParentContext({ parent_job_id, inherit_context });
+    }
     try {
       const queue = getAgentsQueue();
       const job = await queue.add(`${agent}:${task_id}`, {
@@ -600,7 +618,8 @@ server.tool(
         skills,
         priority,
         source,
-        requested_by: 'shelly'
+        requested_by: 'shelly',
+        context: parent_context ? { parent_context } : undefined
       }, {
         priority: PRIORITY_MAP[priority] || 10,
         attempts: 3,
@@ -629,9 +648,18 @@ server.tool(
     title: z.string().optional(),
     description: z.string().optional(),
     workflow: z.enum(['work-item']).default('work-item'),
-    force: z.boolean().optional().default(false).describe('Cancel any active instances for this work_item_id before dispatching. Idempotent — no-op if nothing to cancel.')
+    force: z.boolean().optional().default(false).describe('Cancel any active instances for this work_item_id before dispatching. Idempotent — no-op if nothing to cancel.'),
+    // DEVPA-228: caller-controlled context inheritance from a parent BullMQ job.
+    parent_job_id: z.string().optional().describe('BullMQ job id of the parent. Required when inherit_context is set.'),
+    inherit_context: z.object({
+      thread_context: z.boolean().optional(),
+      files: z.array(z.string()).optional(),
+      custom: z.record(z.string(), z.string()).optional(),
+      field_schema: z.boolean().optional(),
+      conflict_diff: z.boolean().optional()
+    }).optional().describe('Which slices of the parent job to inherit. Rendered as `## Parent context` in the new job\'s prompt.')
   },
-  async ({ work_item_id, module_id, cycle_id, title, description, workflow, force }) => {
+  async ({ work_item_id, module_id, cycle_id, title, description, workflow, force, parent_job_id, inherit_context }) => {
     let resolved_id = work_item_id;
     let plane_project_id;
     let fetched_title;
@@ -691,6 +719,13 @@ server.tool(
       }
     }
 
+    // DEVPA-228: resolve parent context if requested. Pass through context.parent_context
+    // so the worker's prompt builder picks it up. Errors surface as a note in the rendered block.
+    let parent_context = null;
+    if (parent_job_id && inherit_context) {
+      const { resolveParentContext } = await import('../worker/parent-context.js');
+      parent_context = await resolveParentContext({ parent_job_id, inherit_context });
+    }
     const { enqueueWorkflowStart } = await import('../worker/dispatch.js');
     const out = await enqueueWorkflowStart({
       workflow,
@@ -698,7 +733,8 @@ server.tool(
       work_item: {
         title: title || fetched_title,
         description: description || fetched_description
-      }
+      },
+      context: parent_context ? { parent_context } : undefined
     });
     return {
       content: [{ type: 'text', text: JSON.stringify({

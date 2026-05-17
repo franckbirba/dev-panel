@@ -237,8 +237,10 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
 
     try {
       // Strip per-spawn fields from forwarded context (see comment on the
-      // forward-transition enqueue below for full rationale).
-      const { worktree_path: _wtPath, ...replanContext } = jobData.context || {};
+      // forward-transition enqueue below for full rationale). parent_context
+      // (DEVPA-228) is caller-controlled inheritance for the INITIAL dispatch
+      // only — engine-driven forwards must not re-inject it.
+      const { worktree_path: _wtPath, parent_context: _pc, ...replanContext } = jobData.context || {};
       await enqueue({
         agent: 'pm',
         workflow: 'replan',
@@ -284,7 +286,9 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
     // verifier in the next step inherited a path that prepareWorktree had
     // already reclaimed. Workflow-level fields (branch, default_branch,
     // project_root, github_issue_number, devpanel_ticket_id, etc.) propagate.
-    const { worktree_path, ...workflow_context } = jobData.context || {};
+    // parent_context (DEVPA-228) is caller-controlled inheritance for the
+    // INITIAL dispatch only — engine-driven forwards must not re-inject it.
+    const { worktree_path, parent_context, ...workflow_context } = jobData.context || {};
     await enqueue({
       agent: effective.next,
       workflow: flow.name,
