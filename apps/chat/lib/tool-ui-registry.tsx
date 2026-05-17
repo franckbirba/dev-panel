@@ -53,6 +53,7 @@ import {
 	type WorkflowInstance,
 	WorkflowInstancesCard,
 	WorkItemCard,
+	ArtifactReferenceCard,
 } from "@/components/devpanl";
 import {
 	type RendererPayload,

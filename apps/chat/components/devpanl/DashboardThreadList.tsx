@@ -37,6 +37,7 @@ export type DashboardThread = {
 };
 
 import { ActiveAgent, ActiveAgentsRail } from "./ActiveAgentsRail";
+import { FleetStatusSidebar } from "./FleetStatusSidebar";
 import { UserProfile } from "./UserProfile";
 
 export type WorkbenchView = "chat" | "engine" | "logs" | "shell";
@@ -192,15 +193,10 @@ export function DashboardThreadList({
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* Active agents rail — live fleet */}
-        {agents.length > 0 ? (
-          <SidebarGroup className="px-1.5 pt-1">
-            <SidebarGroupLabel className="pl-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-foreground-faint)]">
-              Active Agents
-            </SidebarGroupLabel>
-            <ActiveAgentsRail agents={agents} />
-          </SidebarGroup>
-        ) : null}
+        {/* Fleet status sidebar */}
+        <SidebarGroup className="px-1.5 pt-1">
+          <FleetStatusSidebar />
+        </SidebarGroup>
 
         {/* Thread history list */}
         <SidebarGroup className="px-1.5 pt-1">
