@@ -13,6 +13,21 @@ set -euo pipefail
 SERVICES_HOST="${SERVICES_HOST:-deploy@77.42.46.87}"
 AGENTS_HOST="${AGENTS_HOST:-hetzner-vps}"   # root@62.238.0.167
 
+# When this script runs on the agents host itself (e.g. via the self-hosted
+# GitHub runner inside .github/workflows/deploy-agents.yml), the `ssh
+# hetzner-vps` step below can't resolve its own hostname. Detect that and
+# run the heredoc body locally via `sudo bash -s` instead. Override with
+# AGENTS_LOCAL=1 / 0 if the detection misfires.
+if [ -z "${AGENTS_LOCAL:-}" ]; then
+  if [ -f /home/deploy/projects/dev-panel/.git/config ] \
+     && [ -d /home/deploy/.bun ] \
+     && command -v systemctl >/dev/null 2>&1; then
+    AGENTS_LOCAL=1
+  else
+    AGENTS_LOCAL=0
+  fi
+fi
+
 echo "==> fetching secrets from services (${SERVICES_HOST})"
 PG_PASS=$(ssh "$SERVICES_HOST" 'grep ^AFFINE_DB_PASSWORD= ~/dev-panel/.env.production | cut -d= -f2')
 ADMIN_KEY=$(ssh "$SERVICES_HOST" 'grep ^ADMIN_API_KEY= ~/dev-panel/.env.production | cut -d= -f2')
@@ -55,8 +70,14 @@ for v in PG_PASS ADMIN_KEY VOYAGE_KEY TG_TOKEN TG_CHAT GH_TOKEN PLANE_KEY PLANE_
   [ -n "${!v}" ] || { echo "missing secret: $v"; exit 1; }
 done
 
-echo "==> deploying to agents (${AGENTS_HOST})"
-ssh "$AGENTS_HOST" bash -s <<EOF
+if [ "$AGENTS_LOCAL" = "1" ]; then
+  echo "==> deploying to agents (local — detected on hetzner-vps)"
+  AGENTS_RUN=(sudo bash -s)
+else
+  echo "==> deploying to agents (${AGENTS_HOST})"
+  AGENTS_RUN=(ssh "$AGENTS_HOST" bash -s)
+fi
+"${AGENTS_RUN[@]}" <<EOF
 set -e
 # System deps — jq is required by Shelly's PreToolUse hook that scopes Read
 # to the telegram inbox. Without it every Read call fails.

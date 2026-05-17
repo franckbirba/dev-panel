@@ -132,9 +132,25 @@ jobs:
           git fetch --quiet origin main
           git reset --hard origin/main
 
-      - name: Restart shelly.service
+      - name: Restart active Shelly variant
         if: needs.decide.outputs.restart_shelly == 'true'
-        run: sudo systemctl restart shelly.service
+        run: |
+          set -euo pipefail
+          # Shelly runs as either shelly.service (Claude mode) or
+          # shelly-pi.service (Pi/Qwen3 mode). They are systemd Conflicts=,
+          # so exactly one is enabled at a time — the other is masked.
+          # Pick whichever is enabled rather than hardcoding the Claude
+          # variant; otherwise quick-refresh fails after a shelly-switch.sh
+          # flip.
+          for unit in shelly.service shelly-pi.service; do
+            if [ "$(sudo systemctl is-enabled "$unit" 2>/dev/null || true)" = "enabled" ]; then
+              echo "==> restarting $unit"
+              sudo systemctl restart "$unit"
+              exit 0
+            fi
+          done
+          echo "no enabled shelly unit found" >&2
+          exit 1
 
       - name: Restart devpanel-worker.service
         if: needs.decide.outputs.restart_worker == 'true'
