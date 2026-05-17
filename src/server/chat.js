@@ -3,6 +3,7 @@ import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
 import { makeTextScrubber } from './chat-text-scrubber.js';
 import { listMcpServers } from './db.js';
+import { compactIfNeeded } from './chat-compaction.js';
 
 // Default system prompt — nudges the LLM toward intent-shaped capability
 // tools (the ones in `src/capabilities/`) rather than fishing through the
@@ -100,12 +101,24 @@ export function mountChat(app) {
     try {
       const { messages, system, tools } = req.body ?? {};
       const mcpTools = await getMCPTools();
-      const { model } = resolveChatModel(req.get('x-devpanl-provider'));
+      const { model, provider } = resolveChatModel(req.get('x-devpanl-provider'));
+
+      // Compact older turns if the request is long enough to risk the
+      // context window. Returns a trimmed message list and a system-prompt
+      // addendum carrying the dense summary. Cheap no-op below threshold.
+      const { messages: compactedMessages, systemAddendum } = await compactIfNeeded({
+        messages: messages ?? [],
+        model,
+      });
+      const baseSystem = system ?? buildSystem(provider);
+      const finalSystem = systemAddendum
+        ? `${baseSystem}\n\n${systemAddendum}`
+        : baseSystem;
 
       const result = streamText({
         model,
-        messages: await convertToModelMessages(messages ?? []),
-        system: system ?? DEFAULT_SYSTEM,
+        messages: await convertToModelMessages(compactedMessages),
+        system: finalSystem,
         tools: { ...mcpTools },
         stopWhen: stepCountIs(8),
         experimental_transform: makeTextScrubber,
