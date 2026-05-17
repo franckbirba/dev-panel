@@ -192,7 +192,7 @@ chmod 600 /home/deploy/.mcp-shelly-pi.json
 # unescaped \$var would expand LOCALLY (where it's unset under set -u)
 # instead of on the remote. Backslash-escape every shell var so it
 # survives the heredoc and gets evaluated on hetzner-vps. Same convention
-# as the `for v in PG_PASS …` loop above (which uses indirect ${!v}).
+# as the \`for v in PG_PASS …\` loop above (which uses indirect \${!v}).
 # Discover extensions from the filesystem instead of hardcoding the list,
 # so adding a new pi-extensions/<name>/ doesn't require a deploy-script
 # edit. Same heredoc-escape pattern as elsewhere in this block.
@@ -222,7 +222,7 @@ install -o root -g root -m 0644 \
 
 # Systemd units (worker + shelly + watchdog + relay + daily-restart + pi fallback).
 # CRITICAL: shelly-switch.sh masks the off-mode unit by creating a symlink
-# /etc/systemd/system/<unit> → /dev/null. A naive `cp` would overwrite the
+# /etc/systemd/system/<unit> → /dev/null. A naive \`cp\` would overwrite the
 # symlink with a real file, un-masking the unit and letting it be started.
 # Inline check before each cp: skip if the destination is currently a
 # symlink to /dev/null (mask).
