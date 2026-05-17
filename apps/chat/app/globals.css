@@ -112,6 +112,16 @@
   --space-gutter:     16px;
   --container-max:    1440px;
   --focus-column:     800px;
+
+  /* Agent colors — from Stitch design bundle */
+  --color-agent-zeno:                 oklch(70% 0.15 285);
+  --color-agent-zeno-soft:            oklch(70% 0.15 285 / 0.2);
+  --color-agent-edms:                 oklch(75% 0.12 150);
+  --color-agent-edms-soft:            oklch(75% 0.12 150 / 0.2);
+  --color-agent-devpa:                oklch(72% 0.14 35);
+  --color-agent-devpa-soft:           oklch(72% 0.14 35 / 0.2);
+  --color-agent-task:                 oklch(68% 0.13 215);
+  --color-agent-task-soft:            oklch(68% 0.13 215 / 0.2);
 }
 
 @theme inline {

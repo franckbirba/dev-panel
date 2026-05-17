@@ -25,6 +25,7 @@ export {
 } from "./DashboardThreadList";
 export { ErrorHaltCard } from "./ErrorHaltCard";
 export { type FleetRow, FleetRowCard } from "./FleetRowCard";
+export { FleetStatusSidebar } from "./FleetStatusSidebar";
 export {
 	type GitHubIssue,
 	GitHubIssueCard,
