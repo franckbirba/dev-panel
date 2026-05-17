@@ -32,6 +32,7 @@ import {
   getOrCreateThread,
   listMessages,
   appendMessage,
+  copyMessagesIntoThread,
 } from './threads.js';
 import { upsertSubject } from './subjects.js';
 import { getProjectByName, getMasterDatabase } from './db.js';
@@ -385,6 +386,50 @@ export function mountDashboardChat(app) {
       });
     } catch (err) {
       console.error('[dashboard-chat] create thread failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/dashboard/chat/threads/:source_n/fork — create a new
+  // dashboard thread seeded with messages from an existing thread.
+  // Body: { from_message_id?: number } — copies messages whose id is
+  // <= from_message_id; if omitted, copies the whole source thread.
+  // Returns the same shape as the create-thread endpoint above so the
+  // frontend can switch into the new thread the same way.
+  router.post('/chat/threads/:source_n/fork', requireForwardedUser, (req, res) => {
+    try {
+      const email = req.user.email;
+      const sourceN = Math.max(1, parseInt(req.params.source_n, 10) || 1);
+      const sourceSubject = ensureDashboardThreadSubject(email, sourceN);
+      const source = getOrCreateThread('dashboard', sourceSubject);
+
+      const upToMessageIdRaw = req.body?.from_message_id;
+      const upToMessageId = upToMessageIdRaw == null
+        ? null
+        : Math.max(0, parseInt(upToMessageIdRaw, 10) || 0);
+
+      // Allocate the next n the same way the create-thread endpoint
+      // does — fork is just "a new thread seeded with a prefix".
+      const newN = nextThreadN(email);
+      const newSubject = ensureDashboardThreadSubject(email, newN);
+      const target = getOrCreateThread('dashboard', newSubject);
+
+      const copied = copyMessagesIntoThread({
+        source_thread_id: source.thread_id,
+        target_thread_id: target.thread_id,
+        upToMessageId,
+      });
+
+      res.json({
+        thread_id: target.thread_id,
+        subject_id: newSubject,
+        n: newN,
+        forked_from: { thread_id: source.thread_id, n: sourceN, from_message_id: upToMessageId },
+        copied_messages: copied,
+        created_at: target.created_at,
+      });
+    } catch (err) {
+      console.error('[dashboard-chat] fork thread failed:', err);
       res.status(500).json({ error: err.message });
     }
   });
