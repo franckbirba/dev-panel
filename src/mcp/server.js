@@ -795,6 +795,26 @@ server.tool(
 );
 
 server.tool(
+  'pr_merge_conflict',
+  'DEVPA-227: return 3-way merge conflict data for a PR (`<owner>/<repo>#<number>`). Resolves the repo via the projects table, attempts a throwaway `git merge --no-commit` in a per-repo `.devpanel-worktrees/` worktree, parses conflict markers, and returns the structured payload the dashboard MergeArtifact UI consumes. Result cached 60s per (pr_id, head_sha).',
+  {
+    pr_id: z.string().describe('Format: <owner>/<repo>#<number> — e.g. franckbirba/dev-panel#278')
+  },
+  async ({ pr_id }) => {
+    try {
+      const { prMergeConflict } = await import('./pr-merge-conflict.js');
+      const payload = await prMergeConflict({ pr_id });
+      return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: false, code: err.code || 'unknown', error: err.message }, null, 2) }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
   'plane_list_attachments',
   'List file attachments on a Plane work item. Accepts a UUID or a sequence like DEVPA-93. Returns id + name + type + size so you can pick one to download.',
   {
