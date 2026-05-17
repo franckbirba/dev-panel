@@ -83,8 +83,13 @@ set -e
 # to the telegram inbox. Without it every Read call fails.
 command -v jq >/dev/null 2>&1 || apt-get install -y jq >/dev/null
 
-# Code + deps (as deploy user)
-su - deploy -c 'cd /home/deploy/projects/dev-panel && git pull --ff-only'
+# Code + deps (as deploy user). Use fetch+reset instead of pull --ff-only:
+# the deploy user's checkout sometimes ends up tracking a feature branch
+# that was deleted upstream after a squash merge (PR #281's
+# feat/container-driver-devpa-230 was the most recent), which breaks
+# \`git pull --ff-only\`. Reset is idempotent and matches what the
+# outer GitHub Actions step already does before invoking this script.
+su - deploy -c 'cd /home/deploy/projects/dev-panel && git fetch --quiet origin main && git reset --hard origin/main'
 su - deploy -c 'cd /home/deploy/projects/dev-panel && npm install --production --silent'
 
 # Secrets
