@@ -6,17 +6,30 @@
 // Same contract as spawnPi/spawnMiniSwe: returns Promise<string> resolving
 // with the final result text on exit 0, rejects with stderr tail on non-zero.
 //
-// Gate: shouldUseContainer(agentRole) — DRIVER_<AGENT>=container or
-// DRIVER_DEFAULT=container. Per-role overrides (claude/pi/goose/mini) and
-// FORCE_TIER=opus still win.
+// Two orthogonal axes:
+//   - WHETHER to containerize: shouldUseContainer(agentRole) — gated on
+//     DRIVER_<AGENT>=container or DRIVER_DEFAULT=container.
+//   - WHICH CLI runs inside: CONTAINER_INNER_DRIVER=claude|pi (default
+//     claude). pi inside the container reuses the same selectPiModel +
+//     readSoul + extension surface as the native pi-driver, but the
+//     pi-extensions tree is bind-mounted ro from the host.
 
 import { spawn } from 'child_process';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
 import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+import { readSoul } from './prompt-builder.js';
+import { selectPiModel } from './select-pi-model.js';
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'devpanel/worker:latest';
+const INNER_DRIVER = (process.env.CONTAINER_INNER_DRIVER || 'claude').toLowerCase();
+
+// Mirror pi-driver.js — keep in sync if extensions change.
+const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
+const PI_EXTENSION_NAMES = [
+  'mcp-bridge', 'work-items', 'github', 'bash', 'loop-guard', 'create-file',
+];
 
 const ENV_PASSTHROUGH = [
   'REDIS_HOST', 'REDIS_PORT', 'PG_HOST', 'PG_PORT', 'PG_USER', 'PG_PASSWORD', 'PG_DATABASE',
@@ -36,11 +49,53 @@ export function shouldUseContainer(agentRole) {
   return process.env.DRIVER_DEFAULT === 'container';
 }
 
+function buildClaudeArgv(prompt) {
+  return [
+    'claude', '-p', prompt,
+    '--strict-mcp-config',
+    '--mcp-config', '/etc/devpanel/mcp.json',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+  ];
+}
+
+function buildPiArgv(prompt, agentRole) {
+  const selected = selectPiModel(agentRole);
+  if (!selected) {
+    throw new Error(`container-driver: CONTAINER_INNER_DRIVER=pi but no model selected for role "${agentRole}" — set DRIVER_${agentRole.toUpperCase()}_PI_MODEL or FORCE_PI_MODEL`);
+  }
+  const { provider, model } = selected;
+  const soul = readSoul(agentRole);
+  // Pi extensions are bind-mounted at /opt/pi-extensions inside the container
+  // (see spawnContainer below). Same order + flags as src/worker/pi-driver.js
+  // so the in-container pi behaves identically to the native one.
+  const extensionFlags = PI_EXTENSION_NAMES.flatMap(
+    name => ['--extension', `/opt/pi-extensions/${name}`],
+  );
+  return [
+    'pi',
+    '--provider', provider,
+    '--model', model,
+    '--mode', 'json',
+    '--no-session',
+    '--no-context-files',
+    '--no-skills',
+    '--no-prompt-templates',
+    '--tools', PI_BUILTIN_ALLOWLIST,
+    ...extensionFlags,
+    '--append-system-prompt', soul,
+    '-p', prompt,
+  ];
+}
+
 export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, activeProcesses, agentLogDir, meta = {} }) {
   return new Promise((resolve, reject) => {
     const containerName = `agent-${jobId}`;
     const mcpConfigHost = process.env.WORKER_MCP_CONFIG
       || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
+    const piExtensionsHost = process.env.PI_EXTENSIONS_ROOT
+      || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
 
     const dockerArgs = [
       'run', '--rm', '-i',
@@ -54,6 +109,15 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       '-e', 'WORKER_MCP_CONFIG=/etc/devpanel/mcp.json',
     ];
 
+    if (INNER_DRIVER === 'pi') {
+      // pi reads PI_MCP_CONFIG to know which mcp.json mcp-bridge should
+      // load. Inside the container that's the same file as WORKER_MCP_CONFIG.
+      dockerArgs.push(
+        '-v', `${piExtensionsHost}:/opt/pi-extensions:ro`,
+        '-e', 'PI_MCP_CONFIG=/etc/devpanel/mcp.json',
+      );
+    }
+
     if (meta.work_item_id) dockerArgs.push('-e', `WORK_ITEM_ID=${meta.work_item_id}`);
     if (meta.workflow_name) dockerArgs.push('-e', `WORKFLOW_NAME=${meta.workflow_name}`);
 
@@ -64,16 +128,16 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
     }
 
     dockerArgs.push(CONTAINER_IMAGE);
-    // The image's entrypoint is the claude CLI; stdin carries the prompt so
-    // we don't blow shell arg length on long prompts.
-    dockerArgs.push(
-      'claude', '-p', prompt,
-      '--strict-mcp-config',
-      '--mcp-config', '/etc/devpanel/mcp.json',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--dangerously-skip-permissions',
-    );
+
+    let innerArgv;
+    try {
+      innerArgv = INNER_DRIVER === 'pi'
+        ? buildPiArgv(prompt, agentRole)
+        : buildClaudeArgv(prompt);
+    } catch (err) {
+      return reject(err);
+    }
+    dockerArgs.push(...innerArgv);
 
     const proc = spawn('docker', dockerArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -108,8 +172,6 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       if (code === 0) {
         resolve(getFinalResultText(events));
       } else {
-        // Make sure no zombie container survives a crash. `docker rm -f` is
-        // a no-op if the container already exited cleanly.
         try { spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' }); } catch { /* ignore */ }
         reject(new Error(`container ${containerName} exited with code ${code}\nstderr: ${stderrTail.slice(-1000)}`));
       }
