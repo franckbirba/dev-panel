@@ -37,13 +37,99 @@
 //   - writes raw stderr to storage/agent-logs/<job>.err.log
 //   - persists translated events through appendEvent (same shape as Claude's
 //     stream-json, via pi-stream-shim)
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
-import { readSoul } from './prompt-builder.js';
+import { readSoul, parseResult } from './prompt-builder.js';
 import { selectPiModel } from './select-pi-model.js';
 import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
+
+// Pi can't be told to emit structured JSON via a CLI flag (no
+// `--response-format json_schema` on pi 0.74) the way goose can via DeepInfra's
+// OpenAI-compat `response.json_schema`. The role's SOUL/prompt asks Qwen3 to
+// close with the parseResult-shaped JSON object on its last line, but Qwen3
+// drops that ~70% of the time on long runs — observed failure shapes:
+//
+//   - trailing prose with no JSON at all
+//   - hallucinated `<tool_call>...</tool_call>` XML in the answer
+//     (caught on job 4771 — last assistant text was literally a partial
+//     tool-call snippet with no closing tag, much less the JSON envelope)
+//   - JSON cut mid-object by Pi's per-message token cap
+//
+// The defensive fix below mirrors mini-swe-driver's synthesizeResult: on a
+// successful Pi exit, if parseResult fails on the last assistant text, we
+// synthesize a parseResult-shaped payload from observable signals (git diff
+// in cwd, tool-use count, last assistant text as summary) and resolve with
+// that wrapped in fences so prompt-builder's regex finds it.
+//
+// The verifier in automation.js (verifyAndCommit) still runs `git diff` and
+// downgrades to blocked if no real change materialized — so a synthesized
+// status=done from a no-op Pi run still won't ship a fake PR.
+function synthesizePiResult({ cwd, lastAssistantText, toolUseCount, exitCode }) {
+  let branch = null;
+  let hasChanges = false;
+  let commits = [];
+  try {
+    const branchOut = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8' });
+    if (branchOut.status === 0) branch = branchOut.stdout.trim() || null;
+  } catch { /* not a git dir */ }
+  try {
+    const status = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
+    if (status.status === 0 && status.stdout.trim()) hasChanges = true;
+  } catch { /* ignore */ }
+  try {
+    // Commits ahead of the upstream tracking branch (or origin/main fallback).
+    const log = spawnSync(
+      'git',
+      ['log', '--pretty=%H', '-n', '5', '@{upstream}..HEAD'],
+      { cwd, encoding: 'utf8' }
+    );
+    if (log.status === 0 && log.stdout.trim()) {
+      commits = log.stdout.trim().split('\n').filter(Boolean);
+      hasChanges = true;
+    } else {
+      const log2 = spawnSync(
+        'git',
+        ['log', '--pretty=%H', '-n', '5', 'origin/main..HEAD'],
+        { cwd, encoding: 'utf8' }
+      );
+      if (log2.status === 0 && log2.stdout.trim()) {
+        commits = log2.stdout.trim().split('\n').filter(Boolean);
+        hasChanges = true;
+      }
+    }
+  } catch { /* ignore */ }
+
+  const status = exitCode === 0 && (hasChanges || toolUseCount > 0) ? 'done' : 'blocked';
+  const summaryText = (lastAssistantText || '').trim();
+  const summarySnippet = summaryText
+    ? summaryText.slice(-1200).replace(/\s+/g, ' ').trim()
+    : `Pi exited ${exitCode} with ${toolUseCount} tool call(s) — no closing JSON emitted`;
+
+  return {
+    status,
+    summary: `[pi-synthesized] ${summarySnippet}`,
+    artifacts: {
+      files_created: [],
+      files_modified: [],
+      commits,
+      branch,
+      tests_passed: false,
+      pr_url: null,
+    },
+    handoff: { next_agent: null, reason: '' },
+    memory_writes_count: 0,
+    blockers: status === 'blocked'
+      ? ['Pi emitted no closing JSON envelope; result synthesized from git state. Review needed.']
+      : [],
+    issues_found: [],
+    _harness: 'pi',
+    _synthesized: true,
+    _tool_use_count: toolUseCount,
+    _exit_code: exitCode,
+  };
+}
 
 const DEFAULT_PI_BIN = process.env.PI_BIN
   || join(process.env.HOME || '/home/deploy', '.npm-global/bin/pi');
@@ -172,6 +258,9 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
     // Track the last assistant text we saw — we need it to extract the
     // parseResult JSON after agent_end.
     let lastAssistantText = '';
+    // Count tool_use events so synthesizePiResult can distinguish "Pi did
+    // real work but forgot the closing JSON" from "Pi did nothing".
+    let toolUseCount = 0;
 
     // Hook the shim: each translated event gets persisted through appendEvent.
     const shim = createPiStreamShim({
@@ -197,6 +286,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
           const textBlock = (event.message?.content || []).find(c => c?.type === 'text');
           if (textBlock?.text) lastAssistantText = textBlock.text;
         }
+        if (event_type === 'tool_use') toolUseCount++;
         appendEvent({
           job_id: String(jobId),
           seq: seq++,
@@ -248,10 +338,24 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
       });
 
       if (code === 0) {
-        // Resolve with the last assistant text — upstream parseResult will
-        // recover the trailing JSON object the role's SOUL instructed it to
-        // emit, same contract as the Claude path.
-        resolve(lastAssistantText || stdoutBuf);
+        // Try parseResult on the last assistant text first — when Qwen3
+        // actually emitted the closing JSON, this is the same contract as
+        // the Claude path. When it didn't (most long runs), fall back to a
+        // synthesized payload built from observable git state + tool-use
+        // count. verifyAndCommit in automation.js still gates status=done
+        // on a real git diff, so a synthesized envelope can't ship a fake PR.
+        const parsed = parseResult(lastAssistantText || '');
+        if (parsed.ok) {
+          resolve(lastAssistantText);
+        } else {
+          const synthesized = synthesizePiResult({
+            cwd,
+            lastAssistantText,
+            toolUseCount,
+            exitCode: code,
+          });
+          resolve('```json\n' + JSON.stringify(synthesized) + '\n```');
+        }
       } else {
         reject(new Error(`pi exited with code ${code}\nstderr: ${stderrTail.slice(-1000)}`));
       }
