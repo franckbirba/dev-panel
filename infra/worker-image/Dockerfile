@@ -26,6 +26,7 @@ RUN apt-get update \
         git \
         ca-certificates \
         curl \
+        gnupg \
         python3 \
         python3-pip \
         pipx \
