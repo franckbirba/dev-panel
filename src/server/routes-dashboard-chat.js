@@ -27,6 +27,7 @@ import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp';
 import { streamText, stepCountIs, convertToModelMessages } from 'ai';
 import { resolveChatModel } from './chat-providers.js';
 import { makeTextScrubber } from './chat-text-scrubber.js';
+import { gateToolWithPermission } from './chat-permissions.js';
 import {
   getOrCreateThread,
   listMessages,
@@ -276,10 +277,14 @@ async function getMCPTools() {
   await Promise.all(tasks);
 
   const merged = { ...devpanelTools, ...externalTools };
+  // Apply permission gate first (so the gate runs *before* renderer
+  // validation — the gate's inline-actions payload is itself a valid
+  // renderer shape, so it passes through validation unchanged), then
+  // wrap with renderer-payload validation as before.
   cachedMCPTools = Object.fromEntries(
     Object.entries(merged).map(([name, tool]) => [
       name,
-      wrapToolWithRendererValidation(name, tool),
+      wrapToolWithRendererValidation(name, gateToolWithPermission(name, tool)),
     ]),
   );
   console.log(
