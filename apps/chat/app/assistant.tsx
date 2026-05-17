@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   useChatRuntime,
@@ -26,9 +26,15 @@ import {
   WorkbenchLogs,
   WorkbenchShell,
   type WorkbenchView,
-  UserProfile,
 } from "@/components/devpanl";
 import { ToolUIRegistry } from "@/lib/tool-ui-registry";
+import {
+  dashboardThreadListAdapter,
+  loadThreadHistory,
+  remoteIdFromN,
+  nFromRemoteId,
+  apiPathForRemoteId,
+} from "@/lib/thread-list-adapter";
 import {
   Sparkles,
   Cpu,
@@ -185,12 +191,22 @@ function useWorkbenchMetrics() {
   return metrics;
 }
 
+function useThreadRuntime(remoteId: string, seedMessages: HistoryMessage[]) {
+  return useChatRuntime({
+    transport: new AssistantChatTransport({
+      api: apiPathForRemoteId(remoteId),
+      credentials: "include",
+    }),
+    messages: seedMessages.length > 0 ? seedMessages : undefined,
+  });
+}
+
 function ThreadView({
-  n,
+  remoteId,
   usage,
   metrics,
 }: {
-  n: number;
+  remoteId: string;
   usage: UsageSnapshot;
   metrics: ReturnType<typeof useWorkbenchMetrics>;
 }) {
@@ -201,13 +217,10 @@ function ThreadView({
     let cancelled = false;
     setHistoryLoaded(false);
     setSeedMessages([]);
-    fetch(`api/dashboard/chat/history?n=${n}`, { credentials: "include" })
-      .then(async (r) => (r.ok ? r.json() : null))
-      .then((data) => {
+    loadThreadHistory(remoteId)
+      .then(({ messages }) => {
         if (cancelled) return;
-        if (data?.messages?.length) {
-          setSeedMessages(data.messages as HistoryMessage[]);
-        }
+        setSeedMessages(messages);
         setHistoryLoaded(true);
       })
       .catch(() => {
@@ -216,21 +229,15 @@ function ThreadView({
     return () => {
       cancelled = true;
     };
-  }, [n]);
+  }, [remoteId]);
 
-  const runtime = useChatRuntime({
-    transport: new AssistantChatTransport({
-      api: `api/dashboard/chat/turn?n=${n}`,
-      credentials: "include",
-    }),
-    messages: seedMessages.length > 0 ? seedMessages : undefined,
-  });
+  const runtime = useThreadRuntime(remoteId, seedMessages);
 
   if (!historyLoaded) {
     return (
       <div className="flex h-dvh flex-1 items-center justify-center">
         <p className="font-mono text-[11px] text-[var(--color-foreground-faint)]">
-          loading thread #{n}…
+          loading thread #{nFromRemoteId(remoteId)}…
         </p>
       </div>
     );
@@ -311,7 +318,7 @@ export const Assistant = () => {
   const [usage] = useState<UsageSnapshot>(INITIAL_USAGE);
   const [threads, setThreads] = useState<DashboardThread[]>([]);
   const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
-  const [activeN, setActiveN] = useState<number>(1);
+  const [activeRemoteId, setActiveRemoteId] = useState<string>(remoteIdFromN(1));
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeView, setActiveView] = useState<WorkbenchView>("chat");
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -328,18 +335,23 @@ export const Assistant = () => {
 
   const metrics = useWorkbenchMetrics();
 
-  async function refreshThreads() {
+  const refreshThreads = useCallback(async () => {
     try {
-      const r = await fetch("api/dashboard/chat/threads", {
-        credentials: "include",
+      const list = await dashboardThreadListAdapter.list();
+      const threadList: DashboardThread[] = list.threads.map((t) => {
+        const n = nFromRemoteId(t.remoteId);
+        return {
+          thread_id: t.remoteId,
+          subject_id: t.remoteId,
+          n,
+          title: t.title,
+        } as DashboardThread;
       });
-      if (!r.ok) return;
-      const data = await r.json();
-      setThreads(data.threads ?? []);
+      setThreads(threadList);
     } catch {
       /* ignore */
     }
-  }
+  }, []);
 
   async function refreshFleet() {
     try {
@@ -366,7 +378,7 @@ export const Assistant = () => {
     refreshFleet();
     const timer = setInterval(refreshFleet, 10000);
     return () => clearInterval(timer);
-  }, []);
+  }, [refreshThreads]);
 
   useEffect(() => {
     function onOpenPalette() {
@@ -379,19 +391,22 @@ export const Assistant = () => {
 
   async function createThread() {
     try {
-      const r = await fetch("api/dashboard/chat/threads", {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!r.ok) return;
-      const data = await r.json();
+      const init = await dashboardThreadListAdapter.initialize("");
       await refreshThreads();
-      if (typeof data.n === "number") setActiveN(data.n);
+      setActiveRemoteId(init.remoteId);
       setActiveView("chat");
     } catch {
       /* ignore */
     }
   }
+
+  const activeN = useMemo(() => {
+    try {
+      return nFromRemoteId(activeRemoteId);
+    } catch {
+      return 1;
+    }
+  }, [activeRemoteId]);
 
   if (!threadsLoaded) {
     return (
@@ -405,73 +420,73 @@ export const Assistant = () => {
 
   return (
     <SidebarProvider>
-      <div className="flex h-dvh w-full bg-[var(--color-background)] pr-0.5">
-        <DashboardThreadList
-          threads={threads}
-          activeN={activeN}
-          onSelect={(n) => {
-            setActiveN(n);
-            setActiveView("chat");
-          }}
-          onCreate={createThread}
-          agents={activeAgents}
-          activeView={activeView}
-          onViewChange={setActiveView}
-          onOpenSettings={() => openSettings()}
-        />
-
-        <SidebarInset className="bg-[var(--color-background)]">
-          <StitchHeader
+        <div className="flex h-dvh w-full bg-[var(--color-background)] pr-0.5">
+          <DashboardThreadList
+            threads={threads}
+            activeN={activeN}
+            onSelect={(n) => {
+              setActiveRemoteId(remoteIdFromN(n));
+              setActiveView("chat");
+            }}
+            onCreate={createThread}
+            agents={activeAgents}
             activeView={activeView}
             onViewChange={setActiveView}
-            threadN={activeView === "chat" ? activeN : undefined}
-            providerId={providerId}
-            setProviderId={setProviderId}
+            onOpenSettings={() => openSettings()}
           />
 
-          {activeView === "chat" ? (
-            <ThreadView
-              key={activeN}
-              n={activeN}
-              usage={usage}
-              metrics={metrics}
+          <SidebarInset className="bg-[var(--color-background)]">
+            <StitchHeader
+              activeView={activeView}
+              onViewChange={setActiveView}
+              threadN={activeView === "chat" ? activeN : undefined}
+              providerId={providerId}
+              setProviderId={setProviderId}
             />
-          ) : activeView === "engine" ? (
-            <WorkbenchEngine
-              onTailAgent={(jobId) => {
-                setTailJobId(jobId);
-                setActiveView("logs");
-              }}
-            />
-          ) : activeView === "shell" ? (
-            <WorkbenchShell />
-          ) : (
-            <WorkbenchLogs initialAgentJobId={tailJobId} />
-          )}
-        </SidebarInset>
 
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          threads={threads}
-          onSelectThread={(n) => {
-            setActiveN(n);
-            setActiveView("chat");
-          }}
-          onCreate={createThread}
-          onNavigate={(v) => setActiveView(v)}
-          onOpenSettings={(tab) => {
-            setPaletteOpen(false);
-            openSettings(tab);
-          }}
-        />
+            {activeView === "chat" ? (
+              <ThreadView
+                key={activeRemoteId}
+                remoteId={activeRemoteId}
+                usage={usage}
+                metrics={metrics}
+              />
+            ) : activeView === "engine" ? (
+              <WorkbenchEngine
+                onTailAgent={(jobId) => {
+                  setTailJobId(jobId);
+                  setActiveView("logs");
+                }}
+              />
+            ) : activeView === "shell" ? (
+              <WorkbenchShell />
+            ) : (
+              <WorkbenchLogs initialAgentJobId={tailJobId} />
+            )}
+          </SidebarInset>
 
-        <SettingsPanel
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          initialTab={settingsTab}
-        />
-      </div>
-    </SidebarProvider>
+          <CommandPalette
+            open={paletteOpen}
+            onOpenChange={setPaletteOpen}
+            threads={threads}
+            onSelectThread={(n) => {
+              setActiveRemoteId(remoteIdFromN(n));
+              setActiveView("chat");
+            }}
+            onCreate={createThread}
+            onNavigate={(v) => setActiveView(v)}
+            onOpenSettings={(tab) => {
+              setPaletteOpen(false);
+              openSettings(tab);
+            }}
+          />
+
+          <SettingsPanel
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            initialTab={settingsTab}
+          />
+        </div>
+      </SidebarProvider>
   );
 };
