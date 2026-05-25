@@ -34,6 +34,7 @@ import { tmpdir, homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { parseResult, readSoul } from './prompt-builder.js';
+import { isHardTier } from './tier-config.js';
 
 const DEFAULT_PROVIDER = 'openai';
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1/openai';
@@ -405,13 +406,13 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
 }
 
 // Hard-tier roles require Claude Opus; never fall through to goose by default.
-const HARD_TIER_ROLES = new Set(['reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator']);
-
+// Role list lives in tiers.yaml (see tier-config.js) — Gap #4 deduped this
+// from the inline Set it used to maintain.
 export function shouldUseGoose(agentRole) {
   if (process.env.FORCE_TIER === 'opus') return false;
   const envKey = `DRIVER_${agentRole.toUpperCase().replace(/-/g, '_')}`;
   if (process.env[envKey] === 'goose') return true;
   if (process.env[envKey] === 'claude') return false;
-  if (HARD_TIER_ROLES.has(agentRole)) return false;
+  if (isHardTier(agentRole)) return false;
   return process.env.DRIVER_DEFAULT === 'goose';
 }

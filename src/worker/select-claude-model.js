@@ -7,12 +7,8 @@
 // SAME harness. If Haiku holds, the harness is what carries the studio — and
 // Phase 2 (claw, the model-agnostic harness) ships with empirical confidence.
 
-const CHEAP_TIER_ROLES = new Set([
-  'builder', 'designer', 'pm'
-]);
-const HARD_TIER_ROLES = new Set([
-  'reviewer', 'qa', 'architect', 'deploy', 'merge-coordinator'
-]);
+import { isCheapTier, isHardTier } from './tier-config.js';
+
 const MODEL_ALIASES = {
   opus:   'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-6',
@@ -34,7 +30,7 @@ export function selectClaudeModel(agentRole, env = process.env) {
   const pinned = env[envKey];
   if (pinned) return MODEL_ALIASES[pinned] || pinned;
 
-  if (CHEAP_TIER_ROLES.has(agentRole)) return MODEL_ALIASES.haiku;
-  if (HARD_TIER_ROLES.has(agentRole))  return MODEL_ALIASES.opus;
+  if (isCheapTier(agentRole)) return MODEL_ALIASES.haiku;
+  if (isHardTier(agentRole))  return MODEL_ALIASES.opus;
   return null;
 }
