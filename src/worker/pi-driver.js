@@ -298,6 +298,11 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
           }
           if (event_type === 'user' && parts.some(p => p?.type === 'tool_result')) {
             event_type = 'tool_result';
+            // TODO Gap #1 (2026-05-25): mirror the Claude branch — set
+            // event_subtype to 'error' if any tool_result has is_error: true,
+            // increment a local toolErrorCount, and emit the synthetic
+            // tool_error_threshold event at the configured threshold so the
+            // tool_errors_excessive predicate works for Pi runs too.
           }
         }
         // Capture last assistant text for the post-run JSON extraction.

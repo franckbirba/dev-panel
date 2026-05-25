@@ -117,6 +117,40 @@ describe('classifyEvent', () => {
     expect(classifyEvent(plain).event_type).toBe('user');
   });
 
+  // Gap #1 (2026-05-25): subtype 'error' vs 'ok' for tool_result events lets
+  // the worker count tool failures and feed the tool_errors_excessive predicate.
+  it('classifies tool_result with is_error:true as subtype "error"', () => {
+    const event = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: '429 Too Many', is_error: true }] }
+    };
+    expect(classifyEvent(event)).toEqual({ event_type: 'tool_result', event_subtype: 'error' });
+  });
+
+  it('classifies tool_result without is_error as subtype "ok"', () => {
+    const noField = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'done' }] }
+    };
+    const explicitFalse = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'done', is_error: false }] }
+    };
+    expect(classifyEvent(noField)).toEqual({ event_type: 'tool_result', event_subtype: 'ok' });
+    expect(classifyEvent(explicitFalse)).toEqual({ event_type: 'tool_result', event_subtype: 'ok' });
+  });
+
+  it('classifies tool_result as error if ANY result in the user event has is_error:true', () => {
+    const event = {
+      type: 'user',
+      message: { content: [
+        { type: 'tool_result', tool_use_id: 'a', content: 'ok' },
+        { type: 'tool_result', tool_use_id: 'b', content: 'boom', is_error: true }
+      ] }
+    };
+    expect(classifyEvent(event).event_subtype).toBe('error');
+  });
+
   it('falls back to unknown for missing type', () => {
     expect(classifyEvent({}).event_type).toBe('unknown');
     expect(classifyEvent(null).event_type).toBe('unknown');

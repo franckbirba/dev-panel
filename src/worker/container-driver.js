@@ -146,6 +146,11 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
     activeProcesses.set(jobId, { process: proc, startedAt: Date.now(), containerName });
 
     const events = [];
+    // TODO Gap #1 (2026-05-25): mirror src/worker/index.js spawnAgent's
+    // tool-error counter + threshold synthetic event here so containerized
+    // runs feed the `tool_errors_excessive` predicate. classifyEvent already
+    // tags subtype 'error' vs 'ok' on tool_result events — only the counting
+    // and threshold logic is missing on this path.
     const parser = createStreamParser(({ seq, event }) => {
       events.push(event);
       const { event_type, event_subtype } = classifyEvent(event);

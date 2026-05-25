@@ -233,6 +233,15 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
     activeProcesses.set(jobId, { process: proc, startedAt: Date.now() });
 
     const events = [];
+    // Gap #1 (2026-05-25): tool-error feedback loop. Count tool_result errors
+    // streamed by the agent. When the count crosses WORKER_TOOL_ERROR_THRESHOLD
+    // (default 5), emit one synthetic system event so workflows can react via
+    // the `tool_errors_excessive` predicate. Final count is attached to the
+    // resolved result so predicates can read it without DB lookup.
+    const TOOL_ERR_THRESHOLD = parseInt(process.env.WORKER_TOOL_ERROR_THRESHOLD || '5', 10);
+    let toolErrorCount = 0;
+    let toolErrorThresholdEmitted = false;
+    let syntheticSeq = 1_000_000_000; // far above natural stream seqs
     const parser = createStreamParser(({ seq, event }) => {
       events.push(event);
       const { event_type, event_subtype } = classifyEvent(event);
@@ -242,6 +251,26 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
       // a transient pg hiccup shouldn't kill an agent mid-run.
       appendEvent({ job_id: String(jobId), seq, event_type, event_subtype, payload: event })
         .catch(err => console.error('[worker] appendEvent failed', seq, err.message));
+
+      if (event_type === 'tool_result' && event_subtype === 'error') {
+        toolErrorCount++;
+        if (!toolErrorThresholdEmitted && toolErrorCount >= TOOL_ERR_THRESHOLD) {
+          toolErrorThresholdEmitted = true;
+          const payload = {
+            count: toolErrorCount,
+            threshold: TOOL_ERR_THRESHOLD,
+            jobId: String(jobId),
+            agentRole
+          };
+          appendEvent({
+            job_id: String(jobId),
+            seq: syntheticSeq++,
+            event_type: 'system',
+            event_subtype: 'tool_error_threshold',
+            payload
+          }).catch(err => console.error('[worker] tool_error_threshold appendEvent failed', err.message));
+        }
+      }
     });
 
     const errLogPath = join(AGENT_LOG_DIR, `${jobId}.err.log`);
@@ -261,7 +290,10 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
       errStream.end();
       broadcastDone(String(jobId), { exit_code: code, events: events.length });
       if (code === 0) {
-        resolve(getFinalResultText(events));
+        // Gap #1: return text + toolErrorCount. The caller normalizes
+        // (drivers other than Claude still resolve a string) and stashes
+        // the count on parsed.data for the `tool_errors_excessive` predicate.
+        resolve({ output: getFinalResultText(events), toolErrorCount });
       } else {
         reject(new Error(`claude -p exited with code ${code}\nstderr: ${stderrTail.slice(-1000)}`));
       }
@@ -400,7 +432,7 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // resolved repoRoot — non-coding agents (pm/architect/designer) on
     // cross-project work still need to be IN the target repo so any tools
     // that shell out (cat, grep) find the right files.
-    const output = await spawnAgent(
+    const spawnResult = await spawnAgent(
       jobData.job_id,
       prompt,
       jobData.agent,
@@ -410,6 +442,13 @@ const worker = new Worker(QUEUES.agents, async (job) => {
         workflow_name: jobData.workflow || null,
       }
     );
+
+    // Gap #1 (2026-05-25): the Claude branch of spawnAgent now resolves
+    // { output, toolErrorCount }. Other drivers (goose/pi/mini-swe/container)
+    // still resolve a plain string — normalize both shapes so this code
+    // path stays backwards-compatible while we extend the rest later.
+    const output = typeof spawnResult === 'string' ? spawnResult : spawnResult.output;
+    const toolErrorCount = typeof spawnResult === 'string' ? 0 : (spawnResult.toolErrorCount || 0);
 
     // Parse result (strict: returns { ok, data } | { ok: false, error })
     const parsed = parseResult(output);
@@ -443,6 +482,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       throw new Error(`parseResult failed: ${parsed.error}`);
     }
     await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult', status: 'ok' });
+
+    // Gap #1: thread the tool-error count through to the workflow engine so
+    // predicates (e.g. tool_errors_excessive) can branch on it. Read by
+    // src/worker/predicates.js#tool_errors_excessive.
+    parsed.data.tool_error_count = toolErrorCount;
 
     await runAutomation({ jobData, result: parsed.data, startedAt });
 

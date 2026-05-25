@@ -1,5 +1,5 @@
 // tests/worker/predicates.test.js
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { predicates, KNOWN_UNUSED } from '../../src/worker/predicates.js';
 import { loadWorkflows } from '../../src/worker/engine.js';
 
@@ -22,6 +22,38 @@ describe('predicates', () => {
       blockers: [{ kind: 'infra' }, { kind: 'code' }]
     })).toBe(false);
     expect(predicates.qa_infra_only({ blockers: [] })).toBe(false);
+  });
+
+  describe('tool_errors_excessive (Gap #1, 2026-05-25)', () => {
+    const ORIGINAL_THRESHOLD = process.env.WORKER_TOOL_ERROR_THRESHOLD;
+    afterEach(() => {
+      if (ORIGINAL_THRESHOLD === undefined) delete process.env.WORKER_TOOL_ERROR_THRESHOLD;
+      else process.env.WORKER_TOOL_ERROR_THRESHOLD = ORIGINAL_THRESHOLD;
+    });
+
+    it('returns true when count >= threshold (default 5)', () => {
+      delete process.env.WORKER_TOOL_ERROR_THRESHOLD;
+      expect(predicates.tool_errors_excessive({ tool_error_count: 5 })).toBe(true);
+      expect(predicates.tool_errors_excessive({ tool_error_count: 12 })).toBe(true);
+    });
+
+    it('returns false when count < threshold', () => {
+      delete process.env.WORKER_TOOL_ERROR_THRESHOLD;
+      expect(predicates.tool_errors_excessive({ tool_error_count: 0 })).toBe(false);
+      expect(predicates.tool_errors_excessive({ tool_error_count: 4 })).toBe(false);
+    });
+
+    it('returns false when tool_error_count is missing (legacy result shape)', () => {
+      delete process.env.WORKER_TOOL_ERROR_THRESHOLD;
+      expect(predicates.tool_errors_excessive({})).toBe(false);
+      expect(predicates.tool_errors_excessive(null)).toBe(false);
+    });
+
+    it('honours WORKER_TOOL_ERROR_THRESHOLD env override', () => {
+      process.env.WORKER_TOOL_ERROR_THRESHOLD = '2';
+      expect(predicates.tool_errors_excessive({ tool_error_count: 1 })).toBe(false);
+      expect(predicates.tool_errors_excessive({ tool_error_count: 2 })).toBe(true);
+    });
   });
 
   it('merge_blocked_fixable — fixable gates route to builder, hard gates stay terminal', () => {

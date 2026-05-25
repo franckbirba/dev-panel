@@ -86,7 +86,16 @@ export function classifyEvent(event) {
   }
   if (type === 'user') {
     const parts = event?.message?.content || [];
-    if (parts.some(p => p?.type === 'tool_result')) return { event_type: 'tool_result', event_subtype: null };
+    const toolResults = parts.filter(p => p?.type === 'tool_result');
+    if (toolResults.length > 0) {
+      // Gap #1 (2026-05-25): expose tool_result error vs ok at the classifier
+      // level so the worker can count errors and the dashboard can highlight
+      // failed tool calls. If ANY tool_result in the user event has
+      // is_error: true, classify the whole event as error — a single failure
+      // is what we want to react to (rate-limit, schema mismatch, etc.).
+      const anyError = toolResults.some(r => r?.is_error === true);
+      return { event_type: 'tool_result', event_subtype: anyError ? 'error' : 'ok' };
+    }
     return { event_type: 'user', event_subtype: null };
   }
   return { event_type: type, event_subtype: null };
