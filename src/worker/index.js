@@ -7,6 +7,7 @@ import { join } from 'path';
 import { buildPrompt, parseResult } from './prompt-builder.js';
 import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+import { recordHarnessEvent } from './harness-telemetry.js';
 import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
@@ -288,6 +289,21 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
       activeProcesses.delete(jobId);
       parser.flush();
       errStream.end();
+      // Gap #2 telemetry: surface stream-parser line failures so a job that
+      // reports done despite a chunk of corrupt JSON is visible on the
+      // dashboard timeline (rather than only in console.warn → systemd).
+      try {
+        const stats = parser.stats();
+        if (stats.malformed > 0) {
+          recordHarnessEvent({
+            jobId,
+            harness: 'claude',
+            kind: 'parser_warning',
+            reason: 'malformed_stream_lines',
+            detail: { count: stats.malformed, total: stats.total },
+          });
+        }
+      } catch { /* telemetry is best-effort */ }
       broadcastDone(String(jobId), { exit_code: code, events: events.length });
       if (code === 0) {
         // Gap #1: return text + toolErrorCount. The caller normalizes

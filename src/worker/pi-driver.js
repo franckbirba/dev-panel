@@ -41,6 +41,7 @@ import { spawn, spawnSync } from 'child_process';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+import { recordHarnessEvent } from './harness-telemetry.js';
 import { readSoul, parseResult } from './prompt-builder.js';
 import { selectPiModel } from './select-pi-model.js';
 import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
@@ -66,6 +67,18 @@ import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
 // The verifier in automation.js (verifyAndCommit) still runs `git diff` and
 // downgrades to blocked if no real change materialized — so a synthesized
 // status=done from a no-op Pi run still won't ship a fake PR.
+// Map prompt-builder.parseResult's free-text error into a short stable token
+// for harness telemetry (kind=synthesis). Token vocabulary is intentionally
+// tiny so dashboard aggregations stay readable.
+function classifyPiParseFailure(errMsg) {
+  const m = String(errMsg || '');
+  if (m.startsWith('no json object found')) return 'no_json_envelope';
+  if (m.startsWith('invalid json in fenced block')) return 'invalid_json_in_fence';
+  if (m.startsWith('invalid status')) return 'invalid_status_value';
+  if (m.includes('missing field')) return 'missing_required_field';
+  return 'schema_mismatch';
+}
+
 function synthesizePiResult({ cwd, lastAssistantText, toolUseCount, exitCode }) {
   let branch = null;
   let hasChanges = false;
@@ -378,6 +391,26 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
             toolUseCount,
             exitCode: code,
           });
+          // Gap #2 telemetry: Pi swallowed the closing JSON envelope and we
+          // had to reconstruct one from observable git state. Surface this
+          // on the dashboard so the ~30% silent-synthesis rate becomes
+          // visible without grepping .err.log files by hand.
+          try {
+            recordHarnessEvent({
+              jobId,
+              harness: 'pi',
+              kind: 'synthesis',
+              reason: classifyPiParseFailure(parsed.error),
+              detail: {
+                tool_use_count: toolUseCount,
+                last_assistant_text_len: (lastAssistantText || '').length,
+                synthesized_status: synthesized.status,
+                files_modified: synthesized.artifacts?.files_modified?.length || 0,
+                files_created: synthesized.artifacts?.files_created?.length || 0,
+                commits: synthesized.artifacts?.commits?.length || 0,
+              },
+            });
+          } catch { /* telemetry is best-effort */ }
           resolve('```json\n' + JSON.stringify(synthesized) + '\n```');
         }
       } else {

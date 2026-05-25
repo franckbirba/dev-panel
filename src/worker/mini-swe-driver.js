@@ -35,6 +35,13 @@ import { createWriteStream, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+// TODO(gap-2): mini-swe-driver currently has no obvious silent-recovery
+// site. synthesizeResult() is the normal happy path (mini doesn't emit
+// our parseResult schema, so translation always runs); the trajectory
+// JSON.parse failure on line ~88 is the closest candidate but rarely
+// fires. If we ever add a parseResult fallback here, wire
+// recordHarnessEvent({ harness: 'mini-swe', kind: 'translation_error' }).
+// import { recordHarnessEvent } from './harness-telemetry.js';
 import { readSoul, parseResult } from './prompt-builder.js';
 
 const DEFAULT_PROVIDER = 'openai';

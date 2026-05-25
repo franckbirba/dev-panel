@@ -33,6 +33,7 @@ import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
+import { recordHarnessEvent } from './harness-telemetry.js';
 import { parseResult, readSoul } from './prompt-builder.js';
 import { isHardTier } from './tier-config.js';
 
@@ -222,6 +223,18 @@ function writeMoimSoul(jobId, agentRole) {
     return path;
   } catch (err) {
     console.warn(`[goose] writeMoimSoul failed: ${err.message?.slice(0, 200)}`);
+    // Gap #2 telemetry: SOUL injection silently degraded — the model runs
+    // this turn without explicit identity. Recovery is fine for one job,
+    // but a sustained pattern signals a worktree/tmp/permissions issue.
+    try {
+      recordHarnessEvent({
+        jobId,
+        harness: 'goose',
+        kind: 'fallback',
+        reason: 'moim_soul_unreadable',
+        detail: { agent_role: agentRole, error: String(err.message || err).slice(0, 200) },
+      });
+    } catch { /* telemetry is best-effort */ }
     return null;
   }
 }
@@ -381,6 +394,24 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
       const resultPayload = parsed.ok
         ? JSON.stringify(parsed.data)
         : stdoutBuf;
+      // Gap #2 telemetry: goose's recipe response.json_schema was supposed
+      // to force Qwen3 into our parseResult-shaped envelope. When parseResult
+      // still fails on exit 0, the structured-output guarantee broke (model
+      // bypassed the schema, hit token cap mid-object, etc.) — surface it.
+      if (!parsed.ok && code === 0) {
+        try {
+          recordHarnessEvent({
+            jobId,
+            harness: 'goose',
+            kind: 'schema_violation',
+            reason: 'recipe_response_schema_unsatisfied',
+            detail: {
+              parse_error: String(parsed.error || '').slice(0, 200),
+              stdout_len: stdoutBuf.length,
+            },
+          });
+        } catch { /* telemetry is best-effort */ }
+      }
       appendEvent({
         job_id: String(jobId),
         seq: seq++,
