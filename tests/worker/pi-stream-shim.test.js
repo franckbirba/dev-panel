@@ -82,7 +82,10 @@ describe('createPiStreamShim', () => {
       content: 'function foo() {}\n',
       is_error: false
     });
-    expect(classifyEvent(out[0])).toEqual({ event_type: 'tool_result', event_subtype: null });
+    // Gap #1 (2026-05-25): classifyEvent now reports 'ok' vs 'error' for
+    // tool_result events so the worker can count failures. A successful
+    // tool_result (is_error:false) yields subtype 'ok'.
+    expect(classifyEvent(out[0])).toEqual({ event_type: 'tool_result', event_subtype: 'ok' });
   });
 
   it('preserves tool_result errors', () => {

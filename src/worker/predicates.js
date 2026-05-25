@@ -40,6 +40,18 @@ export const predicates = {
     // Anything else (conflicts_complex, check_failed, head_moved, unknown) →
     // try a builder pass to fix the code, then bounce back to merge-coordinator.
     return true;
+  },
+  // Gap #1 (2026-05-25): tool-error feedback loop.
+  // Reads result.tool_error_count, which the worker attaches to parsed.data
+  // after spawnAgent resolves (option (a) — propagation via the result object,
+  // not via DB lookup of the synthetic system event). Chose (a) because the
+  // result object is already the predicate's first argument, requires no
+  // engine-side I/O, and stays pure for tests. The synthetic event still gets
+  // persisted via appendEvent for observability (dashboard timeline + audit).
+  tool_errors_excessive(result /* , jobData */) {
+    const count = result?.tool_error_count ?? 0;
+    const threshold = parseInt(process.env.WORKER_TOOL_ERROR_THRESHOLD || '5', 10);
+    return count >= threshold;
   }
 };
 
@@ -50,4 +62,9 @@ export const predicates = {
 //   workflow that retreated to a builder. Phase A (2026-05-08) narrowed
 //   merge-coordinator to single-shot, so the predicate is orphaned —
 //   kept around because Phase B may reintroduce a builder retreat.
-export const KNOWN_UNUSED = Object.freeze(['qa_infra_only', 'merge_blocked_fixable']);
+export const KNOWN_UNUSED = Object.freeze([
+  'qa_infra_only',
+  'merge_blocked_fixable',
+  // added 2026-05-25 for harness Gap #1, awaiting first workflow consumer
+  'tool_errors_excessive'
+]);
