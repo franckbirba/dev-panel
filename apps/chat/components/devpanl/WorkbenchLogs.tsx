@@ -302,6 +302,12 @@ export function WorkbenchLogs({
         const seq = data.seq != null ? String(data.seq) : "";
         const type = (data.event_type as string) || (data.type as string) || "";
         const subtype = (data.event_subtype as string) || "";
+        // TODO(gap-2): event_subtype === 'harness_telemetry' rows carry a
+        // typed {harness, kind, reason, detail} payload describing silent
+        // translation recoveries (Pi JSON synthesis, Goose schema misses,
+        // Claude parser warnings). Render with a distinct badge so operators
+        // see "this job finished done but Pi synthesized the result" without
+        // grepping .err.log. See src/worker/harness-telemetry.js.
         const { body, isError } = extractBody(data, ev.data);
         entryCounter.current += 1;
         countRef.current += 1;
