@@ -1,0 +1,13 @@
+# Single source of truth for role → tier mapping.
+# Consumed by select-claude-model.js and goose-driver.js.
+# Roles not listed here fall through to the harness default.
+cheap:
+  - builder
+  - designer
+  - pm
+hard:
+  - reviewer
+  - qa
+  - architect
+  - deploy
+  - merge-coordinator
