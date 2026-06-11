@@ -112,8 +112,21 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
     if (INNER_DRIVER === 'pi') {
       // pi reads PI_MCP_CONFIG to know which mcp.json mcp-bridge should
       // load. Inside the container that's the same file as WORKER_MCP_CONFIG.
+      //
+      // ~/.pi/agent/{auth.json,models.json} carries the provider catalog
+      // (without it, pi --provider deepinfra → "Unknown provider"). Bind
+      // those two files individually ro at /root/.pi/agent/ so the
+      // in-container pi sees the same provider config as the native one,
+      // while /root/.pi/agent/sessions/ stays in the container's overlay
+      // (writable per-job, discarded with --rm). Don't mount ~/.pi whole —
+      // concurrent jobs would race on the same sessions/ dir on the host.
+      // PI_HOME on the host is honored if set, defaults to ~/.pi.
+      const piHomeHost = process.env.PI_HOME
+        || join(process.env.HOME || '/home/deploy', '.pi');
       dockerArgs.push(
         '-v', `${piExtensionsHost}:/opt/pi-extensions:ro`,
+        '-v', `${piHomeHost}/agent/auth.json:/root/.pi/agent/auth.json:ro`,
+        '-v', `${piHomeHost}/agent/models.json:/root/.pi/agent/models.json:ro`,
         '-e', 'PI_MCP_CONFIG=/etc/devpanel/mcp.json',
       );
     }
