@@ -1,0 +1,38 @@
+name: Diagnose Agents Host
+
+# Diagnostic lecture seule de l'hôte agents (hetzner-vps) via son runner
+# self-hosted. Créé le 2026-08-11 pendant l'activation de la boucle autonome :
+# les verbes MCP runtime (tail_log, run_remote, host_status) vers hetzner-vps
+# tombaient en "transport dropped" et le smoke deploy montrait des ETIMEDOUT
+# vers 10.0.0.2 — ce workflow est le chemin de secours pour voir l'état réel.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 5
+    steps:
+      - name: Worker service status
+        run: |
+          systemctl is-active devpanel-worker.service || true
+          systemctl status devpanel-worker.service --no-pager -l | head -20 || true
+
+      - name: Worker journal (last 150 lines)
+        run: journalctl -u devpanel-worker.service --no-pager -n 150 || true
+
+      - name: LAN connectivity to services node (10.0.0.2)
+        run: |
+          timeout 5 bash -c '</dev/tcp/10.0.0.2/5432' && echo "PG 5432: OK" || echo "PG 5432: FAIL"
+          timeout 5 bash -c '</dev/tcp/10.0.0.2/6379' && echo "REDIS 6379: OK" || echo "REDIS 6379: FAIL"
+
+      - name: Shelly / telegram units
+        run: |
+          systemctl list-units 'shelly*' 'telegram*' --no-pager --all || true
+
+      - name: Host vitals
+        run: |
+          uptime
+          free -h
+          df -h / | tail -1
