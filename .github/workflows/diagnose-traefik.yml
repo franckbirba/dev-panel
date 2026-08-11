@@ -1,0 +1,33 @@
+name: Diagnose Traefik / Network Path
+
+# One-off 2026-08-11 : Franck reçoit des 522 Cloudflare alors que d'autres
+# vantage points passent — suspicion de drop sélectif d'IPs Cloudflare
+# (fail2ban/ufw/conntrack) ou d'épuisement de sockets côté origin.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "== sockets summary =="
+            ss -s | head -8
+            echo "== conntrack =="
+            cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || echo "n/a"
+            cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo "n/a"
+            echo "== ufw (sans sudo, best effort) =="
+            sudo -n ufw status numbered 2>/dev/null | head -15 || echo "sudo indisponible pour ufw"
+            echo "== fail2ban =="
+            sudo -n fail2ban-client status 2>/dev/null | head -10 || echo "sudo indisponible ou fail2ban absent"
+            echo "== traefik logs (40 dernières lignes) =="
+            docker logs --tail 40 traefik 2>&1 | tail -40
+            echo "== traefik restarts/état =="
+            docker inspect traefik --format 'RestartCount={{.RestartCount}} Started={{.State.StartedAt}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
