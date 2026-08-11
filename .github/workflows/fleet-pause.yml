@@ -1,0 +1,36 @@
+name: Fleet Pause / Resume
+
+# 2026-08-11 — pause de la fleet le temps de remplacer le GITHUB_TOKEN
+# (.env.agent) et de livrer DEVPA-250 (purge backlog canal). Les jobs en
+# boucle (token mort → échec au push → retry) spamment le fil Telegram via
+# leurs effets de bord (captures de test, élicitations). L'état BullMQ +
+# workflow_instances est persistant : resume = simple start.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "pause (stop worker) ou resume (start worker)"
+        type: choice
+        options: [pause, resume]
+        default: pause
+
+jobs:
+  fleet:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 5
+    steps:
+      - name: Pause or resume worker
+        run: |
+          if [ "${{ inputs.action }}" = "pause" ]; then
+            sudo -n systemctl stop devpanel-worker.service
+            echo "worker: $(systemctl is-active devpanel-worker.service || true) (pause)"
+            echo "== claude jobs restants (devraient disparaître) =="
+            sleep 5
+            pgrep -af "claude -p" | head -5 || echo "aucun job claude en cours"
+          else
+            sudo -n systemctl start devpanel-worker.service
+            sleep 5
+            echo "worker: $(systemctl is-active devpanel-worker.service)"
+            journalctl -u devpanel-worker.service --no-pager -n 8 || true
+          fi
