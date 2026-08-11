@@ -1,0 +1,44 @@
+name: Fix Agents Runtime (driver + uvx)
+
+# 2026-08-11 — les builders meurent en boucle sur l'hôte agents :
+#   1. driver par défaut basculé sur un provider "deepinfra" inconnu du CLI
+#      (fallback Pi historique) → containers exit 1, aucun PR produit
+#   2. uvx absent → le MCP Plane des agents ne démarre pas
+# Ce workflow remet le driver sur claude (rm ~/.driver-default — géré par
+# shelly-switch.sh, réversible), installe uv/uvx (installeur officiel
+# astral.sh) et redémarre le worker. Le GITHUB_TOKEN mort de .env.agent est
+# une action humaine séparée (Franck).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 8
+    steps:
+      - name: Driver back to claude
+        run: |
+          if [ -f /home/deploy/.driver-default ]; then
+            echo "avant: $(cat /home/deploy/.driver-default)"
+            rm -f /home/deploy/.driver-default
+            echo "supprimé — défaut = claude"
+          else
+            echo "déjà absent — défaut = claude"
+          fi
+
+      - name: Install uv/uvx for deploy user
+        run: |
+          if [ -x /home/deploy/.local/bin/uvx ]; then
+            echo "uvx déjà présent: $(/home/deploy/.local/bin/uvx --version)"
+          else
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            /home/deploy/.local/bin/uvx --version
+          fi
+
+      - name: Restart worker
+        run: |
+          sudo systemctl restart devpanel-worker.service
+          sleep 8
+          systemctl is-active devpanel-worker.service
+          journalctl -u devpanel-worker.service --no-pager -n 12 || true
