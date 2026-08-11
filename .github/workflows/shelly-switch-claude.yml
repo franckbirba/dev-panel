@@ -15,12 +15,23 @@ jobs:
     runs-on: [self-hosted, hetzner-agents]
     timeout-minutes: 6
     steps:
-      - name: Switch Shelly + builders to claude
+      - name: Switch Shelly + builders to claude (unmask robuste)
         run: |
           cd /home/deploy/projects/dev-panel
           sudo -n bash scripts/shelly-switch.sh status || true
-          sudo -n bash scripts/shelly-switch.sh claude
-          sudo -n bash scripts/shelly-switch.sh status
+          echo "== etat des masks =="
+          ls -la /etc/systemd/system/shelly.service /run/systemd/system/shelly.service 2>/dev/null || true
+          echo "== unmask natif (gere etc + runtime) =="
+          sudo -n systemctl unmask shelly.service || true
+          if [ ! -e /etc/systemd/system/shelly.service ] && [ ! -e /lib/systemd/system/shelly.service ]; then
+            echo "unit absente apres unmask — installation depuis infra/"
+            sudo -n cp infra/shelly.service /etc/systemd/system/shelly.service
+          fi
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable shelly.service 2>/dev/null || true
+          sudo -n systemctl start shelly.service
+          sudo -n systemctl restart devpanel-worker.service
+          sudo -n bash scripts/shelly-switch.sh status || true
 
       - name: Post-check units
         run: |
