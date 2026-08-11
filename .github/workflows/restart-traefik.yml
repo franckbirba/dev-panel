@@ -1,0 +1,29 @@
+name: Restart Traefik
+
+# Op manuelle 2026-08-11, autorisée par Franck (« go traefik ») — 522
+# Cloudflare intermittents côté Franck + timeouts provider Docker dans les
+# logs traefik (Up 2 mois). Restart sans état, coupure ~3 s.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            echo "== avant ==" && docker inspect traefik --format 'Started={{.State.StartedAt}}'
+            docker restart traefik
+            sleep 6
+            echo "== après ==" && docker inspect traefik --format 'Started={{.State.StartedAt}} Running={{.State.Running}}'
+            echo "== probes localhost ==" 
+            curl -s -o /dev/null -w "https://localhost (Host devpanl.dev) → %{http_code}\n" -k -H "Host: devpanl.dev" https://localhost/api/health
+            curl -s -o /dev/null -w "https://localhost (Host plane.devpanl.dev) → %{http_code}\n" -k -H "Host: plane.devpanl.dev" https://localhost/
+            docker logs --tail 5 traefik 2>&1 | tail -5
