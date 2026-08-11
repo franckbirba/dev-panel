@@ -11,6 +11,7 @@ import { recordHarnessEvent } from './harness-telemetry.js';
 import { QUEUES } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
+import { startReaper } from './reaper.js';
 
 // Resolve per-project Plane settings, preferring the project's own
 // .devpanlrc.json over the worker's PLANE_* env vars. This is what lets
@@ -605,6 +606,9 @@ registerCrons().catch(err => console.error('[Crons] Registration failed:', err))
 // and enqueues work-item workflows for each (dedup via workflow_instances
 // unique index). Disabled cleanly if Plane env vars are missing.
 startBacklogPuller();
+
+// Réconcilie les workflow_instances fantômes (jobs morts sans transition).
+startReaper();
 
 // Connect to the services-VPS agent hub so every workflow_instance and
 // agent_job_log write streams live to the dashboard instead of waiting
