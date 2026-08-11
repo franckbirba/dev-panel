@@ -27,6 +27,13 @@ jobs:
           timeout 5 bash -c '</dev/tcp/10.0.0.2/5432' && echo "PG 5432: OK" || echo "PG 5432: FAIL"
           timeout 5 bash -c '</dev/tcp/10.0.0.2/6379' && echo "REDIS 6379: OK" || echo "REDIS 6379: FAIL"
 
+      - name: LAN interface & route state
+        run: |
+          ip -brief addr
+          ip route | head -10
+          ping -c 2 -W 2 10.0.0.2 >/dev/null 2>&1 && echo "ping 10.0.0.2: OK" || echo "ping 10.0.0.2: FAIL"
+          ip neigh | grep '10\.0\.0\.' || echo "aucun voisin 10.0.0.x"
+
       - name: Shelly / telegram units
         run: |
           systemctl list-units 'shelly*' 'telegram*' --no-pager --all || true
