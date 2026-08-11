@@ -1,0 +1,43 @@
+name: Fix LAN Bindings (redis + postgres)
+
+# Op ciblée 2026-08-11, autorisée par Franck (« go fix LAN ») — cause racine
+# de la fleet gelée : devpanel-redis et devpanel-postgres publiés sur
+# 127.0.0.1 au lieu de ${LAN_HOST}=10.0.0.2 (recreate manuel d'il y a ~2 mois
+# sans LAN_HOST exporté). Le worker agents (10.0.0.3) tombe en ETIMEDOUT sur
+# 5432/6379 → fleet morte.
+#
+#   1. garde-fou durable : LAN_HOST + COMPOSE_PROFILES dans ~/dev-panel/.env
+#      (auto-lu par compose ; les exports shell des deploys CI gardent priorité)
+#   2. recrée UNIQUEMENT redis et postgres (--no-deps, volumes nommés
+#      redis-data / postgres-data conservés — pas de perte de données)
+#   3. vérifie les écoutes
+#
+# Conforme à la DEPLOY RULE de deploy.yml : op manuelle explicite
+# (workflow_dispatch only).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/dev-panel
+            echo "== avant =="
+            docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E 'devpanel-(redis|postgres)'
+            grep -q '^LAN_HOST=' .env 2>/dev/null || echo 'LAN_HOST=10.0.0.2' >> .env
+            grep -q '^COMPOSE_PROFILES=' .env 2>/dev/null || echo 'COMPOSE_PROFILES=core' >> .env
+            export LAN_HOST=10.0.0.2
+            docker compose --profile core up -d --no-deps --force-recreate redis postgres
+            sleep 8
+            echo "== après =="
+            docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E 'devpanel-(redis|postgres)'
+            (ss -tlnp 2>/dev/null || netstat -tln) | grep -E ':5432|:6379'
