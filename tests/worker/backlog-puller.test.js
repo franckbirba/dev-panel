@@ -18,6 +18,9 @@ function mockPlane(issuesByProject) {
   global.fetch = vi.fn(async (url) => {
     const u = String(url);
     const projectId = Object.keys(issuesByProject).find(p => u.includes(`/projects/${p}/`));
+    if (!projectId) {
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
     if (u.includes('/states/')) {
       return { ok: true, json: async () => ({ results: [
         { id: `todo-${projectId}`, group: 'unstarted' },
@@ -87,7 +90,7 @@ describe('backlog-puller multi-projet', () => {
   });
 
   it("continue sur le projet suivant si un projet échoue", async () => {
-    mockPlane({ 'proj-b': [issue('proj-b', 1)] }); // proj-a → 404 sur /states/
+    mockPlane({ 'proj-b': [issue('proj-b', 1)] }); // proj-a inconnu du dict → 404 dès le fetch, avant /states/
     const { tick } = await loadPuller({ BACKLOG_PULL_PROJECT_IDS: 'proj-a,proj-b' });
     await tick();
     const calls = mocks.enqueueWorkflowStartMock.mock.calls.map(c => c[0].plane.project_id);
