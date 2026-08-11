@@ -1,0 +1,29 @@
+name: Shelly Switch to Claude
+
+# 2026-08-11 — Franck est spammé de demandes allow/deny dans Telegram :
+# shelly-pi (fallback Qwen3, actif depuis la bascule quota) gère mal le
+# protocole d'outils et déclenche le relais de permissions du canal.
+# Remède = le switch officiel : scripts/shelly-switch.sh claude
+# (stoppe shelly-pi, démasque+démarre shelly.service, DRIVER_DEFAULT=claude,
+# bounce worker). Réversible à tout moment avec `pi`.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  switch:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 6
+    steps:
+      - name: Switch Shelly + builders to claude
+        run: |
+          cd /home/deploy/projects/dev-panel
+          sudo -n bash scripts/shelly-switch.sh status || true
+          sudo -n bash scripts/shelly-switch.sh claude
+          sudo -n bash scripts/shelly-switch.sh status
+
+      - name: Post-check units
+        run: |
+          systemctl is-active shelly.service || true
+          systemctl is-active shelly-pi.service || echo "shelly-pi arrêté (attendu)"
+          systemctl is-active devpanel-worker.service
