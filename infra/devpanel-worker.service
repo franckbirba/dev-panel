@@ -46,7 +46,11 @@ Environment=API_BASE=https://devpanl.dev
 # Plane REST config (non-secrets). PLANE_API_KEY is in .env.agent.
 Environment=PLANE_BASE_URL=https://plane.devpanl.dev
 Environment=PLANE_WORKSPACE_SLUG=devpanl
+# Projets tirés par le backlog-puller (UUIDs Plane, séparés par des virgules).
+# Zeno (80f082d2-…) sera ajouté après la task 6 (SOULs refaits + tickets pilotes prêts).
+Environment=BACKLOG_PULL_PROJECT_IDS=d2522fed-e3f2-4eeb-9077-6445261752c1
 Environment=PLANE_PROJECT_ID=d2522fed-e3f2-4eeb-9077-6445261752c1
+Environment=REAPER_ENABLED=true
 
 # Backlog puller defaults — flip BACKLOG_PULL_ENABLED to "true" to start the
 # continuous Plane-Todo → workflow loop. LABEL gate keeps only items you've

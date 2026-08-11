@@ -180,3 +180,10 @@ export async function listByCycle(cycle_id) {
   );
   return rows.map(normalizeRow);
 }
+
+export async function listRunningInstances() {
+  const { rows } = await pool.query(
+    `SELECT * FROM workflow_instances WHERE status = 'running' ORDER BY last_event_at ASC`
+  );
+  return rows.map(normalizeRow);
+}

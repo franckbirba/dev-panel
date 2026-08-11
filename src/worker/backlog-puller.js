@@ -21,12 +21,15 @@
 //   PLANE_BASE_URL             e.g. https://plane.devpanl.dev
 //   PLANE_API_KEY
 //   PLANE_WORKSPACE_SLUG       e.g. devpanl
-//   PLANE_PROJECT_ID           UUID of the project to pull from
+//   PLANE_PROJECT_ID           UUID of the project to pull from (legacy fallback)
+//   BACKLOG_PULL_PROJECT_IDS   comma-separated UUIDs of projects to pull from;
+//                              falls back to PLANE_PROJECT_ID when unset
 
 const PLANE_BASE_URL = (process.env.PLANE_BASE_URL || '').replace(/\/$/, '');
 const PLANE_API_KEY = process.env.PLANE_API_KEY || '';
 const PLANE_WORKSPACE_SLUG = process.env.PLANE_WORKSPACE_SLUG || '';
-const PLANE_PROJECT_ID = process.env.PLANE_PROJECT_ID || '';
+const PROJECT_IDS = (process.env.BACKLOG_PULL_PROJECT_IDS || process.env.PLANE_PROJECT_ID || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 const INTERVAL_MS = parseInt(process.env.BACKLOG_PULL_INTERVAL_MS || '900000', 10);
 const ENABLED = (process.env.BACKLOG_PULL_ENABLED ?? 'false') === 'true';
@@ -36,7 +39,7 @@ const LABEL_FILTER = (process.env.BACKLOG_PULL_LABEL || '').trim();
 const MAX_PER_TICK = parseInt(process.env.BACKLOG_PULL_MAX_PER_TICK || '3', 10);
 
 function hasPlaneConfig() {
-  return Boolean(PLANE_BASE_URL && PLANE_API_KEY && PLANE_WORKSPACE_SLUG && PLANE_PROJECT_ID);
+  return Boolean(PLANE_BASE_URL && PLANE_API_KEY && PLANE_WORKSPACE_SLUG && PROJECT_IDS.length);
 }
 
 // Lightweight HTML → plaintext: unwrap common block tags to newlines, strip
@@ -66,32 +69,32 @@ async function planeFetch(path) {
   return res.json();
 }
 
-async function listStatesInGroups(groups) {
+async function listStatesInGroups(projectId, groups) {
   const data = await planeFetch(
-    `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${PLANE_PROJECT_ID}/states/`
+    `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${projectId}/states/`
   );
   const all = data.results || data; // Plane returns either shape depending on endpoint
   return all.filter(s => groups.includes(s.group)).map(s => s.id);
 }
 
-async function resolveLabelId(name) {
+async function resolveLabelId(projectId, name) {
   if (!name) return null;
   const data = await planeFetch(
-    `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${PLANE_PROJECT_ID}/labels/`
+    `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${projectId}/labels/`
   );
   const all = data.results || data;
   const match = all.find(l => l.name === name);
   return match ? match.id : null;
 }
 
-async function listIssuesByStates(stateIds) {
+async function listIssuesByStates(projectId, stateIds) {
   const all = [];
   let cursor = null;
   for (let page = 0; page < 10; page++) { // cap pagination at 10 pages (~500 items) per tick
     const qs = new URLSearchParams({ per_page: '50' });
     if (cursor) qs.set('cursor', cursor);
     const data = await planeFetch(
-      `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${PLANE_PROJECT_ID}/issues/?${qs}`
+      `/api/v1/workspaces/${PLANE_WORKSPACE_SLUG}/projects/${projectId}/issues/?${qs}`
     );
     const rows = data.results || [];
     for (const i of rows) {
@@ -103,55 +106,48 @@ async function listIssuesByStates(stateIds) {
   return all;
 }
 
-async function tick() {
-  if (!ENABLED) return;
-  if (!hasPlaneConfig()) {
-    console.warn('[BacklogPuller] Plane config missing, skipping tick');
-    return;
-  }
-
+async function pullProject(projectId, budget) {
   const { enqueueWorkflowStart } = await import('./dispatch.js');
 
   let stateIds;
   try {
-    stateIds = await listStatesInGroups(STATE_GROUPS);
+    stateIds = await listStatesInGroups(projectId, STATE_GROUPS);
   } catch (err) {
-    console.error('[BacklogPuller] list states failed:', err.message);
-    return;
+    console.error(`[BacklogPuller] ${projectId}: list states failed:`, err.message);
+    return 0;
   }
   if (!stateIds.length) {
-    console.warn(`[BacklogPuller] no states matched groups=${STATE_GROUPS.join(',')}`);
-    return;
+    console.warn(`[BacklogPuller] ${projectId}: no states matched groups=${STATE_GROUPS.join(',')}`);
+    return 0;
   }
 
   let labelId = null;
   if (LABEL_FILTER) {
     try {
-      labelId = await resolveLabelId(LABEL_FILTER);
+      labelId = await resolveLabelId(projectId, LABEL_FILTER);
     } catch (err) {
-      console.error('[BacklogPuller] resolve label failed:', err.message);
-      return;
+      console.error(`[BacklogPuller] ${projectId}: resolve label failed:`, err.message);
+      return 0;
     }
     if (!labelId) {
-      console.warn(`[BacklogPuller] label "${LABEL_FILTER}" not found in project — skipping tick`);
-      return;
+      console.warn(`[BacklogPuller] ${projectId}: label "${LABEL_FILTER}" not found — skipping`);
+      return 0;
     }
   }
 
   let issues;
   try {
-    issues = await listIssuesByStates(stateIds);
+    issues = await listIssuesByStates(projectId, stateIds);
   } catch (err) {
-    console.error('[BacklogPuller] list issues failed:', err.message);
-    return;
+    console.error(`[BacklogPuller] ${projectId}: list issues failed:`, err.message);
+    return 0;
   }
 
   if (labelId) {
     issues = issues.filter(i => Array.isArray(i.labels) && i.labels.includes(labelId));
   }
 
-  // Cap per tick to avoid a burst of 100 enqueues if the backlog is fresh.
-  const batch = issues.slice(0, MAX_PER_TICK);
+  const batch = issues.slice(0, budget);
   let dispatched = 0, alreadyRunning = 0, failed = 0;
   for (const issue of batch) {
     try {
@@ -160,7 +156,7 @@ async function tick() {
         workflow: 'work-item',
         plane: {
           work_item_id: issue.id,
-          project_id: issue.project || PLANE_PROJECT_ID || null,
+          project_id: issue.project || projectId,
           module_id: Array.isArray(issue.module) ? issue.module[0] : (issue.module || null),
           cycle_id: issue.cycle || null
         },
@@ -174,17 +170,31 @@ async function tick() {
       });
       if (out.ok) dispatched++;
       else if (out.error === 'already_running') alreadyRunning++;
-      else { failed++; console.warn(`[BacklogPuller] DEVPA-${issue.sequence_id}: ${out.error}`); }
+      else { failed++; console.warn(`[BacklogPuller] ${projectId} #${issue.sequence_id}: ${out.error}`); }
     } catch (err) {
       failed++;
-      console.error(`[BacklogPuller] DEVPA-${issue.sequence_id} dispatch threw:`, err.message);
+      console.error(`[BacklogPuller] ${projectId} #${issue.sequence_id} dispatch threw:`, err.message);
     }
   }
 
   console.log(
-    `[BacklogPuller] tick done — seen=${issues.length} batched=${batch.length} ` +
+    `[BacklogPuller] ${projectId} — seen=${issues.length} batched=${batch.length} ` +
     `dispatched=${dispatched} already=${alreadyRunning} failed=${failed}`
   );
+  return batch.length;
+}
+
+export async function tick() {
+  if (!ENABLED) return;
+  if (!hasPlaneConfig()) {
+    console.warn('[BacklogPuller] Plane config missing, skipping tick');
+    return;
+  }
+  let budget = MAX_PER_TICK;
+  for (const projectId of PROJECT_IDS) {
+    if (budget <= 0) break;
+    budget -= await pullProject(projectId, budget);
+  }
 }
 
 let _timer = null;
@@ -196,13 +206,13 @@ export function startBacklogPuller() {
   }
   if (!hasPlaneConfig()) {
     console.warn(
-      '[BacklogPuller] missing Plane env (PLANE_BASE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG / PLANE_PROJECT_ID) — not starting'
+      '[BacklogPuller] missing Plane env (PLANE_BASE_URL / PLANE_API_KEY / PLANE_WORKSPACE_SLUG / BACKLOG_PULL_PROJECT_IDS) — not starting'
     );
     return;
   }
   console.log(
     `[BacklogPuller] every ${Math.round(INTERVAL_MS / 1000)}s, states=${STATE_GROUPS.join(',')}, ` +
-    `label=${LABEL_FILTER || '(any)'}, max/tick=${MAX_PER_TICK}, project=${PLANE_PROJECT_ID}`
+    `label=${LABEL_FILTER || '(any)'}, max/tick=${MAX_PER_TICK}, projects=${PROJECT_IDS.join(',')}`
   );
   // Fire once at startup, then on interval. Drift-free via setTimeout chain.
   const run = async () => {
