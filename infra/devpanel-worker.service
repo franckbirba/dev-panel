@@ -48,7 +48,7 @@ Environment=PLANE_BASE_URL=https://plane.devpanl.dev
 Environment=PLANE_WORKSPACE_SLUG=devpanl
 # Projets tirés par le backlog-puller (UUIDs Plane, séparés par des virgules).
 # dev-panel (d2522fed-…) + Zeno (80f082d2-…) — activé 2026-08-11 (SOULs 2026-08 mergés).
-Environment=BACKLOG_PULL_PROJECT_IDS=d2522fed-e3f2-4eeb-9077-6445261752c1,80f082d2-bbf7-4c7a-9e4c-a1e3f76ffa52
+Environment=BACKLOG_PULL_PROJECT_IDS=80f082d2-bbf7-4c7a-9e4c-a1e3f76ffa52,d2522fed-e3f2-4eeb-9077-6445261752c1
 Environment=PLANE_PROJECT_ID=d2522fed-e3f2-4eeb-9077-6445261752c1
 Environment=REAPER_ENABLED=true
 
