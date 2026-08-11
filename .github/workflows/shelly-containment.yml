@@ -1,0 +1,34 @@
+name: Shelly Containment (stop + inspect)
+
+# 2026-08-11 — URGENCE : au démarrage de shelly.service, le canal Telegram a
+# flushé un burst de demandes dont un Allow/Deny pour `Bash rm -rf /`.
+# Containment : stopper la session émettrice (invalide les boutons en attente),
+# puis capturer le journal + l'état du spool pour analyse. Lecture seule à
+# part le stop.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  contain:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 6
+    steps:
+      - name: Stop shelly.service (containment)
+        run: |
+          sudo -n systemctl stop shelly.service || sudo -n systemctl mask --now shelly.service || true
+          systemctl is-active shelly.service || echo "shelly arrêtée (attendu)"
+
+      - name: Journal shelly (comment le rm -rf / est arrivé)
+        run: |
+          journalctl -u shelly.service --no-pager -n 200 --since "-45 min" | tail -120 || true
+
+      - name: Spool / état du canal telegram
+        run: |
+          ls -la /home/deploy/.claude/channels/telegram/ 2>/dev/null || true
+          ls -la /home/deploy/.claude/channels/telegram/inbox/ 2>/dev/null | head -10 || true
+          find /home/deploy/.claude/channels -name "*pending*" -o -name "*approved*" 2>/dev/null | head -10 || true
+
+      - name: Sessions/process restants
+        run: |
+          ps -ef | grep -E "claude|tmux" | grep -v grep | head -10 || true
