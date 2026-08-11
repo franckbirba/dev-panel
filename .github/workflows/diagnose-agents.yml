@@ -38,6 +38,12 @@ jobs:
         run: |
           systemctl list-units 'shelly*' 'telegram*' --no-pager --all || true
 
+      - name: Repo clones on agents host
+        run: |
+          for d in /home/deploy/projects/*/; do
+            echo "$d -> $(git -C "$d" remote get-url origin 2>/dev/null || echo 'pas un repo git')"
+          done
+
       - name: Host vitals
         run: |
           uptime
