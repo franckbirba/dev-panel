@@ -76,7 +76,7 @@ Le bench gagne un scénario : **D7 — convergence de boucle** : (a) un item con
 - **Boucles au niveau prompt uniquement** (« itère jusqu'à vert » écrit dans le SOUL) : non vérifiable, non borné, invisible du moteur — c'est le statu quo qui a produit les boucles muettes.
 - **Tout en boucle externe** : re-spawn systématique = payer le contexte à chaque itération ; la boucle interne existe précisément pour éviter ça.
 
-## Questions ouvertes (Franck)
+## Arbitrages rendus (Franck, 2026-08-18)
 
-1. Budget de boucle en tokens (proposé) ou en itérations seulement ? (Tokens = la vraie ressource, mais exige H6 partout.)
-2. Premier incrément : boucle `revision` + H9 seulement, ou tu veux les branches parallèles dès la V1 du nouveau format ?
+1. ✅ **Budget de boucle en tokens** (itérations en seconde borne). Sémantique explicitée pour lever l'inconfort exprimé : **le budget termine la *tentative*, jamais l'*item*** — épuisement → `exhausted` + diagnostic + retour visible au backlog (contrat §6). Un work item du backlog sera fait tôt ou tard ; le budget protège contre les tentatives condamnées, pas contre le travail.
+2. ✅ **V1 sans branches parallèles.** L'objectif énoncé — développer le plus vite possible une fois tout spécifié — est servi par le parallélisme **inter-items** (les vagues, ADR-001), pas par des branches intra-item qui retarderaient le moteur lui-même. Le format les réserve ; réévaluation après le premier cycle Zeno.

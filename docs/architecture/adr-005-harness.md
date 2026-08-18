@@ -29,6 +29,8 @@ Le diagnostic « le moteur ne suffit pas, le harness trop faible, les outils pas
 
 ## Décision 1 — le harness contract : H1–H9
 
+**Règle anti-overfit (arbitrage 2026-08-18, ADR-004 q.1)** : un gap se comble par une capacité **générique** H* — utile à tout modèle faible — jamais par un workaround spécifique à un modèle. Le harness s'adapte aux modèles *faibles*, pas à *Qwen*.
+
 Tout harness du chemin critique DOIT fournir :
 
 - **H1. Boucle d'outils fiable** — tool calls parsés, exécutés, résultats re-présentés au modèle ; une erreur d'outil revient au modèle comme information, jamais comme crash.
@@ -77,4 +79,4 @@ L'ordre O1 → O2 est réversible à un endroit précis : **le verdict du bench 
 ## Questions ouvertes (Franck)
 
 1. ~~O1 vs O2~~ — **tranché : O1, on investit sur pi** (2026-08-18).
-2. Comblement des gaps : extensions privées d'abord (rapide, on maîtrise), upstream ensuite si générique — proposition par défaut, dis si tu préfères contribuer upstream direct.
+2. ✅ Tranché (2026-08-18) : extensions privées d'abord, upstream ensuite si générique — **avec sweep communautaire obligatoire avant chaque build** : recherche des extensions/plugins pi existants (écosystème pi, npm) avant d'écrire la moindre ligne. On ne réinvente pas la roue.

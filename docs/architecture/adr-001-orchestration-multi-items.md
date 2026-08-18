@@ -48,7 +48,7 @@ Un item est dispatchable si : description structurée (**Contexte / Travail à f
 - **BullMQ FlowProducer** : modélise parent/enfant de *jobs* ; notre dépendance est « la PR du blocker est mergée », pas « le job est fini ». Mauvais niveau d'abstraction.
 - **Séquencement manuel par Shelly** : c'est le statu quo — précisément le babysitting qu'on supprime.
 
-## Questions ouvertes (Franck)
+## Arbitrages rendus (Franck, 2026-08-18)
 
-1. `blocked_by` non-Done : refus sec ou mise en attente automatique dans la vague (item « armé », part tout seul au merge) ? **Proposition : armé dans une vague, refus sec hors vague.**
-2. Le re-tick dispatche au **merge de la PR** du blocker, ou au `completed` de l'instance (= QA done, PR pas forcément mergée) ? **Proposition : au merge — c'est l'état du repo qui compte pour un refacto.**
+1. ✅ **Armé dans une vague, refus sec hors vague.**
+2. ✅ **Re-tick au merge de la PR** — c'est l'état du repo qui fait foi.

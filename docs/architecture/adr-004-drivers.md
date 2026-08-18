@@ -44,7 +44,11 @@ Historique factuel à ne pas re-litiger :
 - **Abstraction au niveau API type LiteLLM** : le problème n'est pas l'API des modèles, c'est le harness (édits, tools, permissions, usage). C'est l'agent-CLI qu'on met sous contrat, pas le endpoint HTTP.
 - **Re-litiger goose / adopter mini-swe maintenant** : pas sans benchmark (mémoire 2026-05-09) ; le chemin critique n'accueille que du benché.
 
-## Questions ouvertes (Franck)
+## Arbitrages (2026-08-18)
 
-1. Le plancher officiel du bench : **Qwen3-Coder via DeepInfra** (l'existant) ou tu veux DeepSeek en second plancher dès maintenant ? (Proposition : Qwen3 seul d'abord — un plancher à la fois.)
-2. Colonne plancher exigée verte sur **D1–D4 complets** avant Zeno, ou D1–D2 suffisent pour démarrer en multi-tier ? (Proposition : D1–D2 pour le go multi-tier, D3–D4 avant de monter `max_parallel`.)
+1. **Plancher = Qwen3 seul pour le bench, AVEC garde anti-overfit** (crainte exprimée par Franck : « j'ai peur que le harness soit trop calé sur comment Qwen fonctionne »). La garde, à deux étages :
+   - **Règle de comblement (ADR-005)** : un gap se comble toujours par une capacité générique H* (utile à tout modèle faible), jamais par un workaround nommé-Qwen. `submit_result` aide DeepSeek autant que Qwen ; la limite 200 lignes de `create-file` protège de n'importe quel coder faible.
+   - **Canary de rotation** : périodiquement (à chaque évolution majeure du harness), le scénario D1 du bench tourne sur un **second modèle plancher** (DeepSeek) — pas le bench complet, juste le smoke qui détecterait une accommodation Qwen-spécifique. Le harness s'adapte aux modèles *faibles*, pas à *Qwen*.
+2. **Seuil de go Zeno : OUVERT** — reformulé pour décision (Franck n'avait pas compris la version précédente) :
+   - **Option A** : on lance Zeno dès que Qwen3 passe D1–D2 (un item simple + une chaîne de 3), protégé par `max_parallel=2` + reviewer Claude, pendant que D3–D7 se finissent en parallèle. Plus rapide (~2–4 j gagnés).
+   - **Option B** : on attend D1–D4 (+ gestion d'échec + timeout/budget) avant le premier dispatch Zeno. Plus de filet, moins de babysitting au démarrage.

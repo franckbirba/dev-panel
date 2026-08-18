@@ -70,17 +70,20 @@ Quatre mécanismes se superposent sans contrat : retries BullMQ (`attempts: 3`) 
 
 Toute arrivée dans un état terminal ou `awaiting_*` **notifie** (Telegram via `notifyJob`) avec : work item (sequence + titre), classe d'échec, raison en une phrase, et l'action possible (`relancer / voir la PR rescue / répondre au PM`). Les transitions step→step ne notifient pas (log seulement). Plus jamais de boucle silencieuse ni d'échec muet.
 
-## 5. Timeouts
+## 5. Stall, timeouts et taille des tâches (arbitré 2026-08-18)
 
-- **Wall-clock par rôle**, kill du process enfant : SIGTERM → 30 s de grâce → SIGKILL. Classé `agent_failure` reason=timeout (donc rescue si diff).
-- Défauts (env `AGENT_TIMEOUT_<ROLE>_MS` pour override) : builder **45 min**, qa **30 min**, reviewer/architect/merge-coordinator **20 min**, pm **10 min**.
-- Invariant : `lockDuration` BullMQ > max(timeout par rôle) + 5 min — le lock ne peut jamais expirer avant le kill (c'est l'inverse aujourd'hui : lock 30 min < un gros job builder → double-dispatch possible).
-- Le kill nettoie : process group entier (les enfants du driver aussi), worktree conservé pour rescue.
+**Le principe premier n'est pas le timeout, c'est la taille des tâches.** Un builder qui tourne 45–60 min sans retour est un défaut de découpage, pas un réglage : la boucle attribue des tâches **petites** (template agent-ready, ≤400 LOC) au pool d'agents, pour des itérations courtes et rapides. Le timeout est un filet, jamais un mode de fonctionnement.
+
+- **Détection de stall — le vrai signal** : aucun événement du driver (tool call, texte) depuis `STALL_TIMEOUT_MS` (défaut **5 min**) → kill anticipé, classé `agent_failure` reason=stall, rescue si diff. L'incident historique « 1 h de run pour découvrir que l'agent n'a pas pu commit » se détecte désormais en ~5 min, diff partiel sauvé en rescue PR.
+- **Wall-clock par rôle (filet)** : builder **20 min**, qa/reviewer/architect/merge-coordinator **15 min**, pm **10 min** — `AGENT_TIMEOUT_<ROLE>_MS` pour override ponctuel. Kill : SIGTERM → 30 s de grâce → SIGKILL, process group entier, worktree conservé pour rescue.
+- Invariant : `lockDuration` BullMQ > max(timeout par rôle) + 5 min — le lock ne peut jamais expirer avant le kill (aujourd'hui inversé : lock 30 min < gros job → double-dispatch possible).
+- **Un item qui déborde régulièrement du filet retourne au PM pour re-découpage** — pas d'augmentation silencieuse du timeout.
 
 ## 6. Budgets
 
 - **Tokens par job**, comptés sur le stream du driver : `BUDGET_TOKENS_<ROLE>` — défauts : builder **200k**, qa **150k**, reviewer **100k**, autres **80k** (les seuils du SOUL de Shelly, enfin en code). Dépassement = kill = `agent_failure` reason=budget. **Le comptage vient du driver contract (ADR-004 v2) : chaque driver DOIT exposer son usage ; un driver qui ne le peut pas est inéligible au chemin critique.**
-- **Plafond de dépense fleet/jour** : `FLEET_DAILY_SPEND_LIMIT` (défaut à fixer). Atteint → le puller se met en pause, les dispatches non-`urgent` sont refusés avec raison explicite, notification P0.
+- **Plafond de dépense fleet/jour** : `FLEET_DAILY_SPEND_LIMIT` (défaut **15 €/jour**, en config — arbitré). **Gate à l'admission uniquement, jamais de kill mid-run pour cause de plafond fleet** (arbitré : pas d'arrêt brutal des agents) : les jobs en cours terminent, le puller se met en pause, les dispatches non-`urgent` sont refusés avec raison explicite, notification P0.
+- **Un budget termine une tentative, jamais un work item** (arbitré) : l'épuisement (budget, timeout, stall) rend l'item **visible** — état terminal + diagnostic + retour au backlog. Rien n'est silencieusement abandonné : le PM re-découpe ou re-budgète, et l'item repart. Un item du backlog sera fait tôt ou tard — le budget protège contre les tentatives condamnées, pas contre le travail.
 
 ## 7. Annulation
 
@@ -122,8 +125,8 @@ La prod ne se rallume que si D1–D6 passent ; le bench tourne avant chaque reli
 
 ---
 
-## Questions ouvertes pour validation (Franck)
+## Arbitrages rendus (Franck, 2026-08-18)
 
-1. `FLEET_DAILY_SPEND_LIMIT` : quel montant ? (proposition : 15 €/jour, aligné sur les seuils P0 du SOUL Shelly)
-2. BullMQ `attempts: 1` + retries dans l'engine : OK pour ce transfert de responsabilité ? (changement de comportement le plus structurant du contrat)
-3. Timeout builder 45 min : assez pour les items [REFACTO] Zeno, ou on met 60 min et on compte sur le budget tokens comme vraie borne ?
+1. ✅ `FLEET_DAILY_SPEND_LIMIT` = 15 €/jour en config — **gate à l'admission, jamais de kill brutal mid-run** (§6).
+2. ✅ BullMQ `attempts: 1` + retries classifiés dans l'engine — « réessayer la même chose sans changement ne sert à rien ».
+3. ✅ Les longs timeouts sont rejetés comme cadre : **petites tâches + itérations courtes + détection de stall à 5 min** ; le wall-clock devient un filet réduit (§5). L'incident « 1 h sans commit » est le cas d'école que le stall-detect élimine.
