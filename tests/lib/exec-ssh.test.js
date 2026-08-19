@@ -28,4 +28,13 @@ describe('execSsh', () => {
     expect(r.exitCode).toBe(-1);
     expect(r.stderr).toContain('[timeout]');
   });
+
+  it('refuse explicitement quand DEVPANEL_SSH_TOOLS=off (mount API HTTP)', async () => {
+    process.env.DEVPANEL_SSH_TOOLS = 'off';
+    try {
+      const r = await execSsh('deploy@host', 'uptime');
+      expect(r.exitCode).toBe(-3);
+      expect(r.stderr).toContain('canal worker');
+    } finally { delete process.env.DEVPANEL_SSH_TOOLS; }
+  });
 });

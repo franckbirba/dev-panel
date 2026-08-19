@@ -13,12 +13,22 @@ export function execSsh(target, command, { timeoutMs = 15_000, sshBin = 'ssh' } 
   return new Promise((resolve) => {
     const start = Date.now();
     let settled = false;
+    let timer;
     const done = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve({ durationMs: Date.now() - start, ...result });
     };
+
+    if (process.env.DEVPANEL_SSH_TOOLS === 'off') {
+      return done({
+        stdout: '',
+        stderr: 'SSH tools désactivés sur ce mount (devpanel-api n\'a ni ssh ni clés — invariant ADR-003). '
+          + 'Utilise le canal worker, ou le mount stdio agents-host.',
+        exitCode: -3,
+      });
+    }
 
     let child;
     try {
@@ -35,7 +45,7 @@ export function execSsh(target, command, { timeoutMs = 15_000, sshBin = 'ssh' } 
 
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       try { child.kill('SIGTERM'); } catch { /* already dead */ }
       done({ stdout, stderr: stderr + '\n[timeout]', exitCode: -1 });
     }, timeoutMs);
