@@ -22,7 +22,8 @@ vi.mock('../../src/server/release-notes.js', () => ({
 // `import { getProjectByGithubRepo } from './db.js'` is rewritten to this
 // mock by Vitest's module hoisting.
 vi.mock('../../src/server/db.js', () => ({
-  getProjectByGithubRepo: (...a) => getProjectByGithubRepoMock(...a)
+  getProjectByGithubRepo: (...a) => getProjectByGithubRepoMock(...a),
+  writeSubjectLink: vi.fn(),
 }));
 
 import { mountGitHubWebhook, __setDispatchForTests } from '../../src/server/webhooks-github.js';
