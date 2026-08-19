@@ -74,7 +74,7 @@ describe('parseRendererPayload', () => {
 });
 
 describe('RENDERER_PAYLOAD_TYPES', () => {
-  it('lists exactly the seven DEVPA-218 component types', () => {
+  it('lists exactly the eight renderer payload types', () => {
     expect(RENDERER_PAYLOAD_TYPES).toEqual([
       'job-status',
       'console-stream',
@@ -83,6 +83,7 @@ describe('RENDERER_PAYLOAD_TYPES', () => {
       'inline-actions',
       'react-canvas',
       'queue-card',
+      'subject-constellation',
     ]);
   });
 
@@ -150,6 +151,7 @@ describe('exhaustive variant coverage', () => {
         case 'inline-actions':
         case 'react-canvas':
         case 'queue-card':
+        case 'subject-constellation':
           expect(example.type.length).toBeGreaterThan(0);
           break;
         default: {

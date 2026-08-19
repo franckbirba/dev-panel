@@ -1414,56 +1414,15 @@ server.tool(
 
 // ============================================================================
 // THREAD APPEND — inbound Telegram message → dashboard thread
+//
+// NOTE: handleThreadAppend/recordUntaggedDrop are defined at true module
+// top level (below, after buildServer() closes) rather than here, even
+// though the tool registration itself stays inside buildServer(). They
+// don't reference any buildServer()-local state (just module imports +
+// process.env), and `export` is only legal at module top level — it can't
+// live inside a function body. Moving them out is what makes them
+// importable for tests (tests/server/mcp-thread-append.test.js).
 // ============================================================================
-
-async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
-  const parsed = parseTag(raw_text);
-  if (!parsed) {
-    await recordUntaggedDrop({ raw_text, role, telegram_message_id });
-    return { appended: false, reason: 'no tag in message' };
-  }
-  const base = process.env.API_BASE || 'http://localhost:3030';
-  const adminKey = process.env.ADMIN_API_KEY;
-  if (!adminKey) return { appended: false, reason: 'ADMIN_API_KEY not set' };
-  // Default role = 'user'. thread_append is called by the Telegram plugin when
-  // an inbound message arrives — inbound means Franck typing. Shelly's own
-  // replies go through a separate path. Previous 'shelly' default caused every
-  // Franck message to show up in the dashboard as if Shelly authored it.
-  const resolvedRole = role || 'user';
-  try {
-    const r = await fetch(`${base}/api/threads/${parsed.subject_type}/${parsed.subject_id}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
-      body: JSON.stringify({
-        content: parsed.body,
-        role: resolvedRole,
-        source: 'telegram',
-        telegram_message_id
-      })
-    });
-    if (!r.ok) {
-      const err = await r.text().catch(() => '');
-      return { appended: false, reason: `api ${r.status}: ${err.slice(0, 200)}` };
-    }
-    const data = await r.json();
-    return { appended: true, thread_id: data.thread_id, role: resolvedRole };
-  } catch (err) {
-    return { appended: false, reason: `fetch failed: ${err.message}` };
-  }
-}
-
-async function recordUntaggedDrop({ raw_text, role, telegram_message_id }) {
-  const base = process.env.API_BASE || 'http://localhost:3030';
-  const adminKey = process.env.ADMIN_API_KEY;
-  if (!adminKey) return;
-  try {
-    await fetch(`${base}/api/admin/telegram-drops`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
-      body: JSON.stringify({ raw_text, role: role || null, telegram_message_id: telegram_message_id ?? null })
-    }).catch(() => {});
-  } catch {}
-}
 
 server.tool(
   'thread_append',
@@ -1841,6 +1800,62 @@ registerRuntimeTools(server);
   registerCapabilities(server);
 
   return server;
+}
+
+// ============================================================================
+// THREAD APPEND helpers — inbound Telegram message → dashboard thread.
+// Module top level (not inside buildServer()) so they're importable for
+// tests; the 'thread_append' tool registration that calls these lives
+// inside buildServer(), above.
+// ============================================================================
+
+export async function handleThreadAppend({ raw_text, role, telegram_message_id }) {
+  const parsed = parseTag(raw_text);
+  if (!parsed) {
+    await recordUntaggedDrop({ raw_text, role, telegram_message_id });
+    return { appended: false, reason: 'no tag in message' };
+  }
+  const base = process.env.API_BASE || 'http://localhost:3030';
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return { appended: false, reason: 'ADMIN_API_KEY not set' };
+  // Default role = 'user'. thread_append is called by the Telegram plugin when
+  // an inbound message arrives — inbound means Franck typing. Shelly's own
+  // replies go through a separate path. Previous 'shelly' default caused every
+  // Franck message to show up in the dashboard as if Shelly authored it.
+  const resolvedRole = role || 'user';
+  try {
+    const r = await fetch(`${base}/api/threads/${parsed.subject_type}/${parsed.subject_id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+      body: JSON.stringify({
+        content: parsed.body,
+        role: resolvedRole,
+        source: 'telegram',
+        telegram_message_id
+      })
+    });
+    if (!r.ok) {
+      const err = await r.text().catch(() => '');
+      return { appended: false, reason: `api ${r.status}: ${err.slice(0, 200)}` };
+    }
+    const data = await r.json();
+    return { appended: true, thread_id: data.thread_id, role: resolvedRole };
+  } catch (err) {
+    return { appended: false, reason: `fetch failed: ${err.message}` };
+  }
+}
+
+async function recordUntaggedDrop({ raw_text, role, telegram_message_id }) {
+  const base = process.env.API_BASE || 'http://localhost:3030';
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return;
+  try {
+    await fetch(`${base}/api/admin/telegram-drops`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey },
+      body: JSON.stringify({ raw_text, role: role || null, telegram_message_id: telegram_message_id ?? null })
+    }).catch(() => {});
+  } catch {}
 }
 
 // Module-scope singleton for stdio + any importer that grabs `{ server }`.

@@ -11,11 +11,8 @@ dev-panel is a plug & play bug/feature reporting system for React apps. Users re
 ## Commands
 
 ```bash
-# No build step needed (pure ESM)
-npm run build    # no-op
-
-# No tests yet
-npm run test     # no-op
+npm run build    # dashboard (chat + legacy) + widget
+npm test         # vitest run — la suite DOIT être verte, gated en CI (pr-checks.yml)
 
 # Run the CLI
 node bin/dev-panel.js <command>
