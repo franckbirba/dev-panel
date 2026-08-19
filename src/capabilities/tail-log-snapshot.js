@@ -29,7 +29,17 @@ export const tailLogSnapshot = {
       { timeoutMs: 20_000 }
     );
     if (r.exitCode !== 0) {
-      throw new Error(`journalctl exit ${r.exitCode}: ${r.stderr || r.stdout}`);
+      // Payload d'erreur, jamais de throw — même pattern que host-status.js
+      // (finding Minor de la review S2 : cohérence des 4 tools SSH).
+      return {
+        host,
+        unit,
+        title: `${unit} @ ${host}`,
+        state: 'error',
+        error: `journalctl exit ${r.exitCode}: ${r.stderr || r.stdout}`,
+        exit_code: r.exitCode,
+        lines: [],
+      };
     }
     return {
       host,
