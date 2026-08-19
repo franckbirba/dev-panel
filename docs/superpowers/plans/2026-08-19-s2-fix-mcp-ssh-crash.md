@@ -194,6 +194,52 @@ git add tests/capabilities/ssh-tools-no-crash.test.js
 git commit -m "test(mcp): les tools SSH survivent à un binaire ssh absent"
 ```
 
-### Task 4: Vérification prod (post-merge, manuel)
+### Task 4: Gating par mount — l'API refuse le SSH explicitement (invariant Vue 1 / ADR-003)
+
+**Contexte :** ces tools ont été conçus pour le mount **stdio agents-host** (où les clés SSH vivent). Le crash est arrivé parce que le même `server.js` est aussi monté dans devpanel-api via `ENABLE_MCP_HTTP` — un contexte sans ssh, pour lequel ils n'ont jamais été pensés. Ne plus crasher ne suffit pas : sur ce mount, ils doivent refuser proprement.
+
+**Files:**
+- Modify: `src/lib/exec-ssh.js` (le check, à la source — un seul endroit)
+- Modify: `docker-compose.yml` (env du service devpanel-api)
+- Test: ajouter un cas dans `tests/lib/exec-ssh.test.js`
+
+- [ ] **Step 1: Test**
+
+```js
+  it('refuse explicitement quand DEVPANEL_SSH_TOOLS=off (mount API HTTP)', async () => {
+    process.env.DEVPANEL_SSH_TOOLS = 'off';
+    try {
+      const r = await execSsh('deploy@host', 'uptime');
+      expect(r.exitCode).toBe(-3);
+      expect(r.stderr).toContain('canal worker');
+    } finally { delete process.env.DEVPANEL_SSH_TOOLS; }
+  });
+```
+
+- [ ] **Step 2: Implémenter** — en tête de la Promise dans `execSsh` :
+
+```js
+    if (process.env.DEVPANEL_SSH_TOOLS === 'off') {
+      return done({
+        stdout: '',
+        stderr: 'SSH tools désactivés sur ce mount (devpanel-api n\'a ni ssh ni clés — invariant ADR-003). '
+          + 'Utilise le canal worker, ou le mount stdio agents-host.',
+        exitCode: -3,
+      });
+    }
+```
+
+(`done` défini avant le bloc spawn ; conventions : -1 timeout, -2 spawn error, **-3 désactivé**.)
+
+- [ ] **Step 3:** `docker-compose.yml`, service `devpanel-api` : ajouter `DEVPANEL_SSH_TOOLS: "off"` dans son bloc `environment`. Le mount stdio agents-host (via `~/.mcp.json` / worker) ne pose pas la variable → comportement inchangé là où ça marche.
+
+- [ ] **Step 4:** Run `npx vitest run tests/lib/exec-ssh.test.js` (4 passed) puis commit :
+
+```bash
+git add src/lib/exec-ssh.js tests/lib/exec-ssh.test.js docker-compose.yml
+git commit -m "fix(mcp): SSH tools refusés explicitement sur le mount API HTTP (ADR-003)"
+```
+
+### Task 5: Vérification prod (post-merge, manuel)
 
 - [ ] Déployer (push main → CI). Puis : appeler `host_status` depuis un client MCP → réponse d'erreur propre OU données ; `docker ps` sur services → devpanel-api **ne redémarre pas**. C'est le critère de l'audit (« Up 3 minutes » ne doit plus jamais se reproduire par ce chemin).
