@@ -26,7 +26,11 @@ export const hostStatus = {
     ].join('; ');
     const r = await execSsh(target, cmd, { timeoutMs: 15_000 });
     if (r.exitCode !== 0) {
-      throw new Error(`ssh exit ${r.exitCode}: ${r.stderr || r.stdout}`);
+      return {
+        host,
+        error: `ssh exit ${r.exitCode}: ${r.stderr || r.stdout}`,
+        exit_code: r.exitCode,
+      };
     }
     const sections = r.stdout.split(/^---$/m).map((s) => s.trim());
     const [uptimeOut = '', memOut = '', dockerOut = ''] = sections;
