@@ -12,6 +12,7 @@ import type {
   InlineActionsPayload,
   ReactCanvasPayload,
   QueueCardPayload,
+  SubjectConstellationPayload,
   RendererPayload,
 } from "./chat-renderer-types";
 
@@ -164,6 +165,47 @@ export const QUEUE_CARD_EXAMPLE: QueueCardPayload = {
   footer: "3 pending, 1 expired",
 };
 
+export const SUBJECT_CONSTELLATION_EXAMPLE: SubjectConstellationPayload = {
+  type: "subject-constellation",
+  center: {
+    type: "work_item",
+    id: "ZENO-42",
+    summary: { name: "Pagination cassée sur le dashboard admissions" },
+  },
+  groups: {
+    capture: [
+      {
+        direction: "in",
+        rel: "promoted_to",
+        type: "capture",
+        id: "47",
+        summary: { content: "La pagination saute une page sur mobile" },
+      },
+    ],
+    pr: [
+      {
+        direction: "out",
+        rel: "fixed_by",
+        type: "pr",
+        id: "franckbirba/zeno#223",
+        summary: { name: "fix: pagination offset off-by-one" },
+      },
+    ],
+    memory: [
+      {
+        direction: "out",
+        rel: "retroed_in",
+        type: "memory",
+        id: "1842",
+        summary: { what: "Builder a bloqué 2x sur le même offset avant de trouver le fix" },
+      },
+    ],
+  },
+  counts: { capture: 1, pr: 1, memory: 1 },
+  edge_count: 3,
+  edges_error: null,
+};
+
 export const ALL_RENDERER_EXAMPLES: RendererPayload[] = [
   JOB_STATUS_EXAMPLE,
   CONSOLE_STREAM_EXAMPLE,
@@ -172,4 +214,5 @@ export const ALL_RENDERER_EXAMPLES: RendererPayload[] = [
   INLINE_ACTIONS_EXAMPLE,
   REACT_CANVAS_EXAMPLE,
   QUEUE_CARD_EXAMPLE,
+  SUBJECT_CONSTELLATION_EXAMPLE,
 ];
