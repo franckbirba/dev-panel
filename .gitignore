@@ -20,3 +20,4 @@ client_secret_*.json
 # staging step before `mv out → dist/dashboard`.
 apps/chat/out/
 apps/chat/.next/
+scripts/bench/bench.env

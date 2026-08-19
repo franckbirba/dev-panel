@@ -1,0 +1,4 @@
+{
+  "project": { "name": "devpanl-bench-sandbox" },
+  "commands": { "test": "npx vitest run", "build": "true", "lint": "true" }
+}
