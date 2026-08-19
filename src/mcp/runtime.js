@@ -13,8 +13,8 @@
 //   - Auth piggybacks on the SSH keys the agents host already has for
 //     deploy@<host>. No credentials in this file or in MCP requests.
 
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
+import { execSsh } from '../lib/exec-ssh.js';
 
 const HOSTS = {
   'hetzner-vps': 'deploy@62.238.0.167',
@@ -46,35 +46,6 @@ const TailLogSchema = z.object({
 });
 
 const SshStatusSchema = z.object({ host: HostSchema });
-
-function execSsh(target, command, { timeoutMs = 15_000 } = {}) {
-  return new Promise((resolve) => {
-    const child = spawn('ssh', [
-      '-o', 'BatchMode=yes',
-      '-o', 'ConnectTimeout=5',
-      '-o', 'StrictHostKeyChecking=accept-new',
-      target,
-      command,
-    ]);
-    let stdout = '';
-    let stderr = '';
-    const start = Date.now();
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      resolve({
-        stdout, stderr: stderr + '\n[timeout]',
-        exitCode: -1, durationMs: Date.now() - start,
-      });
-    }, timeoutMs);
-
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: code ?? 0, durationMs: Date.now() - start });
-    });
-  });
-}
 
 export function registerRuntimeTools(server) {
   server.tool(

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { spawn } from 'node:child_process';
+import { execSsh } from '../lib/exec-ssh.js';
 
 const HOSTS = {
   'hetzner-vps': 'deploy@62.238.0.167',
@@ -14,44 +14,6 @@ const COMMANDS = {
   'deploy-agents-dry':
     'cd ~/dev-panel && bash scripts/deploy-agents.sh --dry-run',
 };
-
-function execSsh(target, command, { timeoutMs = 30_000 } = {}) {
-  return new Promise((resolve) => {
-    const child = spawn('ssh', [
-      '-o',
-      'BatchMode=yes',
-      '-o',
-      'ConnectTimeout=5',
-      '-o',
-      'StrictHostKeyChecking=accept-new',
-      target,
-      command,
-    ]);
-    let stdout = '';
-    let stderr = '';
-    const start = Date.now();
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      resolve({
-        stdout,
-        stderr: stderr + '\n[timeout]',
-        exitCode: -1,
-        durationMs: Date.now() - start,
-      });
-    }, timeoutMs);
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr,
-        exitCode: code ?? 0,
-        durationMs: Date.now() - start,
-      });
-    });
-  });
-}
 
 export const runRemoteCheck = {
   name: 'run_remote_check',

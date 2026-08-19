@@ -165,6 +165,13 @@ services:
       # — init.sh generates them in sync with AFFINE_DB_PASSWORD.
       # Orchestration state (workflow_instances, agent_job_*) lives in the shared
       # pg (agent_memory db) via migration 003 — see src/server/workflow-instances.js.
+      # This mount has neither the ssh binary nor deploy keys — the SSH MCP
+      # tools (host_status, run_remote_check, tail_log, ssh_status) were
+      # designed for the stdio agents-host mount only. Refuse explicitly
+      # instead of crashing (S2 fix, ADR-003 invariant). The stdio mount
+      # (~/.mcp.json / worker) never sets this var, so behavior there is
+      # unchanged.
+      DEVPANEL_SSH_TOOLS: "off"
     volumes:
       - ./storage:/app/storage
       - ./dist:/app/dist
