@@ -284,10 +284,30 @@ for u in devpanel-worker shelly.service shelly-watchdog.timer shelly-relay.servi
     echo "(skipping enable of \$u — masked by shelly-switch.sh)"
     continue
   fi
+  # Fleet pause guard: quand le flag est posé, ne pas ré-enabler le worker
+  # (un reboot de l'host le rallumerait).
+  if [ \$u = devpanel-worker ] && [ -f /home/deploy/.fleet-paused ]; then
+    echo "(skipping enable of devpanel-worker — /home/deploy/.fleet-paused)"
+    systemctl disable devpanel-worker 2>/dev/null || true
+    continue
+  fi
   systemctl enable \$u 2>/dev/null || true
 done
 
-systemctl restart devpanel-worker
+# Fleet pause guard (2026-08-19) : quand /home/deploy/.fleet-paused existe,
+# la fleet est volontairement OFF (décision du 11/08 — architecture d'abord,
+# relight uniquement sur bench plancher vert, cf. docs/superpowers/plans/
+# 2026-08-18-devpanl-zeno-v2-readiness.md). Un deploy ne doit JAMAIS la
+# rallumer : le 19/08, le merge de la PR CI a redémarré le worker via ce
+# script → 3 dispatches non demandés en 3 minutes avant le stop manuel.
+# Pour rallumer : supprimer le flag PUIS relancer ce script (ou systemctl
+# start devpanel-worker à la main) — geste explicite, jamais un effet de bord.
+if [ -f /home/deploy/.fleet-paused ]; then
+  echo "(fleet-paused — devpanel-worker NON redémarré, et stoppé s'il tournait)"
+  systemctl stop devpanel-worker 2>/dev/null || true
+else
+  systemctl restart devpanel-worker
+fi
 systemctl restart shelly-relay.service
 # Reload shelly only if it's running AND not masked.
 shelly_state=\$(systemctl is-enabled shelly.service 2>/dev/null || true)
@@ -298,7 +318,9 @@ systemctl restart shelly-watchdog.timer
 systemctl restart shelly-daily-restart.timer
 
 sleep 3
-if systemctl is-active devpanel-worker > /dev/null; then
+if [ -f /home/deploy/.fleet-paused ]; then
+  echo "==> fleet-paused — health check worker sauté (OFF voulu)"
+elif systemctl is-active devpanel-worker > /dev/null; then
   echo "==> worker active — recent log:"
   journalctl -u devpanel-worker --no-pager -n 5 -o cat | tail -5
 else
