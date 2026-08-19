@@ -58,7 +58,7 @@ Worktree isolation per-repo (testée) · résolution cross-repo avec refus expli
 
 ### Phase S — Sécurité immédiate (aujourd'hui, ~1 h, indépendant de tout)
 
-- [ ] **S1.** Révoquer le token `ghp_…` du remote Zeno (GitHub → Settings → tokens), re-câbler le remote en deploy key SSH, `git fetch/pull` les clones Zeno + EDMS.
+- [ ] **S1 (périmètre élargi le 2026-08-19).** Le token `ghp_…` du remote Zeno est en réalité **le token studio-wide de la table `projects`** : réutilisé pour chaque nouveau projet (constaté à la création de BENCH) et **sérialisé en clair par les réponses MCP** `studio_add_project`/`studio_list_projects` (deuxième fuite). Rotation complète : (1) révoquer le token chez GitHub, (2) générer un remplaçant (fine-grained, scope repos du studio) et le remplacer dans la table `projects`, (3) re-câbler les remotes des clones agents-host (Zeno, EDMS, dev-panel, bench) en deploy key SSH, (4) fixer la sérialisation MCP pour ne plus jamais retourner `github_token` (chip de tâche déjà créée).
 - [ ] **S2.** Fixer le crash MCP SSH (F2) — l'API sert encore le dashboard/captures même prod-fleet OFF ; un tool qui tue le container reste un bug prod. Petit chantier : try/catch + timeout + erreur JSON-RPC propre + test vitest.
 - [ ] **S3.** Purge cosmétique de la file et des workflow_instances zombies (pour que `fleet_status` redevienne un instrument fiable pendant le chantier).
 
