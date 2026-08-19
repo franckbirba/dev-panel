@@ -122,5 +122,5 @@ Inchangé sur le fond :
 ### Dette consciente (inchangée)
 Bridge Shelly↔dashboard complet, fusion des 2 backends chat, suppression `src/dashboard/`, container driver par défaut, PR #271, vieilles PRs (#265, #206, #92), cartes UI manquantes.
 
-### Estimation (révisée après ADR-005/006)
-S ~1 h · A 2–3 j · B 1–2 j (parallèle) · C 5–8 j (C1–C6 : 3–5 j ; C7 harness : 1–2 j ; C8 graphe/boucles : 2–3 j) · D 1–2 j (matrice ×2 drivers + D7) · **~3 semaines pour le moteur complet**. Le go Zeno peut arriver avant la fin : dès C1–C6 + colonne plancher verte sur D1–D2 (seuil à arbitrer, ADR-004 v2 question 2), le refacto démarre en multi-tier pendant que C7–C8 se terminent.
+### Estimation (révisée après ADR-005/006 + arbitrage seuil du 2026-08-19)
+S ~1 h · A 2–3 j · B 1–2 j (parallèle) · C 5–8 j (C1–C6 : 3–5 j ; C7 harness : 1–2 j ; C8 graphe/boucles : 2–3 j) · D 1–2 j (matrice ×2 drivers + D7) · **~3 semaines pour le moteur complet**. **Le go Zeno exige le bench COMPLET D1–D7 colonne plancher verte** (arbitrage Franck : « devpanl doit permettre de dev de vraies applis complexes et lourdes » — pas de go partiel). Cible réaliste du premier dispatch Zeno : **~semaine du 8 septembre**. Les seuls leviers d'accélération légitimes : paralléliser C7/C8 avec C1–C6 (plans séparés, agents séparés) et pré-écrire le bench (D) pendant la phase A.

@@ -36,7 +36,7 @@ Historique factuel à ne pas re-litiger :
 - (+) Multi-tier divise le coût des rôles volumineux et colle à la réalité quota (Max ~220k tokens/5 h vs ~1M/5 h de besoin fleet).
 - (−) La matrice de test du chemin critique double (×2 drivers). C'est le prix du requirement — assumé.
 - (−) Le plancher impose des exigences au moteur : retry-with-feedback d'enveloppe (contrat §4.2 v1.1), prompts plus structurés, outils plus stricts. C'est voulu : **ces exigences SONT le renforcement du moteur.**
-- (−) Séquencement Zeno V2 : si la colonne plancher n'est pas verte au moment du go, le refacto démarre en multi-tier (builder plancher là où le bench passe, sinon claude) — décision explicite de Franck, en connaissance du masquage.
+- (−) Séquencement Zeno V2 : **le refacto ne démarre qu'au bench complet D1–D7 plancher vert** (arbitrage 2026-08-19) — la date de démarrage Zeno est donc directement indexée sur la vitesse des phases C+D, sans raccourci possible.
 
 ## Alternatives rejetées
 
@@ -49,6 +49,4 @@ Historique factuel à ne pas re-litiger :
 1. **Plancher = Qwen3 seul pour le bench, AVEC garde anti-overfit** (crainte exprimée par Franck : « j'ai peur que le harness soit trop calé sur comment Qwen fonctionne »). La garde, à deux étages :
    - **Règle de comblement (ADR-005)** : un gap se comble toujours par une capacité générique H* (utile à tout modèle faible), jamais par un workaround nommé-Qwen. `submit_result` aide DeepSeek autant que Qwen ; la limite 200 lignes de `create-file` protège de n'importe quel coder faible.
    - **Canary de rotation** : périodiquement (à chaque évolution majeure du harness), le scénario D1 du bench tourne sur un **second modèle plancher** (DeepSeek) — pas le bench complet, juste le smoke qui détecterait une accommodation Qwen-spécifique. Le harness s'adapte aux modèles *faibles*, pas à *Qwen*.
-2. **Seuil de go Zeno : OUVERT** — reformulé pour décision (Franck n'avait pas compris la version précédente) :
-   - **Option A** : on lance Zeno dès que Qwen3 passe D1–D2 (un item simple + une chaîne de 3), protégé par `max_parallel=2` + reviewer Claude, pendant que D3–D7 se finissent en parallèle. Plus rapide (~2–4 j gagnés).
-   - **Option B** : on attend D1–D4 (+ gestion d'échec + timeout/budget) avant le premier dispatch Zeno. Plus de filet, moins de babysitting au démarrage.
+2. ✅ **Seuil de go Zeno : tranché (2026-08-19) — le bench COMPLET.** « À partir de toutes les épreuves : devpanl doit permettre de développer de vraies applis complexes et lourdes. » Pas de go partiel, pas de démarrage en D1–D2 : **D1–D7, colonne plancher verte, avant le premier dispatch Zeno.** Le bench complet EST la définition de « devpanl peut porter une vraie appli » — D3/D4 (échecs, bornes) et D7 (boucles) sont précisément ce qui distingue un moteur de démo d'un moteur de production.
