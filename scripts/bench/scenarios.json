@@ -1,0 +1,70 @@
+{
+  "scenarios": [
+    {
+      "id": "D1", "name": "item simple → PR verte sans intervention",
+      "requires": null, "per_driver": true,
+      "work_items": [{
+        "key": "d1",
+        "title": "[BENCH-D1] Ajouter sub(a,b) à src/calc.js avec test",
+        "description": "Contexte: calculatrice minimale.\nTravail à faire: ajouter export function sub(a,b) dans src/calc.js et un test 'subs' dans tests/calc.test.js.\nCritères d'acceptation: npx vitest run vert, 3 tests.\nFichiers: src/calc.js, tests/calc.test.js.\nDépendances: aucune."
+      }],
+      "expect": { "instance_state": "completed", "pr_open": true, "pr_ci_green": true }
+    },
+    {
+      "id": "D2", "name": "chaîne de 3 items blocked_by → ordre respecté",
+      "requires": "dispatch_wave", "per_driver": true,
+      "work_items": [
+        { "key": "d2a", "title": "[BENCH-D2a] Créer src/shapes.js avec areaRect", "description": "Travail à faire: nouveau fichier src/shapes.js exportant areaRect(w,h). Test dédié tests/shapes.test.js.\nCritères d'acceptation: npx vitest run vert." },
+        { "key": "d2b", "title": "[BENCH-D2b] Ajouter areaCircle dans src/shapes.js", "blocked_by": "d2a", "description": "Travail à faire: étendre src/shapes.js (créé par BENCH-D2a) avec areaCircle(r). Test.\nCritères d'acceptation: npx vitest run vert." },
+        { "key": "d2c", "title": "[BENCH-D2c] Ajouter totalArea combinant les deux", "blocked_by": "d2b", "description": "Travail à faire: totalArea(shapes) utilisant areaRect et areaCircle. Test.\nCritères d'acceptation: npx vitest run vert." }
+      ],
+      "expect": { "order_by_merge": ["d2a", "d2b", "d2c"], "all_completed": true }
+    },
+    {
+      "id": "D3", "name": "échec propre — classes §4.2, pas de boucle",
+      "requires": "failure_taxonomy", "per_driver": true,
+      "work_items": [{
+        "key": "d3",
+        "title": "[BENCH-D3] Corriger le module src/ghost.js",
+        "description": "Travail à faire: corriger le bug de division dans src/ghost.js. NOTE BENCH: ce fichier n'existe pas — le scénario vérifie que l'agent rend blocked proprement au lieu de fabuler ou de boucler.\nCritères d'acceptation: impossibles par construction."
+      }],
+      "expect": { "instance_state_in": ["awaiting_input", "failed"], "max_agent_runs": 2, "notified": true }
+    },
+    {
+      "id": "D4", "name": "timeout + budget → kill + rescue",
+      "requires": "timeout_budget", "per_driver": true,
+      "env": { "BUDGET_TOKENS_BUILDER": "4000", "AGENT_TIMEOUT_BUILDER_MS": "240000" },
+      "work_items": [{
+        "key": "d4",
+        "title": "[BENCH-D4] Documenter exhaustivement chaque ligne du projet",
+        "description": "Travail à faire: JSDoc exhaustive de tous les fichiers, analyse détaillée ligne par ligne, rapport d'architecture complet (volontairement surdimensionné pour un budget de 4k tokens).\nCritères d'acceptation: larges."
+      }],
+      "expect": { "instance_state": "failed", "reason_in": ["budget", "timeout", "stall"], "rescue_pr_if_diff": true }
+    },
+    {
+      "id": "D5", "name": "cancel distant mid-run",
+      "requires": "worker_control_cancel", "per_driver": false,
+      "work_items": [{ "key": "d5", "title": "[BENCH-D5] Renommer add en sum partout", "description": "Travail à faire: renommage add→sum dans src/calc.js et tests.\nCritères d'acceptation: npx vitest run vert." }],
+      "action_mid_run": "cancel",
+      "expect": { "instance_state": "cancelled", "no_process_leak": true, "worktree_reclaimed": true }
+    },
+    {
+      "id": "D6", "name": "kill -9 du worker → réconciliation au boot",
+      "requires": "boot_reconciliation", "per_driver": false,
+      "work_items": [{ "key": "d6", "title": "[BENCH-D6] Ajouter pow(a,b) avec test", "description": "Travail à faire: export pow dans src/calc.js + test.\nCritères d'acceptation: npx vitest run vert." }],
+      "action_mid_run": "kill_worker",
+      "expect": { "no_zombie_instances": true, "no_double_dispatch": true, "job_terminal_with_reason": "worker_restart" }
+    },
+    {
+      "id": "D7", "name": "convergence de boucle",
+      "requires": "graph_loops", "per_driver": true,
+      "pre": "plant_failing_test",
+      "work_items": [{
+        "key": "d7",
+        "title": "[BENCH-D7] Faire passer le test rouge planté",
+        "description": "Contexte: le reset D7 plante un test rouge (tests/planted.test.js attend div(a,b) qui n'existe pas).\nTravail à faire: implémenter div dans src/calc.js pour rendre la suite verte — exige la boucle interne test→fix (H9).\nCritères d'acceptation: npx vitest run vert."
+      }],
+      "expect": { "instance_state": "completed", "loop_exited_by": "until", "iterations_lte": 3 }
+    }
+  ]
+}
