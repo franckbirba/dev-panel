@@ -914,6 +914,32 @@ export function createRouter(config = {}) {
     }
   });
 
+  // /admin/workflow-instances?work_item_id=<uuid> — read-only instance list
+  // for a work item. Consumer: the engine bench (scripts/bench/assert.mjs)
+  // polls instance states to assert scenario outcomes. Same admin-key gate
+  // and same "services is the source of truth" rationale as by-plane-id.
+  router.get('/admin/workflow-instances', authenticateAdmin, async (req, res) => {
+    try {
+      const { work_item_id } = req.query;
+      if (!work_item_id) {
+        return res.status(400).json({ error: 'work_item_id query param required' });
+      }
+      const { listByWorkItem } = await import('./workflow-instances.js');
+      const rows = await listByWorkItem(String(work_item_id));
+      res.json(rows.map((r) => ({
+        id: r.id,
+        work_item_id: r.work_item_id,
+        workflow_name: r.workflow_name,
+        status: r.status,
+        current_step: r.current_step,
+        last_event_at: r.last_event_at,
+        last_job_id: r.last_job_id ?? null
+      })));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // /admin/captures — cross-project capture list for the agents host. The
   // per-project GET /api/captures requires X-API-Key (one project at a time);
   // Shelly + ephemeral agents only carry ADMIN_API_KEY, hence this admin twin.
