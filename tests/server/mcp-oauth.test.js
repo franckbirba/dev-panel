@@ -1,4 +1,4 @@
-import { test, describe, afterEach } from 'node:test';
+import { test, describe, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 
 const TEST_SECRET = 'a'.repeat(64);
