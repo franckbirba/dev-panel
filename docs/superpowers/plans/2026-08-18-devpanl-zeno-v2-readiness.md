@@ -84,6 +84,15 @@ Pour une fleet d'agents, la doc n'est pas un à-côté : SOULs, CLAUDE.md et ski
 - [ ] **B4.** Purge des docs mortes (docs/SHELLY.md OpenClaw, skills/README stale, .claude/commands/devops.md Makefile) + `.agents/deploy/SOUL.md` aligné sur le deploy CI réel.
 - [ ] **B5.** Re-générer les SOULs depuis les ADRs A3 (et le gabarit de souls du plugin devpanl mis à jour pour les futurs repos).
 
+### État au 2026-08-20 (fin de la première salve d'exécution)
+
+**Mergé sur main** — S2 (#307), C1 (#309), bench D (#308), fleet guard (#310 + durcissement), C5/C6 readiness + puller OFF (#311), C7 harness pi (#313), C8 graphe + boucles (#312), plus `dispatch_wave` (ADR-001) et la stack locale.
+**En review** — C2 (sémantique d'échec : les 6 sous-chantiers du contrat, rebasés, 394 tests worker verts).
+**Vérifié en local** — le worker démarre contre Redis + Postgres locaux, les 4 workflows chargent sous le nouveau validateur de graphe, le puller est fermé par deux verrous indépendants.
+**Preuve plancher** — le stress-test d'édition a tourné en live contre Qwen3-Coder : 3/3 conditions (>70 KB, multi-hunk, apostrophes FR), deux fois.
+
+Restent avant le bench complet : merge de C2, migration du YAML `work-item` vers le format graphe (pour exercer boucles + `tests_green` en vrai), et le premier run `bench-engine.sh` sur la fixture locale.
+
 ### Phase C — Build spec-driven (3–5 j, chaque chantier = son plan writing-plans)
 
 Les chantiers de l'audit, re-scopés par les specs de A :
