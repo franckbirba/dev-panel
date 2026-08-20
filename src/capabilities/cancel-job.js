@@ -10,9 +10,20 @@ import { z } from 'zod';
 // `agents` queue today, but other workflows may add their own and we
 // don't want this verb to silently miss them.
 //
-// For *active* jobs we POST `<WORKER_API>/kill/<job_id>` so the worker
-// can interrupt the running `claude -p` subprocess. For waiting / delayed
-// / completed / failed jobs we just `job.remove()`.
+// Engine contract §7 — for *active* jobs the PRIMARY cancel path is now
+// Redis pub/sub on `worker:control` (src/worker/worker-control.js): every
+// worker instance subscribes and kills the matching process group if it
+// owns the job. This replaces the old socket.io-hub-only stub and, more
+// importantly, doesn't require services-API → agents-host HTTP
+// reachability — Redis is already shared infra both sides depend on for
+// BullMQ itself. `POST <WORKER_API>/kill/<job_id>` remains as a FALLBACK,
+// tried when the pub/sub publish itself fails outright (Redis unreachable)
+// so an operator still has a way to kill a job on a known single-worker
+// deployment. Cancel is always accepted on a live job; on an already
+// terminal job the queue lookup below returns not_found / removed, which
+// is the idempotent no-op the contract requires.
+//
+// For waiting / delayed / completed / failed jobs we just `job.remove()`.
 //
 // The capability name *is* `cancel_job`, so there is no alias to register
 // — the raw `cancel_job` registration in `src/mcp/server.js` has been
@@ -53,40 +64,56 @@ export const cancelJob = {
     }
 
     if (prevState === 'active') {
-      // Kill the running subprocess by asking the worker. The worker
-      // listens on a per-host HTTP endpoint; from devpanel-api this hits
-      // the local-only loopback the worker is configured to expose, or
-      // the WORKER_API env override. Failure to reach the worker is
-      // surfaced explicitly — we don't pretend the kill succeeded.
+      // Primary path (§7): publish on the worker:control Redis channel.
+      // Every worker instance is subscribed; whichever one owns this job_id
+      // in its activeProcesses map kills the process group. This works
+      // even when the API and the worker aren't directly HTTP-reachable —
+      // they already share Redis for BullMQ itself.
       try {
-        const resp = await fetch(`${WORKER_API}/kill/${encodeURIComponent(job_id)}`, {
-          method: 'POST',
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!resp.ok) {
-          return {
-            job_id,
-            action: 'kill_failed',
-            ok: false,
-            prev_state: prevState,
-            message: `Worker /kill returned ${resp.status}.`,
-          };
-        }
+        const { getSharedRedisConnection } = await import('../server/bullmq.js');
+        const { publishCancel } = await import('../worker/worker-control.js');
+        await publishCancel(getSharedRedisConnection(), job_id);
         return {
           job_id,
           action: 'killed',
           ok: true,
           prev_state: prevState,
-          message: `Kill signal sent to worker for ${job_id}.`,
+          message: `Cancel published on worker:control for ${job_id}.`,
         };
-      } catch (err) {
-        return {
-          job_id,
-          action: 'kill_unreachable',
-          ok: false,
-          prev_state: prevState,
-          message: `Cannot reach worker API at ${WORKER_API}: ${err.message}`,
-        };
+      } catch (pubErr) {
+        // Fallback: local HTTP kill. Only reachable when the caller and the
+        // worker share a host/tunnel (WORKER_API), but better than nothing
+        // when Redis itself is the thing that's down.
+        try {
+          const resp = await fetch(`${WORKER_API}/kill/${encodeURIComponent(job_id)}`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!resp.ok) {
+            return {
+              job_id,
+              action: 'kill_failed',
+              ok: false,
+              prev_state: prevState,
+              message: `worker:control publish failed (${pubErr.message}) and worker /kill returned ${resp.status}.`,
+            };
+          }
+          return {
+            job_id,
+            action: 'killed',
+            ok: true,
+            prev_state: prevState,
+            message: `worker:control publish failed (${pubErr.message}); fell back to HTTP kill for ${job_id}.`,
+          };
+        } catch (httpErr) {
+          return {
+            job_id,
+            action: 'kill_unreachable',
+            ok: false,
+            prev_state: prevState,
+            message: `Cannot cancel ${job_id}: worker:control publish failed (${pubErr.message}) and worker API unreachable at ${WORKER_API} (${httpErr.message}).`,
+          };
+        }
       }
     }
 
