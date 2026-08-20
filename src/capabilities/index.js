@@ -32,6 +32,7 @@ import { fleetStatus } from './fleet-status.js';
 import { captureList } from './capture-list.js';
 import { captureDetail } from './capture-detail.js';
 import { dispatchWorkItem } from './dispatch-work-item.js';
+import { dispatchWave } from './dispatch-wave.js';
 import { cancelJob } from './cancel-job.js';
 import { tailLogSnapshot } from './tail-log-snapshot.js';
 import { jobLogSnapshot } from './job-log-snapshot.js';
@@ -56,6 +57,7 @@ export const CAPABILITIES = [
   captureDetail,
   promoteCapture,
   dispatchWorkItem,
+  dispatchWave,
   cancelJob,
   tailLogSnapshot,
   jobLogSnapshot,
