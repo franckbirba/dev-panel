@@ -1,7 +1,7 @@
 // src/worker/dispatch.js
 import { getCachedWorkflows } from './engine.js';
 import { firstAgentOf } from './workflow-graph.js';
-import { createInstance, updateInstance } from '../server/workflow-instances.js';
+import { createInstance, updateInstance, loadInstance } from '../server/workflow-instances.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 import { getProjectByPlaneId } from '../server/db.js';
 
@@ -290,8 +290,25 @@ export async function enqueueWorkflowStart({
     });
   } catch (e) {
     // Unique-index collision varies by backend: sqlite code, pg '23505'.
+    // Engine contract §9 — idempotence: a work item that already has a live
+    // instance refuses with the EXISTING instance_id (same pattern as
+    // project_not_linked's message field), not just a bare error string.
+    // The caller (Shelly / dashboard / MCP) can then show "already running
+    // as instance <id>" instead of a dead-end "already_running".
     if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === '23505') {
-      return { ok: false, error: 'already_running' };
+      let existing_instance_id = null;
+      try {
+        const existing = await loadInstance({ work_item_id: plane.work_item_id, workflow_name: workflow });
+        existing_instance_id = existing?.id ?? null;
+      } catch { /* best-effort — the refusal itself is not compromised if this lookup fails */ }
+      return {
+        ok: false,
+        error: 'already_running',
+        instance_id: existing_instance_id,
+        message: existing_instance_id
+          ? `Work item ${plane.work_item_id} already has a live "${workflow}" instance (${existing_instance_id}). Re-dispatch is only allowed from a terminal state; pass force:true to cancel-then-redispatch.`
+          : `Work item ${plane.work_item_id} already has a live "${workflow}" instance.`
+      };
     }
     throw e;
   }
