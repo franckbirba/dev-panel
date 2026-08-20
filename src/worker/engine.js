@@ -4,6 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseYAML } from 'yaml';
 import { predicates } from './predicates.js';
+import { buildWorkflowGraph } from './workflow-graph.js';
 import {
   loadInstance, createInstance, updateInstance, loadInstanceById
 } from '../server/workflow-instances.js';
@@ -57,6 +58,14 @@ export function getCachedWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
 // Test seam: clear the cache between cases that fiddle with workflow YAMLs.
 export function __resetWorkflowCacheForTests() { _cache.clear(); }
 
+// ADR-006 — two YAML shapes are accepted:
+//   - legacy `steps:` (list + `on:` transitions) — the 4 shipped workflows.
+//   - new `nodes:` + `edges:` + `loops:` (graph, hand-authored loops).
+// Both are validated for step/branch/predicate integrity as before, then
+// BOTH get a `flow.graph = { nodes, edges, loops }` built by
+// buildWorkflowGraph() — which is where the cycle-must-be-declared rule
+// lives (workflow-graph.js). Legacy flows keep `flow.steps` untouched so
+// triggerNext()/dispatch.js need no changes to keep working.
 export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
   const files = readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
   const flows = {};
@@ -68,16 +77,31 @@ export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
     try { doc = parseYAML(raw); }
     catch (e) { throw new Error(`workflow ${f}: YAML parse failed: ${e.message}`); }
     if (!doc?.name) throw new Error(`workflow ${f} missing name`);
-    if (!Array.isArray(doc.steps) || doc.steps.length === 0) {
-      throw new Error(`workflow ${doc.name} has no steps`);
-    }
-    doc.on_exhaustion = doc.on_exhaustion || 'block';
-    // Collect predicate references and validate they resolve.
-    for (const step of doc.steps) {
-      for (const branch of Object.values(step.on || {})) {
-        if (branch?.when) usedPredicates.add(branch.when);
+
+    const isGraphFormat = Array.isArray(doc.nodes) || Array.isArray(doc.edges);
+    if (isGraphFormat) {
+      if (!Array.isArray(doc.nodes) || doc.nodes.length === 0) {
+        throw new Error(`workflow ${doc.name} has no nodes`);
+      }
+      for (const node of doc.nodes) {
+        if (!node?.id) throw new Error(`workflow ${doc.name}: node missing id`);
+      }
+      for (const edge of doc.edges || []) {
+        if (edge?.when) usedPredicates.add(edge.when);
+      }
+    } else {
+      if (!Array.isArray(doc.steps) || doc.steps.length === 0) {
+        throw new Error(`workflow ${doc.name} has no steps`);
+      }
+      // Collect predicate references and validate they resolve.
+      for (const step of doc.steps) {
+        for (const branch of Object.values(step.on || {})) {
+          if (branch?.when) usedPredicates.add(branch.when);
+        }
       }
     }
+    doc.on_exhaustion = doc.on_exhaustion || 'block';
+
     if (flows[doc.name]) {
       throw new Error(`duplicate workflow name: ${doc.name} (in ${f})`);
     }
@@ -85,23 +109,25 @@ export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
   }
 
   for (const flow of Object.values(flows)) {
-    const declared = new Set(flow.steps.map(s => s.agent));
-    for (const step of flow.steps) {
-      for (const [status, branch] of Object.entries(step.on || {})) {
-        if (!branch) continue;
-        if (branch.terminal) continue;
-        if (branch.workflow) continue; // cross-workflow jump (e.g. replan)
-        if (!branch.next) {
-          throw new Error(
-            `workflow ${flow.name}/${step.agent}/${status}: branch has no action ` +
-            `(needs one of terminal, next, workflow)`
-          );
-        }
-        if (!declared.has(branch.next)) {
-          throw new Error(
-            `workflow ${flow.name}/${step.agent}/${status}: ` +
-            `next:${branch.next} is not a declared step agent in this workflow`
-          );
+    if (Array.isArray(flow.steps)) {
+      const declared = new Set(flow.steps.map(s => s.agent));
+      for (const step of flow.steps) {
+        for (const [status, branch] of Object.entries(step.on || {})) {
+          if (!branch) continue;
+          if (branch.terminal) continue;
+          if (branch.workflow) continue; // cross-workflow jump (e.g. replan)
+          if (!branch.next) {
+            throw new Error(
+              `workflow ${flow.name}/${step.agent}/${status}: branch has no action ` +
+              `(needs one of terminal, next, workflow)`
+            );
+          }
+          if (!declared.has(branch.next)) {
+            throw new Error(
+              `workflow ${flow.name}/${step.agent}/${status}: ` +
+              `next:${branch.next} is not a declared step agent in this workflow`
+            );
+          }
         }
       }
     }
@@ -112,6 +138,15 @@ export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
       throw new Error(`unknown predicate: ${name}`);
     }
   }
+
+  // ADR-006 §Décision 1 — the validator: every cycle MUST belong to a
+  // declared loop (until + max_iterations + budget_tokens). Runs after the
+  // shape-specific checks above so a malformed doc fails with the clearer
+  // "no steps" / "no nodes" message first.
+  for (const flow of Object.values(flows)) {
+    flow.graph = buildWorkflowGraph(flow);
+  }
+
   return flows;
 }
 

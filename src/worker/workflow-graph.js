@@ -1,0 +1,241 @@
+// src/worker/workflow-graph.js
+// ADR-006 — graphe explicite + boucles bornées.
+//
+// Builds the internal { nodes, edges, loops } representation for a workflow
+// document (either the legacy `steps:` shape or the new `nodes:`/`edges:`/
+// `loops:` shape), and validates the central rule:
+//
+//   Every cycle in the graph MUST belong to a declared loop — one with
+//   `until`, `max_iterations`, and `budget_tokens`. A cycle that escapes
+//   every declared loop is rejected at load time, by name, so "why does
+//   this loop?" becomes a question of reading the YAML instead of
+//   archaeology on logs.
+//
+// Cycle detection is a real DFS over the edge graph (three-color: white /
+// gray / black), not a heuristic — any back-edge (an edge into a node
+// currently on the DFS stack) proves a cycle exists, and the DFS stack at
+// that point IS the cycle.
+
+/**
+ * Build the { nodes, edges, loops } graph for a workflow document already
+ * carrying either `steps:` (legacy) or `nodes:`/`edges:`/`loops:` (new).
+ * Returns the graph; throws (with the flow name in the message) on any
+ * validation failure.
+ */
+export function buildWorkflowGraph(doc) {
+  const graph = Array.isArray(doc.steps)
+    ? graphFromLegacySteps(doc)
+    : graphFromNodesEdges(doc);
+
+  validateNodeReferences(doc.name, graph);
+  validateLoopDeclarations(doc.name, graph);
+  validateCyclesAreDeclared(doc.name, graph);
+
+  return graph;
+}
+
+// ---------------------------------------------------------------------
+// New format: doc.nodes / doc.edges / doc.loops, taken close to verbatim.
+// ---------------------------------------------------------------------
+function graphFromNodesEdges(doc) {
+  const nodes = Array.isArray(doc.nodes) ? doc.nodes.map(n => ({ ...n })) : [];
+  const edges = Array.isArray(doc.edges) ? doc.edges.map(e => ({ ...e })) : [];
+  const loops = Array.isArray(doc.loops) ? doc.loops.map(l => ({ ...l, _legacy: false })) : [];
+  return { nodes, edges, loops };
+}
+
+// ---------------------------------------------------------------------
+// Legacy format: doc.steps (list) with `on:` transitions. Converted to the
+// same nodes/edges shape so ONE validator (and one engine execution path,
+// eventually) covers both. Cycles found here are synthesized into an
+// implicit, `_legacy: true` loop bounded by the existing `max_revisions` /
+// `on_exhaustion` fields — this preserves current prod behavior for the 4
+// shipped YAMLs exactly (see engine.js triggerNext, which still reads
+// `flow.max_revisions` directly for legacy flows).
+// ---------------------------------------------------------------------
+function graphFromLegacySteps(doc) {
+  const nodes = doc.steps.map(s => ({ id: s.agent, agent: s.agent }));
+  const edges = [];
+  for (const step of doc.steps) {
+    for (const [status, branch] of Object.entries(step.on || {})) {
+      if (!branch || !branch.next) continue; // terminal: no graph edge
+      if (branch.workflow) continue; // cross-workflow jump (e.g. replan) — not an intra-graph edge
+      edges.push({ from: step.agent, on: status, to: branch.next, when: branch.when || null });
+    }
+  }
+
+  const cycles = findAllCycles({ nodes, edges });
+  const loops = [];
+  const seen = new Set();
+  for (const cycle of cycles) {
+    const bodySorted = [...cycle].sort();
+    const key = bodySorted.join(',');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    loops.push({
+      id: `legacy:${cycle.join('->')}`,
+      body: cycle,
+      until: null, // legacy exit is via predicate/on-branch shape, not a single `until`
+      max_iterations: doc.max_revisions ?? null,
+      budget_tokens: null, // legacy flows have no per-loop token budget (global only)
+      on_exhaustion: doc.on_exhaustion || 'block',
+      _legacy: true
+    });
+  }
+
+  return { nodes, edges, loops };
+}
+
+// ---------------------------------------------------------------------
+// Validation passes
+// ---------------------------------------------------------------------
+function validateNodeReferences(flowName, graph) {
+  const ids = new Set(graph.nodes.map(n => n.id));
+  for (const edge of graph.edges) {
+    if (edge.terminal) continue;
+    if (edge.workflow) continue; // cross-workflow jump — target lives in another flow
+    if (!ids.has(edge.from)) {
+      throw new Error(`workflow ${flowName}: edge references unknown node "${edge.from}" (from)`);
+    }
+    if (edge.to != null && !ids.has(edge.to)) {
+      throw new Error(`workflow ${flowName}: edge references unknown node "${edge.to}" (to)`);
+    }
+  }
+  for (const loop of graph.loops) {
+    for (const nodeId of loop.body || []) {
+      if (!ids.has(nodeId)) {
+        throw new Error(
+          `workflow ${flowName}: loop "${loop.id}" references unknown node "${nodeId}" in body`
+        );
+      }
+    }
+  }
+}
+
+function validateLoopDeclarations(flowName, graph) {
+  for (const loop of graph.loops) {
+    // Legacy-synthesized loops are bounded by max_revisions (translated
+    // already) — they aren't "hand declared" so they're exempt from the
+    // until/budget completeness check. Hand-authored loops (new format)
+    // must be fully specified.
+    if (loop._legacy) continue;
+
+    if (!loop.until) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" is missing "until" (exit predicate)`);
+    }
+    if (loop.max_iterations == null) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" is missing "max_iterations"`);
+    }
+    if (!Number.isFinite(loop.max_iterations) || loop.max_iterations <= 0) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" has an invalid "max_iterations" (must be a positive number)`);
+    }
+    if (loop.budget_tokens == null) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" is missing "budget_tokens" (budget)`);
+    }
+    if (!Number.isFinite(loop.budget_tokens) || loop.budget_tokens <= 0) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" has an invalid "budget_tokens" (must be a positive number)`);
+    }
+    if (!Array.isArray(loop.body) || loop.body.length === 0) {
+      throw new Error(`workflow ${flowName}: loop "${loop.id}" is missing a non-empty "body"`);
+    }
+
+    // The declaration must correspond to a REAL cycle among its body nodes
+    // — otherwise it's a lie: bounds on a loop that can't actually repeat.
+    const bodySet = new Set(loop.body);
+    const hasInternalEdge = graph.edges.some(e =>
+      !e.terminal && bodySet.has(e.from) && bodySet.has(e.to) &&
+      // at least one edge must go "backward" (create a real cycle), not
+      // just a straight-line pass through the same node set.
+      true
+    );
+    const cyclesAmongBody = findAllCycles({
+      nodes: graph.nodes.filter(n => bodySet.has(n.id)),
+      edges: graph.edges.filter(e => !e.terminal && bodySet.has(e.from) && bodySet.has(e.to))
+    });
+    if (!hasInternalEdge || cyclesAmongBody.length === 0) {
+      throw new Error(
+        `workflow ${flowName}: loop "${loop.id}" declares body [${loop.body.join(', ')}] but the edges ` +
+        `among those nodes form no cycle — declaration does not match the graph`
+      );
+    }
+  }
+}
+
+// Every cycle detected in the FULL graph must be a subset of some declared
+// loop's body. If any cycle escapes all declared loops, reject by name.
+function validateCyclesAreDeclared(flowName, graph) {
+  const cycles = findAllCycles(graph);
+  const declaredBodies = graph.loops.map(l => new Set(l.body || []));
+
+  for (const cycle of cycles) {
+    const cycleSet = new Set(cycle);
+    const covered = declaredBodies.some(bodySet =>
+      [...cycleSet].every(n => bodySet.has(n))
+    );
+    if (!covered) {
+      throw new Error(
+        `workflow ${flowName}: undeclared cycle detected among nodes [${cycle.join(' -> ')}] — ` +
+        `every cycle must belong to a declared loop (with until, max_iterations, budget_tokens)`
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+// DFS-based cycle detection (three-color algorithm), not a heuristic.
+// Returns a list of cycles, each as an ordered array of node ids
+// [n1, n2, ..., nk] where nk has an edge back to n1. De-duplicated by
+// their node-set (a cycle found via two different entry points is the
+// same cycle).
+// ---------------------------------------------------------------------
+export function findAllCycles({ nodes, edges }) {
+  const adjacency = new Map();
+  for (const n of nodes) adjacency.set(n.id, []);
+  for (const e of edges) {
+    if (e.terminal) continue;
+    if (e.to == null) continue;
+    if (!adjacency.has(e.from)) adjacency.set(e.from, []);
+    adjacency.get(e.from).push(e.to);
+  }
+
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map([...adjacency.keys()].map(id => [id, WHITE]));
+  const stack = [];
+  const stackIndex = new Map();
+  const cycles = [];
+  const seenKeys = new Set();
+
+  function visit(u) {
+    color.set(u, GRAY);
+    stack.push(u);
+    stackIndex.set(u, stack.length - 1);
+
+    for (const v of adjacency.get(u) || []) {
+      if (!adjacency.has(v)) continue; // dangling edge — reported separately
+      const c = color.get(v);
+      if (c === WHITE) {
+        visit(v);
+      } else if (c === GRAY) {
+        // Back-edge u -> v: the cycle is stack[stackIndex(v) .. end].
+        const startIdx = stackIndex.get(v);
+        const cycle = stack.slice(startIdx);
+        const key = [...cycle].sort().join(',');
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          cycles.push(cycle);
+        }
+      }
+      // BLACK: already fully explored, no new cycle through this edge.
+    }
+
+    stack.pop();
+    stackIndex.delete(u);
+    color.set(u, BLACK);
+  }
+
+  for (const id of adjacency.keys()) {
+    if (color.get(id) === WHITE) visit(id);
+  }
+
+  return cycles;
+}
