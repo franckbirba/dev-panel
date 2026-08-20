@@ -97,6 +97,61 @@ async function lookupProjectByPlaneId(plane_project_id) {
   return getProjectByPlaneId(plane_project_id) || null;
 }
 
+// ADR-003 §2 / engine-contract §9-10: "enqueueWorkflowStart consults the
+// readiness (cached 10 min) and refuses a dispatch into a `fail` project —
+// the precondition stops being a memory note and becomes a guard." Cache is
+// per-process, keyed by the internal project id (not plane_project_id — the
+// readiness route takes the internal id).
+const READINESS_CACHE_TTL_MS = 10 * 60 * 1000;
+let _readinessCache = new Map(); // project_id -> { at, ready }
+export function __resetReadinessCacheForTests() { _readinessCache = new Map(); }
+
+// Deux situations que le premier jet confondait, et que la review a
+// séparées (2026-08-20) :
+//
+//   (a) on n'a JAMAIS su — aucun verdict en cache et l'endpoint est
+//       injoignable/500. Refuser tout dispatch dès que l'admin API hoquette
+//       serait une panne pire que la fuite qu'on garde. → open.
+//   (b) on SAIT que c'est `fail` — un verdict `fail` est en cache, même
+//       périmé, et l'endpoint est maintenant injoignable. Repasser à
+//       `ready:true` produirait exactement le faux vert que l'ADR-003
+//       interdit, au moment précis où il est le plus dangereux (dispatch
+//       actif vers un repo dont le remote porte un token en clair).
+//       → on GARDE le dernier verdict connu jusqu'à ce qu'un `pass` le
+//       remplace.
+//
+// Autrement dit : le cache expire pour rafraîchir un `pass`, jamais pour
+// oublier un `fail`. Missing API_BASE/ADMIN_API_KEY (dev local, tests
+// unitaires) saute le check — même échappatoire que lookupProjectByPlaneId.
+async function checkReadinessGuard(projectId) {
+  const apiBase = process.env.API_BASE;
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!apiBase || !adminKey || !projectId) return { ready: true };
+
+  const cached = _readinessCache.get(projectId);
+  if (cached && Date.now() - cached.at < READINESS_CACHE_TTL_MS) {
+    return { ready: cached.ready };
+  }
+
+  // Verdict à retenir si l'appel échoue : un `fail` connu survit à
+  // l'expiration du cache ; un `pass` périmé, lui, ne bloque personne.
+  const fallback = cached && cached.ready === false
+    ? { ready: false, stale: true, checks: cached.checks }
+    : { ready: true };
+
+  const url = `${apiBase.replace(/\/$/, '')}/api/admin/projects/${encodeURIComponent(projectId)}/readiness`;
+  try {
+    const r = await fetch(url, { headers: { 'X-Admin-Key': adminKey }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return fallback;
+    const body = await r.json().catch(() => null);
+    if (!body || typeof body.ready !== 'boolean') return fallback;
+    _readinessCache.set(projectId, { at: Date.now(), ready: body.ready, checks: body.checks });
+    return { ready: body.ready, checks: body.checks };
+  } catch {
+    return fallback;
+  }
+}
+
 async function publishEvent(event, data) {
   const adminKey = process.env.ADMIN_API_KEY;
   if (!adminKey) return;
@@ -174,6 +229,21 @@ export async function enqueueWorkflowStart({
         message: `No projects row with plane_project_id=${resolvedProjectId} has local_path set. Run \`dev-panel admin link-project <name> --plane-id ${resolvedProjectId}\` on the services VPS.`
       };
     }
+
+    // ADR-003 §2 / engine-contract §10: refuse a dispatch into a project
+    // whose readiness is a confirmed `fail` (e.g. A3 — a leaked token in the
+    // remote URL). See checkReadinessGuard for why this fails open rather
+    // than closed on an unreachable/unreadable readiness endpoint.
+    const readiness = await checkReadinessGuard(proj.id);
+    if (readiness.ready === false) {
+      const failedChecks = (readiness.checks || []).filter(c => c.status === 'fail').map(c => c.id).join(', ');
+      return {
+        ok: false,
+        error: 'readiness_fail',
+        message: `Project ${proj.name || resolvedProjectId} failed readiness (${failedChecks || 'see /api/admin/projects/:id/readiness'}). Run \`devpanl:doctor\` or hit the readiness endpoint directly to see the failing checks.`
+      };
+    }
+
     context = { ...context, project_root: proj.local_path };
     // Propagate the resolved project_id forward so downstream steps in
     // engine.triggerNext don't have to re-resolve.

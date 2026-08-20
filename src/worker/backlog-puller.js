@@ -17,7 +17,12 @@
 //   BACKLOG_PULL_ENABLED       "true"/"false"  default "false" — opt-in
 //   BACKLOG_PULL_STATE_GROUPS  comma-separated, default "unstarted"
 //   BACKLOG_PULL_LABEL         only pull issues with this label (e.g. "agent-ready")
-//   BACKLOG_PULL_MAX_PER_TICK  safety cap; default 3
+//   BACKLOG_PULL_MAX_PER_TICK  safety cap; default 0 — OFF. engine-contract
+//                              §10: "Le backlog-puller est OFF par défaut."
+//                              Two incidents (11/08, 19/08) had the puller
+//                              dispatch unrequested jobs on worker startup;
+//                              activation is now opt-in per project, set
+//                              this explicitly to enable pulling.
 //   PLANE_BASE_URL             e.g. https://plane.devpanl.dev
 //   PLANE_API_KEY
 //   PLANE_WORKSPACE_SLUG       e.g. devpanl
@@ -36,7 +41,17 @@ const ENABLED = (process.env.BACKLOG_PULL_ENABLED ?? 'false') === 'true';
 const STATE_GROUPS = (process.env.BACKLOG_PULL_STATE_GROUPS || 'unstarted')
   .split(',').map(s => s.trim()).filter(Boolean);
 const LABEL_FILTER = (process.env.BACKLOG_PULL_LABEL || '').trim();
-const MAX_PER_TICK = parseInt(process.env.BACKLOG_PULL_MAX_PER_TICK || '3', 10);
+const MAX_PER_TICK = parseInt(process.env.BACKLOG_PULL_MAX_PER_TICK ?? '0', 10);
+
+// Logged once at startup only (tick() runs every INTERVAL_MS forever; a
+// per-tick log here would be exactly the silent-but-noisy failure mode this
+// change is trying to avoid). See startBacklogPuller() and tick().
+let _budgetZeroLogged = false;
+function logBudgetZeroOnce() {
+  if (_budgetZeroLogged) return;
+  _budgetZeroLogged = true;
+  console.log('[BacklogPuller] puller désactivé (BACKLOG_PULL_MAX_PER_TICK=0)');
+}
 
 function hasPlaneConfig() {
   return Boolean(PLANE_BASE_URL && PLANE_API_KEY && PLANE_WORKSPACE_SLUG && PROJECT_IDS.length);
@@ -186,6 +201,10 @@ async function pullProject(projectId, budget) {
 
 export async function tick() {
   if (!ENABLED) return;
+  if (MAX_PER_TICK <= 0) {
+    logBudgetZeroOnce();
+    return; // zero Plane calls — the puller must not even list issues at budget 0
+  }
   if (!hasPlaneConfig()) {
     console.warn('[BacklogPuller] Plane config missing, skipping tick');
     return;
@@ -214,6 +233,7 @@ export function startBacklogPuller() {
     `[BacklogPuller] every ${Math.round(INTERVAL_MS / 1000)}s, states=${STATE_GROUPS.join(',')}, ` +
     `label=${LABEL_FILTER || '(any)'}, max/tick=${MAX_PER_TICK}, projects=${PROJECT_IDS.join(',')}`
   );
+  if (MAX_PER_TICK <= 0) logBudgetZeroOnce();
   // Fire once at startup, then on interval. Drift-free via setTimeout chain.
   const run = async () => {
     try { await tick(); } catch (err) { console.error('[BacklogPuller] tick threw:', err); }

@@ -3,6 +3,7 @@ import express from 'express';
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { activeProcesses, worker, getMode } from './index.js';
+import { registerReadinessRoute } from './readiness-route.js';
 
 const PORT = parseInt(process.env.WORKER_API_PORT || '3099');
 const SHELLY_RESTART_LOG = '/home/deploy/logs/shelly-restarts.log';
@@ -110,6 +111,12 @@ app.get('/shelly-log', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// GET /readiness/:project_id?local_path=<path>
+// ADR-003 §2 — agents-host half of the readiness contract (A1-A3). Called
+// by services (src/server/readiness.js) via WORKER_API_URL rather than SSH
+// from the API — see readiness-route.js for the full rationale.
+registerReadinessRoute(app);
 
 // POST /kill/:jobId
 app.post('/kill/:jobId', (req, res) => {

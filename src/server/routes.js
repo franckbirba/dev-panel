@@ -914,6 +914,29 @@ export function createRouter(config = {}) {
     }
   });
 
+  // /admin/projects/:id/readiness — ADR-003 §2. Runs S1-S3 (services-side,
+  // synchronous DB checks) + delegates A1-A3 (agents-host checks: clone
+  // exists, fetch freshness, no token in the remote URL) to the worker via
+  // WORKER_API_URL — never SSH from the API (that's the architecture that
+  // crashed it before, see ADR-003 "Alternatives rejetées"). When the worker
+  // is unreachable, src/server/readiness.js degrades A1-A3 to explicit
+  // `warn` — never a false `pass`. Consumers: devpanl:doctor (when
+  // API_BASE+ADMIN_API_KEY are set) and worker/dispatch.js's dispatch guard
+  // (10-min in-memory cache, refuses fail-state dispatches).
+  router.get('/admin/projects/:id/readiness', authenticateAdmin, async (req, res) => {
+    try {
+      const project = getProjectById(req.params.id);
+      if (!project) {
+        return res.status(404).json({ error: 'project_not_found' });
+      }
+      const { checkReadiness } = await import('./readiness.js');
+      const result = await checkReadiness(project);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // /admin/workflow-instances?work_item_id=<uuid> — read-only instance list
   // for a work item. Consumer: the engine bench (scripts/bench/assert.mjs)
   // polls instance states to assert scenario outcomes. Same admin-key gate
