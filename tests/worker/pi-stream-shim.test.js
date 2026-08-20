@@ -216,6 +216,87 @@ describe('createPiStreamShim', () => {
   });
 });
 
+// H6 (docs/architecture/harness-pi.md §4.2, ADR-005 H6): pi already emits
+// cumulative usage on every assistant message_end; the shim tracked it
+// (totalUsage/getTotalUsage) but only exposed it as a poll-at-the-end
+// getter, not a live signal. Budget enforcement needs to react DURING the
+// run, not after exit — so createPiStreamShim gains an optional onUsage
+// callback fired every time the cumulative usage snapshot updates. This is
+// deliberately just a signal: the shim/driver make no policy decision
+// here (no kill, no threshold check) — that's the worker's job (C2,
+// running in parallel — see src/worker/pi-driver.js's spawnPi onUsage
+// passthrough for where a caller would wire BUDGET_TOKENS_<ROLE> logic).
+describe('createPiStreamShim onUsage', () => {
+  it('fires onUsage with the cumulative snapshot on every assistant message_end that carries usage', () => {
+    const usageCalls = [];
+    const shim = createPiStreamShim({
+      onTranslatedEvent: () => {},
+      onUsage: (usage) => usageCalls.push(usage),
+    });
+    shim.handle({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 10, output: 5, totalTokens: 15 } },
+    });
+    shim.handle({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'b' }], usage: { input: 30, output: 12, totalTokens: 42 } },
+    });
+    expect(usageCalls).toEqual([
+      { input: 10, output: 5, totalTokens: 15 },
+      { input: 30, output: 12, totalTokens: 42 },
+    ]);
+  });
+
+  it('does not fire onUsage when an assistant message carries no usage field', () => {
+    const usageCalls = [];
+    const shim = createPiStreamShim({
+      onTranslatedEvent: () => {},
+      onUsage: (usage) => usageCalls.push(usage),
+    });
+    shim.handle({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'no usage here' }] },
+    });
+    expect(usageCalls).toHaveLength(0);
+  });
+
+  it('does not fire onUsage for non-assistant message_end (user/toolResult roles)', () => {
+    const usageCalls = [];
+    const shim = createPiStreamShim({
+      onTranslatedEvent: () => {},
+      onUsage: (usage) => usageCalls.push(usage),
+    });
+    shim.handle({
+      type: 'message_end',
+      message: { role: 'user', content: [{ type: 'text', text: 'prompt' }], usage: { input: 1, output: 0, totalTokens: 1 } },
+    });
+    expect(usageCalls).toHaveLength(0);
+  });
+
+  it('works fine when onUsage is not provided at all (backward compatible)', () => {
+    const shim = createPiStreamShim({ onTranslatedEvent: () => {} });
+    expect(() => {
+      shim.handle({
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 10, output: 5, totalTokens: 15 } },
+      });
+    }).not.toThrow();
+    expect(shim.getTotalUsage()).toEqual({ input: 10, output: 5, totalTokens: 15 });
+  });
+
+  it('getTotalUsage still reflects the latest snapshot alongside onUsage firing', () => {
+    const shim = createPiStreamShim({
+      onTranslatedEvent: () => {},
+      onUsage: () => {},
+    });
+    shim.handle({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 10, output: 5, totalTokens: 15 } },
+    });
+    expect(shim.getTotalUsage()).toEqual({ input: 10, output: 5, totalTokens: 15 });
+  });
+});
+
 describe('parsePiLine', () => {
   it('parses valid JSON', () => {
     expect(parsePiLine('{"type":"session","id":"x"}')).toEqual({ type: 'session', id: 'x' });

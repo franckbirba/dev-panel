@@ -21,3 +21,6 @@ client_secret_*.json
 apps/chat/out/
 apps/chat/.next/
 scripts/bench/bench.env
+
+# Sentinel de l'extension pi submit_result (lu puis supprimé par le driver)
+.pi-submit-result.json

@@ -38,13 +38,72 @@
 //   - persists translated events through appendEvent (same shape as Claude's
 //     stream-json, via pi-stream-shim)
 import { spawn, spawnSync } from 'child_process';
-import { createWriteStream } from 'fs';
+import { createWriteStream, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { recordHarnessEvent } from './harness-telemetry.js';
 import { readSoul, parseResult } from './prompt-builder.js';
 import { selectPiModel } from './select-pi-model.js';
 import { createPiStreamShim, parsePiLine } from './pi-stream-shim.js';
+
+// H3 fix (docs/architecture/harness-pi.md §4.1): the submit-result
+// extension (infra/pi-extensions/submit-result) writes the closing
+// envelope to this sentinel file in the job's cwd via a tool call, instead
+// of relying on the model to print trailing JSON that parseResult() can
+// find. Reading it is the FIRST thing tried on a clean exit — see
+// readSubmitResultEnvelope below and its call site in the 'close' handler.
+const SUBMIT_RESULT_FILENAME = process.env.PI_SUBMIT_RESULT_FILENAME || '.pi-submit-result.json';
+
+const SUBMIT_RESULT_REQUIRED_TOP = [
+  'status', 'summary', 'artifacts', 'handoff', 'memory_writes_count', 'blockers', 'issues_found'
+];
+const SUBMIT_RESULT_STATUS_ENUM = ['done', 'blocked', 'failed'];
+
+// Validate the sentinel file's contents against the same envelope v1
+// contract prompt-builder.js#validate enforces, so a malformed or stale
+// file can never masquerade as a real result. Returns an error string, or
+// null if valid.
+function validateSubmitResultEnvelope(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return 'not an object';
+  for (const k of SUBMIT_RESULT_REQUIRED_TOP) {
+    if (!(k in obj)) return `missing field: ${k}`;
+  }
+  if (!SUBMIT_RESULT_STATUS_ENUM.includes(obj.status)) return `invalid status: ${obj.status}`;
+  if (typeof obj.summary !== 'string' || !obj.summary.trim()) return 'summary must be non-empty string';
+  if (typeof obj.artifacts !== 'object' || obj.artifacts === null) return 'artifacts must be object';
+  if (typeof obj.handoff !== 'object' || obj.handoff === null) return 'handoff must be object';
+  if (typeof obj.memory_writes_count !== 'number') return 'memory_writes_count must be number';
+  if (!Array.isArray(obj.blockers)) return 'blockers must be array';
+  if (!Array.isArray(obj.issues_found)) return 'issues_found must be array';
+  return null;
+}
+
+// Read + validate + delete the submit_result sentinel file. Exported for
+// unit testing. Deletion is best-effort and happens on every call (valid
+// or not) so a stale envelope from an earlier run in the same worktree can
+// never leak into the next job — worktrees are reused across job retries
+// in some driver configurations, and a leftover sentinel would otherwise
+// silently "succeed" a job that never actually called submit_result.
+export function readSubmitResultEnvelope(cwd) {
+  const path = join(cwd, SUBMIT_RESULT_FILENAME);
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return { ok: false, error: 'no sentinel file' };
+  } finally {
+    try { unlinkSync(path); } catch { /* best-effort cleanup */ }
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, error: `sentinel file is not valid JSON: ${e.message}` };
+  }
+  const err = validateSubmitResultEnvelope(parsed);
+  if (err) return { ok: false, error: `sentinel file failed validation: ${err}` };
+  return { ok: true, data: parsed };
+}
 
 // Pi can't be told to emit structured JSON via a CLI flag (no
 // `--response-format json_schema` on pi 0.74) the way goose can via DeepInfra's
@@ -188,6 +247,10 @@ const DEFAULT_PI_BIN = process.env.PI_BIN
 //   - loop-guard: blocks identical tool calls repeated > N times, accepts
 //     a closing-protocol marker for clean termination. Same structural
 //     fix mini-swe-agent provides via its yaml.
+//   - submit-result (H3): the job-closing envelope becomes a tool call
+//     (`submit_result`) instead of trailing JSON text the model has to
+//     remember to print. See readSubmitResultEnvelope above and the
+//     extension's own index.ts header for the full rationale.
 const PI_EXTENSIONS_ROOT = process.env.PI_EXTENSIONS_ROOT
   || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
 const DEFAULT_PI_EXTENSIONS = [
@@ -205,7 +268,8 @@ const DEFAULT_PI_EXTENSIONS = [
   // Rejects >200 lines and rejects pseudo-JSON-shaped content — the exact
   // Qwen3 failure mode that wasted job 4168 on DEVPA-225. See the
   // extension's index.ts header comment for the incident.
-  join(PI_EXTENSIONS_ROOT, 'create-file')
+  join(PI_EXTENSIONS_ROOT, 'create-file'),
+  join(PI_EXTENSIONS_ROOT, 'submit-result')
 ];
 
 // Pi built-in tool allowlist (passed via --tools). We keep everything
@@ -215,7 +279,94 @@ const DEFAULT_PI_EXTENSIONS = [
 // is already Aider-style SEARCH/REPLACE).
 const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
 
-export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir }) {
+// H8 fix (docs/architecture/harness-pi.md §3, ADR-005 H8): `env:
+// {...process.env}` on the spawn below used to propagate the agents host's
+// ambient NODE_ENV=production straight into every pi job. That's the root
+// cause of the 2026-08-11 lockfile drift: a role's SOUL/bash_exec running
+// `npm install` inside the worktree silently picked up `--omit=dev`
+// (npm's NODE_ENV=production behavior) and dropped devDependencies from
+// the lockfile without the model — or anyone — asking for that.
+//
+// buildPiEnv() is the single place that decides what a pi subprocess sees.
+// It is deliberately NOT a strip-everything allowlist: mcp-bridge (the pi
+// extension that gives agents MCP access) spawns every configured MCP
+// server by copying ITS OWN process.env into the child (see
+// infra/pi-extensions/mcp-bridge/index.ts#connectServer) — so PLANE_*,
+// ADMIN_API_KEY, PG_*, GITHUB_TOKEN etc. are load-bearing for pi jobs, not
+// incidental leakage, and dropping them would break every MCP tool call a
+// job makes. What IS safe and correct to strip: variables that only
+// exist because pi itself was spawned from an `npm run`-flavored parent
+// (npm injects `npm_config_*` / `npm_lifecycle_*` into every child of an
+// npm script) and would otherwise silently alter the behavior of any
+// npm/node command the model runs via bash_exec inside the job — the same
+// class of bug as the NODE_ENV leak, just not yet observed in an incident.
+//
+// Exported for unit testing (pure function, no process spawn).
+const NODE_ENV_POLLUTION_PREFIXES = ['npm_config_', 'npm_lifecycle_', 'npm_package_'];
+const NODE_ENV_POLLUTION_KEYS = ['NODE_OPTIONS', 'npm_execpath', 'npm_node_execpath'];
+
+export function buildPiEnv({ baseEnv = process.env, jobId, agentRole, PI_MCP_CONFIG, home } = {}) {
+  const HOME = home || baseEnv.HOME || '/home/deploy';
+  const env = { ...baseEnv };
+
+  for (const key of Object.keys(env)) {
+    if (NODE_ENV_POLLUTION_PREFIXES.some(p => key.startsWith(p)) || NODE_ENV_POLLUTION_KEYS.includes(key)) {
+      delete env[key];
+    }
+  }
+
+  // Force development so devDependencies never get silently omitted by
+  // any npm invocation the job makes (npm install, npm ci, npm run test
+  // via the .devpanlrc.json commands.test path). Forced, not just
+  // defaulted-if-unset, because the leak is specifically the HOST'S
+  // ambient production value winning — an operator who genuinely wants a
+  // production-flavored job env has no legitimate reason to want it via
+  // ambient inheritance rather than an explicit per-job override.
+  env.NODE_ENV = 'development';
+
+  // Deterministic git identity so a `git commit` run from inside the job
+  // (bash_exec, or a model probing repo state) never fails on "Author
+  // identity unknown" when the agents host's ~/.gitconfig has no global
+  // user.name/user.email set (or a job runs in an environment — like a
+  // container — that doesn't inherit it at all). The worker itself
+  // remains the sole real commit authority (automation.js#verifyAndCommit)
+  // — this identity exists so pi's OWN sandbox git calls don't crash, not
+  // to attribute real commits to "pi agent". Respect an explicit operator
+  // override instead of clobbering it.
+  if (!env.GIT_AUTHOR_NAME) env.GIT_AUTHOR_NAME = `devpanl-agent-${agentRole || 'unknown'}`;
+  if (!env.GIT_AUTHOR_EMAIL) env.GIT_AUTHOR_EMAIL = 'agent@devpanl.dev';
+  if (!env.GIT_COMMITTER_NAME) env.GIT_COMMITTER_NAME = env.GIT_AUTHOR_NAME;
+  if (!env.GIT_COMMITTER_EMAIL) env.GIT_COMMITTER_EMAIL = env.GIT_AUTHOR_EMAIL;
+
+  env.JOB_ID = jobId;
+  env.AGENT_ROLE = agentRole;
+  if (PI_MCP_CONFIG) env.PI_MCP_CONFIG = PI_MCP_CONFIG;
+  env.PATH = [
+    join(HOME, '.npm-global/bin'),
+    join(HOME, '.bun/bin'),
+    join(HOME, '.local/bin'),
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin'
+  ].join(':');
+
+  return env;
+}
+
+// onUsage (H6, docs/architecture/harness-pi.md §4.2, ADR-005 H6): optional
+// callback invoked with pi's cumulative usage snapshot ({ input, output,
+// totalTokens, ... — whatever pi's provider reports) every time it updates
+// during the run — NOT just once at exit. This is the driver's half of
+// mid-run budget enforcement: pi already streams usage per assistant
+// message (pi-stream-shim.js), so the signal exists, it just wasn't
+// reachable before exit. spawnPi does not itself interpret the numbers,
+// compare against BUDGET_TOKENS_<ROLE>, or kill the process — that policy
+// belongs to the caller (worker/index.js, under active development in a
+// parallel worktree for C2/failure-semantics) via `activeProcesses.get
+// (jobId).process` or by throwing/killing from inside its own callback.
+// Kept as a plain optional param (not a new required field) so existing
+// callers that don't pass it keep working unchanged.
+export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir, onUsage }) {
   return new Promise((resolve, reject) => {
     const selected = selectPiModel(agentRole);
     if (!selected) {
@@ -261,20 +412,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
 
     const proc = spawn(DEFAULT_PI_BIN, args, {
       cwd,
-      env: {
-        ...process.env,
-        JOB_ID: jobId,
-        AGENT_ROLE: agentRole,
-        PI_MCP_CONFIG,
-        PATH: [
-          join(process.env.HOME || '/home/deploy', '.npm-global/bin'),
-          join(process.env.HOME || '/home/deploy', '.bun/bin'),
-          join(process.env.HOME || '/home/deploy', '.local/bin'),
-          '/usr/local/bin',
-          '/usr/bin',
-          '/bin'
-        ].join(':')
-      },
+      env: buildPiEnv({ jobId, agentRole, PI_MCP_CONFIG }),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -296,6 +434,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
 
     // Hook the shim: each translated event gets persisted through appendEvent.
     const shim = createPiStreamShim({
+      onUsage,
       onTranslatedEvent: (event) => {
         // Re-derive type/subtype from the synthesized event the same way
         // stream-parser.classifyEvent would, since appendEvent expects them.
@@ -375,12 +514,26 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
       });
 
       if (code === 0) {
-        // Try parseResult on the last assistant text first — when Qwen3
-        // actually emitted the closing JSON, this is the same contract as
-        // the Claude path. When it didn't (most long runs), fall back to a
-        // synthesized payload built from observable git state + tool-use
-        // count. verifyAndCommit in automation.js still gates status=done
-        // on a real git diff, so a synthesized envelope can't ship a fake PR.
+        // H3 read order (docs/architecture/harness-pi.md §4.1):
+        //   1. submit_result sentinel file — the tool-call-driven envelope.
+        //      Reliable by construction: getting here means the model made
+        //      a structured tool call with a schema-validated payload, not
+        //      free text the harness has to guess at.
+        //   2. parseResult on the last assistant text — legacy path, still
+        //      tried for models/runs that close with the JSON directly
+        //      instead of calling submit_result (e.g. Claude, if ever
+        //      routed through pi; or partial adoption during rollout).
+        //   3. synthesizePiResult — introspects observable git state as a
+        //      last resort when neither of the above produced anything.
+        // verifyAndCommit in automation.js still gates status=done on a
+        // real git diff regardless of which path produced the envelope, so
+        // none of these can ship a fake PR on their own.
+        const submitted = readSubmitResultEnvelope(cwd);
+        if (submitted.ok) {
+          resolve(JSON.stringify(submitted.data));
+          return;
+        }
+
         const parsed = parseResult(lastAssistantText || '');
         if (parsed.ok) {
           resolve(lastAssistantText);

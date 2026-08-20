@@ -32,7 +32,7 @@
 // Pi tool ids are like `call_5ae8596bbfe6d322`; we keep them verbatim as
 // claude's `tool_use.id` so tool_use ↔ tool_result correlation works.
 
-export function createPiStreamShim({ onTranslatedEvent }) {
+export function createPiStreamShim({ onTranslatedEvent, onUsage }) {
   // Track tool_use ids we've emitted so tool_result events can correlate.
   // Currently used only for sanity logging — stream-parser doesn't care.
   const seenToolCallIds = new Set();
@@ -88,7 +88,18 @@ export function createPiStreamShim({ onTranslatedEvent }) {
       const role = msg.role;
       if (role === 'assistant') {
         // Accumulate the latest cumulative usage snapshot.
-        if (msg.usage) totalUsage = msg.usage;
+        if (msg.usage) {
+          totalUsage = msg.usage;
+          // H6: live signal for mid-run budget enforcement (the worker's
+          // job, not this shim's — we only report). getTotalUsage() below
+          // is poll-at-the-end; onUsage is the push equivalent so a caller
+          // can react while pi is still running instead of only after
+          // exit. Fire-and-forget — never throw into the parse loop over a
+          // caller's callback bug.
+          if (typeof onUsage === 'function') {
+            try { onUsage(msg.usage); } catch { /* caller's problem, not ours */ }
+          }
+        }
         emit({
           type: 'assistant',
           message: {
