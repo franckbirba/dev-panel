@@ -106,14 +106,23 @@ const READINESS_CACHE_TTL_MS = 10 * 60 * 1000;
 let _readinessCache = new Map(); // project_id -> { at, ready }
 export function __resetReadinessCacheForTests() { _readinessCache = new Map(); }
 
-// Fails OPEN, not closed: readiness.js (services-side) already degrades
-// A1-A3 to explicit `warn` (never a false pass) when the worker is
-// unreachable — this guard only needs to catch a *confirmed* `fail`, which
-// requires a successful readiness response. A network error / non-200 here
-// means we genuinely don't know, and refusing every dispatch whenever the
-// admin API hiccups would be a worse outage than the leak this guards
-// against. Missing API_BASE/ADMIN_API_KEY (local dev, unit tests) skips the
-// check entirely — same escape hatch as lookupProjectByPlaneId.
+// Deux situations que le premier jet confondait, et que la review a
+// séparées (2026-08-20) :
+//
+//   (a) on n'a JAMAIS su — aucun verdict en cache et l'endpoint est
+//       injoignable/500. Refuser tout dispatch dès que l'admin API hoquette
+//       serait une panne pire que la fuite qu'on garde. → open.
+//   (b) on SAIT que c'est `fail` — un verdict `fail` est en cache, même
+//       périmé, et l'endpoint est maintenant injoignable. Repasser à
+//       `ready:true` produirait exactement le faux vert que l'ADR-003
+//       interdit, au moment précis où il est le plus dangereux (dispatch
+//       actif vers un repo dont le remote porte un token en clair).
+//       → on GARDE le dernier verdict connu jusqu'à ce qu'un `pass` le
+//       remplace.
+//
+// Autrement dit : le cache expire pour rafraîchir un `pass`, jamais pour
+// oublier un `fail`. Missing API_BASE/ADMIN_API_KEY (dev local, tests
+// unitaires) saute le check — même échappatoire que lookupProjectByPlaneId.
 async function checkReadinessGuard(projectId) {
   const apiBase = process.env.API_BASE;
   const adminKey = process.env.ADMIN_API_KEY;
@@ -124,16 +133,22 @@ async function checkReadinessGuard(projectId) {
     return { ready: cached.ready };
   }
 
+  // Verdict à retenir si l'appel échoue : un `fail` connu survit à
+  // l'expiration du cache ; un `pass` périmé, lui, ne bloque personne.
+  const fallback = cached && cached.ready === false
+    ? { ready: false, stale: true, checks: cached.checks }
+    : { ready: true };
+
   const url = `${apiBase.replace(/\/$/, '')}/api/admin/projects/${encodeURIComponent(projectId)}/readiness`;
   try {
     const r = await fetch(url, { headers: { 'X-Admin-Key': adminKey }, signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return { ready: true }; // unknown — fail open
+    if (!r.ok) return fallback;
     const body = await r.json().catch(() => null);
-    if (!body || typeof body.ready !== 'boolean') return { ready: true };
-    _readinessCache.set(projectId, { at: Date.now(), ready: body.ready });
+    if (!body || typeof body.ready !== 'boolean') return fallback;
+    _readinessCache.set(projectId, { at: Date.now(), ready: body.ready, checks: body.checks });
     return { ready: body.ready, checks: body.checks };
   } catch {
-    return { ready: true }; // unreachable — fail open, same rationale as above
+    return fallback;
   }
 }
 
