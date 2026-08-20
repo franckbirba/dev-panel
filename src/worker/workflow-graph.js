@@ -142,17 +142,11 @@ function validateLoopDeclarations(flowName, graph) {
     // The declaration must correspond to a REAL cycle among its body nodes
     // — otherwise it's a lie: bounds on a loop that can't actually repeat.
     const bodySet = new Set(loop.body);
-    const hasInternalEdge = graph.edges.some(e =>
-      !e.terminal && bodySet.has(e.from) && bodySet.has(e.to) &&
-      // at least one edge must go "backward" (create a real cycle), not
-      // just a straight-line pass through the same node set.
-      true
-    );
     const cyclesAmongBody = findAllCycles({
       nodes: graph.nodes.filter(n => bodySet.has(n.id)),
       edges: graph.edges.filter(e => !e.terminal && bodySet.has(e.from) && bodySet.has(e.to))
     });
-    if (!hasInternalEdge || cyclesAmongBody.length === 0) {
+    if (cyclesAmongBody.length === 0) {
       throw new Error(
         `workflow ${flowName}: loop "${loop.id}" declares body [${loop.body.join(', ')}] but the edges ` +
         `among those nodes form no cycle — declaration does not match the graph`
