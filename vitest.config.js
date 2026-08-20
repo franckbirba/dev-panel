@@ -13,6 +13,13 @@ export default defineConfig({
     // src/server/db.js and src/worker/automation.js hold module-global
     // singletons that tests swap out (initMasterDatabase, __setEnqueueForTests).
     pool: 'threads',
-    isolate: true
+    isolate: true,
+    // Plusieurs suites démarrent un conteneur Postgres jetable dans un
+    // beforeAll (tests/_helpers/pg.js). Le hookTimeout par défaut (10s) est
+    // sous le temps de démarrage réel dès que la machine est chargée — d'où
+    // des échecs "pg container did not become ready" qui ne sont PAS des
+    // régressions (le fichier passe seul). Le helper attend jusqu'à 90s ;
+    // le hook doit lui laisser cette marge, sinon c'est lui qui coupe.
+    hookTimeout: 120000
   }
 });

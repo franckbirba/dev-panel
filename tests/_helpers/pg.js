@@ -37,7 +37,11 @@ function docker(args, opts = {}) {
   return r.stdout.trim();
 }
 
-async function waitReady(timeoutMs = 30000) {
+// 30s suffisait sur une machine au repos ; avec plusieurs suites en parallèle
+// (agents dans des worktrees séparés) le démarrage de postgres dépasse
+// régulièrement ce seuil et le test échoue sur un problème de contention, pas
+// de code. 90s + un message qui dit quoi faire.
+async function waitReady(timeoutMs = 90000) {
   const start = Date.now();
   // pg_isready can report ready before the init scripts that create
   // POSTGRES_DB have finished. Probe with a real `SELECT 1` against the
@@ -47,7 +51,11 @@ async function waitReady(timeoutMs = 30000) {
     if (r.status === 0 && r.stdout.trim() === '1') return;
     await new Promise(res => setTimeout(res, 300));
   }
-  throw new Error('pg container did not become ready in time');
+  throw new Error(
+    `pg container did not become ready in ${timeoutMs}ms. Souvent de la contention Docker ` +
+    `(plusieurs suites en parallèle), pas une régression : relancer le fichier seul confirme. ` +
+    `Orphelins d'un run interrompu : docker rm -f $(docker ps -q --filter label=devpanl-test=pg)`
+  );
 }
 
 export async function startPg() {
@@ -57,6 +65,11 @@ export async function startPg() {
   const port = 15000 + Math.floor(Math.random() * 40000);
   containerId = docker([
     'run', '-d', '--rm',
+    // Label : un run interrompu (agent tué mid-test) laisse le conteneur en
+    // vol malgré --rm. Le label rend le nettoyage sûr et ciblé, sans risquer
+    // de tuer un postgres applicatif :
+    //   docker rm -f $(docker ps -q --filter label=devpanl-test=pg)
+    '--label', 'devpanl-test=pg',
     '-p', `127.0.0.1:${port}:5432`,
     '-e', 'POSTGRES_USER=test',
     '-e', 'POSTGRES_PASSWORD=test',
