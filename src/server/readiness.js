@@ -82,7 +82,15 @@ async function fetchAgentsHostChecks(project) {
   const workerApiUrl = process.env.WORKER_API_URL;
   if (!workerApiUrl) return agentsHostUnverifiableChecks();
 
-  const url = `${workerApiUrl.replace(/\/$/, '')}/readiness/${encodeURIComponent(project.id)}`;
+  // local_path travels in the query string rather than being re-resolved by
+  // the worker from its own SQLite — the worker's storage/projects.db is
+  // empty on the agents host (services is the sole source of truth, same
+  // DEVPA-180 rule as dispatch.js's by-plane-id lookup). Without local_path
+  // there is nothing on disk to check, so degrade rather than guess.
+  if (!project.local_path) return agentsHostUnverifiableChecks();
+
+  const qs = new URLSearchParams({ local_path: project.local_path });
+  const url = `${workerApiUrl.replace(/\/$/, '')}/readiness/${encodeURIComponent(project.id)}?${qs}`;
   let res;
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(WORKER_READINESS_TIMEOUT_MS) });

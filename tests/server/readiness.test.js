@@ -82,7 +82,7 @@ describe('checkReadiness (S1-S3 + worker-delegated A1-A3)', () => {
     expect(out.checks.find(c => c.id === 'S1').status).toBe('fail');
   });
 
-  it('merges pass agents-host checks from the worker when reachable', async () => {
+  it('merges pass agents-host checks from the worker when reachable, passing local_path in the query string', async () => {
     global.fetch = vi.fn(async () => new Response(JSON.stringify({
       checks: [
         { id: 'A1', status: 'pass', detail: 'clone exists' },
@@ -94,6 +94,19 @@ describe('checkReadiness (S1-S3 + worker-delegated A1-A3)', () => {
     expect(out.ready).toBe(true);
     expect(out.checks.find(c => c.id === 'A1').status).toBe('pass');
     expect(out.checks.find(c => c.id === 'A3').status).toBe('pass');
+    // The worker's own SQLite is empty on the agents host (DEVPA-180) — it
+    // cannot resolve project_id → local_path itself, so services passes it.
+    const [calledUrl] = global.fetch.mock.calls[0];
+    expect(String(calledUrl)).toContain(`/readiness/${validProject.id}`);
+    expect(String(calledUrl)).toContain(`local_path=${encodeURIComponent(validProject.local_path)}`);
+  });
+
+  it('degrades A1-A3 to warn without calling the worker when local_path is unset', async () => {
+    global.fetch = vi.fn();
+    const out = await checkReadiness({ ...validProject, local_path: null });
+    expect(global.fetch).not.toHaveBeenCalled();
+    const agentChecks = out.checks.filter(c => ['A1', 'A2', 'A3'].includes(c.id));
+    for (const c of agentChecks) expect(c.status).toBe('warn');
   });
 
   it('is not ready when the worker reports A3 (token-in-url) as fail', async () => {
