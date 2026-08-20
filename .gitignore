@@ -21,3 +21,7 @@ client_secret_*.json
 apps/chat/out/
 apps/chat/.next/
 scripts/bench/bench.env
+
+# Stack locale (scripts/local-stack.sh)
+.env.local
+storage-local/
