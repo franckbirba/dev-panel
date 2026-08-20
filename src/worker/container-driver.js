@@ -29,6 +29,9 @@ const INNER_DRIVER = (process.env.CONTAINER_INNER_DRIVER || 'claude').toLowerCas
 const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
 const PI_EXTENSION_NAMES = [
   'mcp-bridge', 'work-items', 'github', 'bash', 'loop-guard', 'create-file',
+  // submit-result (H3): job-closing envelope via tool call. Kept in sync
+  // with src/worker/pi-driver.js's DEFAULT_PI_EXTENSIONS.
+  'submit-result',
 ];
 
 const ENV_PASSTHROUGH = [
