@@ -25,3 +25,6 @@ scripts/bench/bench.env
 # Stack locale (scripts/local-stack.sh)
 .env.local
 storage-local/
+
+# Sentinel de l'extension pi submit_result (lu puis supprimé par le driver)
+.pi-submit-result.json

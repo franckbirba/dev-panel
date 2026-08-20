@@ -20,6 +20,7 @@ import { join } from 'path';
 import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { readSoul } from './prompt-builder.js';
+import { readSubmitResultEnvelope } from './pi-driver.js';
 import { selectPiModel } from './select-pi-model.js';
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'devpanel/worker:latest';
@@ -29,6 +30,9 @@ const INNER_DRIVER = (process.env.CONTAINER_INNER_DRIVER || 'claude').toLowerCas
 const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
 const PI_EXTENSION_NAMES = [
   'mcp-bridge', 'work-items', 'github', 'bash', 'loop-guard', 'create-file',
+  // submit-result (H3): job-closing envelope via tool call. Kept in sync
+  // with src/worker/pi-driver.js's DEFAULT_PI_EXTENSIONS.
+  'submit-result',
 ];
 
 const ENV_PASSTHROUGH = [
@@ -107,6 +111,22 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       '-e', `JOB_ID=${jobId}`,
       '-e', `AGENT_ROLE=${agentRole}`,
       '-e', 'WORKER_MCP_CONFIG=/etc/devpanel/mcp.json',
+      // H8 (docs/architecture/harness-pi.md §3): explicit NODE_ENV so the
+      // worker image's own Dockerfile ENV (commonly NODE_ENV=production for
+      // a lean prod image) can't silently make `npm install`/`npm ci` run
+      // inside the job omit devDependencies — the exact 2026-08-11 lockfile
+      // drift bug, just sourced from the image instead of the host. Kept in
+      // sync with pi-driver.js's buildPiEnv().
+      '-e', 'NODE_ENV=development',
+      // Deterministic git identity for the same reason as pi-driver.js's
+      // buildPiEnv(): containers don't inherit a host ~/.gitconfig at all
+      // (no bind-mount of it here), so any `git commit` a job runs via
+      // bash_exec would otherwise fail outright on "Author identity
+      // unknown" instead of just being unattributed.
+      '-e', `GIT_AUTHOR_NAME=devpanl-agent-${agentRole}`,
+      '-e', 'GIT_AUTHOR_EMAIL=agent@devpanl.dev',
+      '-e', `GIT_COMMITTER_NAME=devpanl-agent-${agentRole}`,
+      '-e', 'GIT_COMMITTER_EMAIL=agent@devpanl.dev',
     ];
 
     if (INNER_DRIVER === 'pi') {
@@ -175,6 +195,17 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       errStream.end();
       broadcastDone(String(jobId), { exit_code: code, events: events.length });
       if (code === 0) {
+        // Même ordre de lecture que pi-driver (H3) : l'enveloppe déposée par
+        // le tool `submit_result` gagne sur le dernier texte. Le sentinel est
+        // écrit dans /workspace côté container, qui EST `cwd` côté hôte
+        // (bind-mount ci-dessus) — donc lisible ici sans montage supplémentaire.
+        // Sans ça, activer CONTAINER_INNER_DRIVER=pi faisait régresser
+        // silencieusement H3 vers le taux d'enveloppes perdues d'avant.
+        const submitted = INNER_DRIVER === 'pi' ? readSubmitResultEnvelope(cwd) : null;
+        if (submitted?.ok) {
+          resolve(JSON.stringify(submitted.data));
+          return;
+        }
         resolve(getFinalResultText(events));
       } else {
         try { spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' }); } catch { /* ignore */ }

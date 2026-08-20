@@ -1,0 +1,10 @@
+{
+  "name": "@dev-panel/pi-ext-submit-result",
+  "version": "0.1.0",
+  "description": "Pi extension: submit_result tool — forces the job-closing envelope (status/summary/artifacts/handoff/memory_writes_count/blockers/issues_found) through a tool call instead of trailing JSON text. Fixes H3 (harness-pi.md): Qwen3 drops the closing JSON on ~70% of long runs when asked to print it; tool-call argument generation is far more reliable for weak coder models. Writes the envelope to a sentinel file (.pi-submit-result.json) in cwd, which pi-driver.js reads before falling back to parseResult / synthesizePiResult.",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

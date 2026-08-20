@@ -1,5 +1,8 @@
 // tests/worker/predicates.test.js
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { predicates, KNOWN_UNUSED } from '../../src/worker/predicates.js';
 import { loadWorkflows } from '../../src/worker/engine.js';
 
@@ -53,6 +56,81 @@ describe('predicates', () => {
       process.env.WORKER_TOOL_ERROR_THRESHOLD = '2';
       expect(predicates.tool_errors_excessive({ tool_error_count: 1 })).toBe(false);
       expect(predicates.tool_errors_excessive({ tool_error_count: 2 })).toBe(true);
+    });
+  });
+
+  describe('tests_green (ADR-006 §D3 — verified, not declared)', () => {
+    let dir;
+    afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+    // Canonical target-repo config name (no "e" — src/worker/index.js:22,
+    // ADR-003 R1, scripts/bench/sandbox-seed/.devpanlrc.json all agree).
+    function makeWorktree(commandsTest, rcName = '.devpanlrc.json') {
+      dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
+      if (commandsTest !== undefined) {
+        writeFileSync(join(dir, rcName), JSON.stringify({
+          commands: { test: commandsTest }
+        }));
+      }
+      return dir;
+    }
+
+    it('runs commands.test in the worktree and returns true on exit 0', () => {
+      const wt = makeWorktree('true');
+      expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(true);
+    });
+
+    it('returns false when commands.test exits non-zero', () => {
+      const wt = makeWorktree('false');
+      expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(false);
+    });
+
+    it('does NOT trust result.artifacts.tests_passed — runs the real command regardless', () => {
+      const wt = makeWorktree('false');
+      // Agent claims tests passed; the worker must verify, not believe it.
+      const result = { artifacts: { tests_passed: true } };
+      expect(predicates.tests_green(result, { context: { worktree_path: wt } })).toBe(false);
+    });
+
+    it('returns false (fail closed) when worktree_path is missing', () => {
+      expect(predicates.tests_green({}, { context: {} })).toBe(false);
+      expect(predicates.tests_green({}, {})).toBe(false);
+      expect(predicates.tests_green({})).toBe(false);
+    });
+
+    it('returns false (fail closed) when the worktree does not exist on disk', () => {
+      expect(predicates.tests_green({}, { context: { worktree_path: '/no/such/path/xyz' } })).toBe(false);
+    });
+
+    it('returns false (fail closed) when the rc file is missing entirely', () => {
+      const wt = makeWorktree(undefined);
+      expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(false);
+    });
+
+    it('returns false (fail closed) when commands.test is not declared', () => {
+      dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
+      writeFileSync(join(dir, '.devpanlrc.json'), JSON.stringify({ project: 'x' }));
+      expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(false);
+    });
+
+    it('returns false (fail closed) on malformed rc file', () => {
+      dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
+      writeFileSync(join(dir, '.devpanlrc.json'), 'not json{{{');
+      expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(false);
+    });
+
+    it('falls back to .devpanelrc.json (with "e") when .devpanlrc.json is absent', () => {
+      // Historical second spelling used by the dev-panel CLI for its own
+      // project config. A target repo that happens to use it must still work.
+      const wt = makeWorktree('true', '.devpanelrc.json');
+      expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(true);
+    });
+
+    it('prefers .devpanlrc.json over .devpanelrc.json when both are present', () => {
+      dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
+      writeFileSync(join(dir, '.devpanlrc.json'), JSON.stringify({ commands: { test: 'true' } }));
+      writeFileSync(join(dir, '.devpanelrc.json'), JSON.stringify({ commands: { test: 'false' } }));
+      expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(true);
     });
   });
 
