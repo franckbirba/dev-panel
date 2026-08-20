@@ -9,6 +9,7 @@ import {
   publishCancel,
   subscribeWorkerControl,
   createCancelHandler,
+  wasCancelRequested,
 } from '../../src/worker/worker-control.js';
 
 function fakeRedisClient() {
@@ -129,6 +130,34 @@ describe('worker-control', () => {
       const handle = createCancelHandler(activeProcesses, killGroupFn);
       handle({ type: 'cancel', job_id: 42 });
       expect(killGroupFn).toHaveBeenCalledWith(9, 'SIGTERM');
+    });
+  });
+  // Contrat §7 : un cancel doit être DISTINGUABLE d'un plantage, sinon
+  // l'instance ne peut pas être terminée en `cancelled` et reste `running` —
+  // le zombie exact que §8 doit éliminer (gap trouvé après coup, 2026-08-20).
+  describe('marquage de l\'intention de cancel', () => {
+    it('pose cancelRequested sur l\'entrée avant de tuer', () => {
+      const entry = { process: { pid: 111 }, startedAt: 0 };
+      const activeProcesses = new Map([['7', entry]]);
+      const killGroupFn = vi.fn();
+      createCancelHandler(activeProcesses, killGroupFn)({ type: 'cancel', job_id: '7' });
+      expect(entry.cancelRequested).toBe(true);
+      expect(typeof entry.cancelRequestedAt).toBe('number');
+      expect(killGroupFn).toHaveBeenCalledWith(111, 'SIGTERM');
+    });
+
+    it('wasCancelRequested distingue cancel et plantage', () => {
+      const activeProcesses = new Map([
+        ['cancelled-job', { process: { pid: 1 }, startedAt: 0 }],
+        ['crashed-job', { process: { pid: 2 }, startedAt: 0 }],
+      ]);
+      createCancelHandler(activeProcesses, vi.fn())({ type: 'cancel', job_id: 'cancelled-job' });
+      expect(wasCancelRequested(activeProcesses, 'cancelled-job')).toBe(true);
+      expect(wasCancelRequested(activeProcesses, 'crashed-job')).toBe(false);
+    });
+
+    it('tolère une entrée déjà retirée de la map (job fini entre-temps)', () => {
+      expect(wasCancelRequested(new Map(), 'parti')).toBe(false);
     });
   });
 });

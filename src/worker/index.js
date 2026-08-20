@@ -18,6 +18,7 @@ import {
 } from './failure-classifier.js';
 import { agentTimeoutMs, stallTimeoutMs, budgetTokensFor, killGraceMs, computeLockDurationMs, checkLockDurationInvariant } from './timeout-policy.js';
 import { createProcessTimeoutController } from './process-timeout-controller.js';
+import { guardDriverRun } from './guard-driver.js';
 import { createUsageAccumulator, isBudgetExceeded } from './token-usage.js';
 import { reconcileOnBoot, killOrphanedSpawnProcesses } from './boot-reconciler.js';
 import { execSync } from 'child_process';
@@ -92,7 +93,8 @@ import { logStep } from '../server/jobs-log.js';
 import { notifyJob } from '../server/alerts.js';
 import { initMasterDatabase } from '../server/db.js';
 import { prepareWorktree, shouldUseWorktree } from './worktree.js';
-import { updateInstance } from '../server/workflow-instances.js';
+import { updateInstance, cancelActiveInstances } from '../server/workflow-instances.js';
+import { wasCancelRequested } from './worker-control.js';
 import { spawnGoose, shouldUseGoose } from './goose-driver.js';
 import { spawnMiniSwe, shouldUseMiniSwe } from './mini-swe-driver.js';
 import { spawnPi, shouldUsePi } from './pi-driver.js';
@@ -183,28 +185,50 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
   //        DRIVER_<AGENT>=goose  → legacy goose path
   //        anything else         → Claude Code (default)
   // FORCE_TIER=opus globally overrides everything to native Claude.
+  // §5/§6 pour les drivers alternatifs. Ils sortaient AVANT le câblage du
+  // contrôleur de timeout (plus bas, branche Claude), donc stall / wall-clock
+  // / budget ne protégeaient que le chemin Claude — alors que la prod tourne
+  // sur pi. guardDriverRun applique les mêmes bornes autour de n'importe
+  // quel driver, à l'endroit unique où on les appelle (review C2, 2026-08-20).
   if (shouldUseContainer(agentRole)) {
-    return spawnContainer({
-      jobId, prompt, agentRole, cwd,
-      activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
+    return guardDriverRun({
+      activeProcesses, jobId, agentRole,
+      run: () => spawnContainer({
+        jobId, prompt, agentRole, cwd,
+        activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
+      }),
     });
   }
   if (shouldUseMiniSwe(agentRole)) {
-    return spawnMiniSwe({
-      jobId, prompt, agentRole, cwd,
-      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    return guardDriverRun({
+      activeProcesses, jobId, agentRole,
+      run: () => spawnMiniSwe({
+        jobId, prompt, agentRole, cwd,
+        activeProcesses, agentLogDir: AGENT_LOG_DIR,
+      }),
     });
   }
   if (shouldUsePi(agentRole)) {
-    return spawnPi({
-      jobId, prompt, agentRole, cwd,
-      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    // pi expose son usage cumulatif (H6) : on le branche pour que le budget
+    // §6 soit appliqué en cours de run, pas seulement constaté après coup.
+    let emitUsage = () => {};
+    return guardDriverRun({
+      activeProcesses, jobId, agentRole,
+      onUsageRegister: (cb) => { emitUsage = cb; },
+      run: () => spawnPi({
+        jobId, prompt, agentRole, cwd,
+        activeProcesses, agentLogDir: AGENT_LOG_DIR,
+        onUsage: (usage) => emitUsage(usage),
+      }),
     });
   }
   if (shouldUseGoose(agentRole)) {
-    return spawnGoose({
-      jobId, prompt, agentRole, cwd,
-      activeProcesses, agentLogDir: AGENT_LOG_DIR,
+    return guardDriverRun({
+      activeProcesses, jobId, agentRole,
+      run: () => spawnGoose({
+        jobId, prompt, agentRole, cwd,
+        activeProcesses, agentLogDir: AGENT_LOG_DIR,
+      }),
     });
   }
   return new Promise((resolve, reject) => {
@@ -564,6 +588,32 @@ const worker = new Worker(QUEUES.agents, async (job) => {
         }
       );
     } catch (spawnErr) {
+      // Contrat §7 — un cancel demandé doit terminer l'instance en
+      // `cancelled`, PAS en `agent_failure`. Le handler de worker-control
+      // pose le drapeau avant de tuer ; sans cette branche, le process mort
+      // était indistinguable d'un plantage et l'instance restait `running` —
+      // le zombie exact que §8 doit éliminer. On sort avant le rescue : un
+      // cancel est une décision humaine, pas un travail à sauver.
+      if (wasCancelRequested(activeProcesses, jobData.job_id)) {
+        console.log(`[Worker] job ${jobData.job_id} terminé par cancel (§7)`);
+        await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'spawnAgent',
+                  status: 'cancelled', error: 'cancel requested' });
+        if (jobData.plane?.work_item_id) {
+          try {
+            await cancelActiveInstances({ work_item_id: jobData.plane.work_item_id });
+          } catch (e) {
+            console.warn(`[Worker] cancelActiveInstances a échoué pour ${jobData.job_id}: ${e.message}`);
+          }
+        }
+        await notifyJob({
+          job_id: jobData.job_id, agent: jobData.agent,
+          work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
+          title: jobData.work_item?.title || jobData.task?.title,
+          status: 'cancelled',
+          extra: 'annulé sur demande'
+        });
+        return { status: 'cancelled', job_id: jobData.job_id };
+      }
       // Engine contract §4.3 — every arrival in a terminal state notifies,
       // and §5/§6 kills preserve whatever diff exists via rescue, exactly
       // like the parseResult-failure path below. Without this catch, a

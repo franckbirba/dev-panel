@@ -99,8 +99,24 @@ export function createCancelHandler(activeProcesses, killGroupFn = defaultKillGr
     const entry = activeProcesses.get(String(msg.job_id));
     if (!entry) return; // not ours — fine in a multi-worker fleet
     console.log(`[worker-control] cancel received for job ${msg.job_id}, sending SIGTERM to process group`);
+    // Marquer l'INTENTION avant de tuer. Sans ce drapeau, le process qui
+    // meurt derrière est indistinguable d'un vrai plantage : le job retombe
+    // en `agent_failure` générique et l'instance ne passe jamais en
+    // `cancelled` (contrat §3.2/§7) — soit exactement le zombie que §8 doit
+    // éliminer. Le handler de sortie du job lit ce drapeau pour classer.
+    entry.cancelRequested = true;
+    entry.cancelRequestedAt = Date.now();
     killGroupFn(entry.process.pid, 'SIGTERM');
   };
+}
+
+/**
+ * Le job a-t-il été tué par une demande de cancel (et non par un plantage,
+ * un timeout ou un dépassement de budget) ? Lu au moment de classer la
+ * sortie du process. Tolérant à une entrée déjà retirée de la map.
+ */
+export function wasCancelRequested(activeProcesses, jobId) {
+  return activeProcesses.get(String(jobId))?.cancelRequested === true;
 }
 
 function defaultKillGroup(pid, signal) {

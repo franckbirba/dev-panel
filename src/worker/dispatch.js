@@ -245,6 +245,26 @@ export async function enqueueWorkflowStart({
       };
     }
 
+    // Contrat §6 — plafond de dépense fleet/jour, en gate d'ADMISSION.
+    // Les jobs déjà en vol ne sont jamais tués pour cette raison (arbitrage
+    // explicite : pas d'arrêt brutal des agents) ; c'est l'entrée qui se
+    // ferme. Un dispatch `urgent` passe outre. Fail open si la comptabilité
+    // est indisponible : c'est un garde-fou de coût, pas une garde de
+    // sécurité comme le readiness.
+    try {
+      const { checkSpendGate, spentTodayEur } = await import('./spend-gate.js');
+      const { pool } = await import('../server/pg.js');
+      const gate = checkSpendGate({
+        spentTodayEur: await spentTodayEur(pool),
+        priority: work_item?.priority || context?.priority,
+      });
+      if (!gate.admitted) {
+        return { ok: false, error: gate.reason, message: gate.detail, spend: gate };
+      }
+    } catch (e) {
+      console.warn(`[dispatch] spend gate indisponible, admission par défaut: ${e.message}`);
+    }
+
     context = { ...context, project_root: proj.local_path };
     // Propagate the resolved project_id forward so downstream steps in
     // engine.triggerNext don't have to re-resolve.
