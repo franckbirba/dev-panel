@@ -5,6 +5,9 @@
 // Some predicates are defined ahead of their first YAML use — they're
 // listed in KNOWN_UNUSED so the dead-predicate test can skip them. When
 // a YAML branch starts using one, remove it from KNOWN_UNUSED.
+import { execSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 const P0_P1 = new Set(['p0', 'p1']);
 
@@ -52,6 +55,51 @@ export const predicates = {
     const count = result?.tool_error_count ?? 0;
     const threshold = parseInt(process.env.WORKER_TOOL_ERROR_THRESHOLD || '5', 10);
     return count >= threshold;
+  },
+
+  // ADR-006 §Décision 3 — prédicats vérifiés, pas déclarés. A loop `until:
+  // tests_green` must not exit on the agent's say-so (result.artifacts.
+  // tests_passed); it exits when the WORKER runs the repo's declared test
+  // command and it exits 0. Same philosophy as automation.js#verifyAndCommit
+  // ("vérifier, pas croire") applied to loop-exit predicates.
+  //
+  // Reads commands.test from the TARGET repo's rc file in the job's
+  // worktree (jobData.context.worktree_path). Canonical name is
+  // `.devpanlrc.json` (no "e" — src/worker/index.js:22 and ADR-003 R1 both
+  // use this spelling for a target repo's config; scripts/bench/sandbox-seed
+  // ships one under this name for exactly this predicate). `.devpanelrc.json`
+  // (with the "e") is a second, older spelling used historically by the
+  // dev-panel CLI for ITS OWN project config — kept here as a fallback so
+  // a repo that happens to use that spelling isn't silently unsupported.
+  // No worktree, no rc file under either name, or no commands.test declared
+  // → mechanizable check unavailable, predicate returns false (fail closed:
+  // the loop keeps going / falls through to whatever branch handles "not
+  // done yet", never silently exits on a check that never ran). This
+  // matches ADR-006's documented fallback: "un repo sans
+  // .devpanlrc.json#commands n'a pas de boucle interne vérifiée".
+  tests_green(result, jobData) {
+    const worktreePath = jobData?.context?.worktree_path;
+    if (!worktreePath || !existsSync(worktreePath)) return false;
+
+    let testCommand;
+    try {
+      const rcPath = [join(worktreePath, '.devpanlrc.json'), join(worktreePath, '.devpanelrc.json')]
+        .find(p => existsSync(p));
+      if (!rcPath) return false;
+      const rc = JSON.parse(readFileSync(rcPath, 'utf8'));
+      testCommand = rc?.commands?.test;
+      if (!testCommand || typeof testCommand !== 'string') return false;
+    } catch {
+      return false; // malformed rc file — can't mechanize, fail closed
+    }
+
+    try {
+      execSync(testCommand, { cwd: worktreePath, stdio: 'pipe', timeout: 10 * 60 * 1000 });
+      return true;
+    } catch {
+      // Non-zero exit, timeout, or spawn error all mean "not green".
+      return false;
+    }
   }
 };
 
@@ -66,5 +114,10 @@ export const KNOWN_UNUSED = Object.freeze([
   'qa_infra_only',
   'merge_blocked_fixable',
   // added 2026-05-25 for harness Gap #1, awaiting first workflow consumer
-  'tool_errors_excessive'
+  'tool_errors_excessive',
+  // ADR-006 §Décision 3 (2026-08-18): mechanized loop-exit predicate for
+  // `until: tests_green`. No shipped YAML declares a graph-format loop yet
+  // (the 4 prod workflows are still legacy steps:) — first consumer lands
+  // with the first hand-authored loops: block, tracked separately.
+  'tests_green'
 ]);

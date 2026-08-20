@@ -1,5 +1,6 @@
 // src/worker/dispatch.js
 import { getCachedWorkflows } from './engine.js';
+import { firstAgentOf } from './workflow-graph.js';
 import { createInstance, updateInstance } from '../server/workflow-instances.js';
 import { getQueue, QUEUES, PRIORITY_MAP } from '../server/bullmq.js';
 import { getProjectByPlaneId } from '../server/db.js';
@@ -190,7 +191,7 @@ export async function enqueueWorkflowStart({
   const flow = flows[workflow];
   if (!flow) return { ok: false, error: `unknown workflow: ${workflow}` };
   if (!plane?.work_item_id) return { ok: false, error: 'missing plane.work_item_id' };
-  const firstAgent = flow.steps[0].agent;
+  const firstAgent = firstAgentOf(flow);
 
   // Resolve the target repo checkout from the Plane project_id. Builders run
   // in this directory; without it they'd push EDMS/Zeno commits onto
