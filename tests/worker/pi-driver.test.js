@@ -6,8 +6,9 @@
 // harness a schema-validated envelope via a tool call instead of relying
 // on the model to print trailing JSON. Pure-function tests, no pi binary
 // or model required: readSubmitResultEnvelope only touches the filesystem.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { EventEmitter } from 'events';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { readSubmitResultEnvelope, buildPiEnv } from '../../src/worker/pi-driver.js';

@@ -353,7 +353,20 @@ export function buildPiEnv({ baseEnv = process.env, jobId, agentRole, PI_MCP_CON
   return env;
 }
 
-export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir }) {
+// onUsage (H6, docs/architecture/harness-pi.md §4.2, ADR-005 H6): optional
+// callback invoked with pi's cumulative usage snapshot ({ input, output,
+// totalTokens, ... — whatever pi's provider reports) every time it updates
+// during the run — NOT just once at exit. This is the driver's half of
+// mid-run budget enforcement: pi already streams usage per assistant
+// message (pi-stream-shim.js), so the signal exists, it just wasn't
+// reachable before exit. spawnPi does not itself interpret the numbers,
+// compare against BUDGET_TOKENS_<ROLE>, or kill the process — that policy
+// belongs to the caller (worker/index.js, under active development in a
+// parallel worktree for C2/failure-semantics) via `activeProcesses.get
+// (jobId).process` or by throwing/killing from inside its own callback.
+// Kept as a plain optional param (not a new required field) so existing
+// callers that don't pass it keep working unchanged.
+export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir, onUsage }) {
   return new Promise((resolve, reject) => {
     const selected = selectPiModel(agentRole);
     if (!selected) {
@@ -421,6 +434,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
 
     // Hook the shim: each translated event gets persisted through appendEvent.
     const shim = createPiStreamShim({
+      onUsage,
       onTranslatedEvent: (event) => {
         // Re-derive type/subtype from the synthesized event the same way
         // stream-parser.classifyEvent would, since appendEvent expects them.
