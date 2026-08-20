@@ -20,6 +20,7 @@ import { join } from 'path';
 import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { readSoul } from './prompt-builder.js';
+import { readSubmitResultEnvelope } from './pi-driver.js';
 import { selectPiModel } from './select-pi-model.js';
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'devpanel/worker:latest';
@@ -194,6 +195,17 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       errStream.end();
       broadcastDone(String(jobId), { exit_code: code, events: events.length });
       if (code === 0) {
+        // Même ordre de lecture que pi-driver (H3) : l'enveloppe déposée par
+        // le tool `submit_result` gagne sur le dernier texte. Le sentinel est
+        // écrit dans /workspace côté container, qui EST `cwd` côté hôte
+        // (bind-mount ci-dessus) — donc lisible ici sans montage supplémentaire.
+        // Sans ça, activer CONTAINER_INNER_DRIVER=pi faisait régresser
+        // silencieusement H3 vers le taux d'enveloppes perdues d'avant.
+        const submitted = INNER_DRIVER === 'pi' ? readSubmitResultEnvelope(cwd) : null;
+        if (submitted?.ok) {
+          resolve(JSON.stringify(submitted.data));
+          return;
+        }
         resolve(getFinalResultText(events));
       } else {
         try { spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' }); } catch { /* ignore */ }
