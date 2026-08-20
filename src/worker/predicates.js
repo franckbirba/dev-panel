@@ -12,6 +12,13 @@ import { join } from 'path';
 const P0_P1 = new Set(['p0', 'p1']);
 
 export const predicates = {
+  // Sortie de la boucle `revision` (work-item.yaml, ADR-006) : le reviewer
+  // valide. Miroir exact de reviewer_rejected_pr — un review qui ne rejette
+  // pas est une approbation. Déclaratif : la sortie effective passe par
+  // l'edge `review done -> qa`, ce prédicat documente et valide l'intention.
+  reviewer_approved(result) {
+    return !predicates.reviewer_rejected_pr(result);
+  },
   reviewer_rejected_pr(result) {
     const issues = result?.issues_found || [];
     return issues.some(i => P0_P1.has(i?.severity));
