@@ -195,3 +195,20 @@ export async function listRunningInstances() {
   );
   return rows.map(normalizeRow);
 }
+
+// Engine contract §3.2 — the full "live" set: running, awaiting_approval,
+// AND awaiting_input. listRunningInstances() above only covers 'running'
+// (used by the periodic reaper.js, which currently only has TTLs tuned for
+// mid-run steps). Boot reconciliation (§8, src/worker/boot-reconciler.js)
+// needs every live state — an `awaiting_input` row with no backing job is
+// completely normal (it's waiting on a human), so it must go through the
+// same anti-zombie TTL check as everything else, not be silently excluded
+// from the query entirely.
+export async function listLiveInstances() {
+  const { rows } = await pool.query(
+    `SELECT * FROM workflow_instances
+      WHERE status IN ('running', 'awaiting_approval', 'awaiting_input')
+      ORDER BY last_event_at ASC`
+  );
+  return rows.map(normalizeRow);
+}

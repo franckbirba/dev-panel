@@ -15,9 +15,24 @@
 // both). AGENT_HUB_URL points the worker at the services VPS.
 
 import { io as ioClient } from 'socket.io-client';
+import { createCancelHandler } from './worker-control.js';
 
 let socket = null;
 let queue = []; // events buffered while disconnected
+
+// Engine contract §7 — the Redis pub/sub channel (worker-control.js) is now
+// the primary cancel path (see subscribeWorkerControl() wired at boot in
+// index.js). This socket.io 'admin:command' listener is kept as a SECOND
+// delivery path over the existing hub connection — belt-and-braces, since
+// the hub is already open for agent:event traffic and cancel is the one
+// command type where "arrived twice, killed a job that's already gone" is
+// harmless (createCancelHandler no-ops when the job isn't in
+// activeProcesses) but "never arrived" is not. Set via wireCancelHandler()
+// so this module doesn't import ./index.js (circular).
+let _cancelHandler = null;
+export function wireCancelHandler(activeProcesses) {
+  _cancelHandler = createCancelHandler(activeProcesses);
+}
 
 const HOST = process.env.HOSTNAME || process.env.AGENT_HOST || 'agents-host';
 const AGENT_ID = process.env.AGENT_ID || `worker-${HOST}-${process.pid}`;
@@ -63,12 +78,15 @@ export function connectAgentHub({
   });
 
   // Admin commands flow back here so the worker can react (cancel a
-  // running spawn, change autonomy mid-flight, etc.). For now we just
-  // log them — wiring to actual cancellation is a follow-up once the
-  // worker exposes a kill_job API.
+  // running spawn, change autonomy mid-flight, etc.). Cancel is now wired
+  // to the same handler the Redis worker:control subscriber uses
+  // (wireCancelHandler() below); other command types still just log until
+  // there's a concrete use case.
   socket.on('admin:command', (cmd) => {
     console.log('[agent-hub-client] admin:command', cmd);
-    // TODO: wire to worker control surface
+    if (cmd?.type === 'cancel' && _cancelHandler) {
+      _cancelHandler({ type: 'cancel', job_id: cmd.payload?.job_id });
+    }
   });
 
   return socket;

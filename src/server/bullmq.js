@@ -43,26 +43,50 @@ function getSharedConnection() {
   return sharedConnection;
 }
 
+// Exported so callers that need a plain Redis command surface (not a
+// BullMQ Queue) can reuse the same memoized connection instead of opening
+// their own — e.g. src/capabilities/cancel-job.js publishing on the
+// engine contract §7 `worker:control` pub/sub channel. A `publish` call is
+// a regular Redis command (unlike `subscribe`, which locks a connection
+// into pub/sub-only mode), so it's safe to share with BullMQ's own traffic.
+export function getSharedRedisConnection() {
+  return getSharedConnection();
+}
+
 /**
  * Create or get a BullMQ queue (cached per queueName)
  * @param {string} queueName - Queue name from QUEUES
  * @returns {Queue} BullMQ queue instance
  */
+// Engine contract §4.2: the agents queue passes attempts=1. Blind BullMQ
+// retries stacked with the YAML revision loop and the replan mechanism
+// caused the 11/08 incident (18 paid executions for 3 items, zero merge).
+// Retries for infra_failure are now decided by the engine/worker (see
+// src/worker/failure-classifier.js#decideInfraRetry), which can tell
+// "spawn never happened" apart from "agent crashed mid-work" — BullMQ
+// itself cannot. Every other queue keeps the previous default.
+function defaultJobOptionsFor(queueName) {
+  const base = {
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    },
+    removeOnComplete: 100, // Keep last 100 completed jobs
+    removeOnFail: false // Keep failed jobs for DLQ
+  };
+  if (queueName === QUEUES.agents) {
+    return { ...base, attempts: 1 };
+  }
+  return { ...base, attempts: 3 };
+}
+
 export function getQueue(queueName) {
   const cached = queueCache.get(queueName);
   if (cached) return cached;
 
   const queue = new Queue(queueName, {
     connection: getSharedConnection(),
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000
-      },
-      removeOnComplete: 100, // Keep last 100 completed jobs
-      removeOnFail: false // Keep failed jobs for DLQ
-    }
+    defaultJobOptions: defaultJobOptionsFor(queueName)
   });
   queueCache.set(queueName, queue);
   return queue;

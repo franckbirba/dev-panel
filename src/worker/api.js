@@ -119,6 +119,12 @@ app.get('/shelly-log', (req, res) => {
 registerReadinessRoute(app);
 
 // POST /kill/:jobId
+// Engine contract §7: local HTTP fallback for cancel when the primary
+// worker:control Redis pub/sub path (src/worker/worker-control.js) can't be
+// confirmed. Kills the whole process GROUP — spawnAgent's Claude branch now
+// spawns with `detached: true` specifically so a negative-pid kill reaches
+// every descendant (claude -p's own MCP server subprocesses included), not
+// just the direct child.
 app.post('/kill/:jobId', (req, res) => {
   const { jobId } = req.params;
   const entry = activeProcesses.get(jobId);
@@ -127,7 +133,11 @@ app.post('/kill/:jobId', (req, res) => {
     return res.status(404).json({ error: `Job ${jobId} not active` });
   }
 
-  entry.process.kill('SIGTERM');
+  try {
+    process.kill(-entry.process.pid, 'SIGTERM');
+  } catch {
+    try { entry.process.kill('SIGTERM'); } catch { /* already gone */ }
+  }
   res.json({ killed: jobId });
 });
 

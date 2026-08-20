@@ -166,6 +166,10 @@ export function spawnMiniSwe({ jobId, prompt, agentRole, cwd, activeProcesses, a
 
     const proc = spawn(miniBin, args, {
       cwd,
+      // Engine contract §5: kill must target the whole process GROUP, not
+      // just the direct child. Matches the native claude spawn in
+      // src/worker/index.js.
+      detached: true,
       env: {
         ...process.env,
         OPENAI_API_KEY: apiKey,

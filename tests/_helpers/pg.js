@@ -24,6 +24,7 @@ const MIGRATIONS = [
   resolve(__dirname, '../../infra/migrations/010-job-inbox.sql'),
   resolve(__dirname, '../../infra/migrations/011-telegram-pending-replies.sql'),
   resolve(__dirname, '../../infra/migrations/012-studio-members.sql'),
+  resolve(__dirname, '../../infra/migrations/013-workflow-instances-awaiting-input.sql'),
 ];
 
 let containerId = null;
