@@ -63,26 +63,34 @@ export const predicates = {
   // command and it exits 0. Same philosophy as automation.js#verifyAndCommit
   // ("vérifier, pas croire") applied to loop-exit predicates.
   //
-  // Reads .devpanlrc.json#commands.test in the job's worktree
-  // (jobData.context.worktree_path). No worktree, no .devpanlrc.json, or no
-  // commands.test declared → mechanizable check unavailable, predicate
-  // returns false (fail closed: the loop keeps going / falls through to
-  // whatever branch handles "not done yet", never silently exits on a check
-  // that never ran). This matches ADR-006's documented fallback: "un repo
-  // sans .devpanlrc.json#commands n'a pas de boucle interne vérifiée".
+  // Reads commands.test from the TARGET repo's rc file in the job's
+  // worktree (jobData.context.worktree_path). Canonical name is
+  // `.devpanlrc.json` (no "e" — src/worker/index.js:22 and ADR-003 R1 both
+  // use this spelling for a target repo's config; scripts/bench/sandbox-seed
+  // ships one under this name for exactly this predicate). `.devpanelrc.json`
+  // (with the "e") is a second, older spelling used historically by the
+  // dev-panel CLI for ITS OWN project config — kept here as a fallback so
+  // a repo that happens to use that spelling isn't silently unsupported.
+  // No worktree, no rc file under either name, or no commands.test declared
+  // → mechanizable check unavailable, predicate returns false (fail closed:
+  // the loop keeps going / falls through to whatever branch handles "not
+  // done yet", never silently exits on a check that never ran). This
+  // matches ADR-006's documented fallback: "un repo sans
+  // .devpanlrc.json#commands n'a pas de boucle interne vérifiée".
   tests_green(result, jobData) {
     const worktreePath = jobData?.context?.worktree_path;
     if (!worktreePath || !existsSync(worktreePath)) return false;
 
     let testCommand;
     try {
-      const rcPath = join(worktreePath, '.devpanelrc.json');
-      if (!existsSync(rcPath)) return false;
+      const rcPath = [join(worktreePath, '.devpanlrc.json'), join(worktreePath, '.devpanelrc.json')]
+        .find(p => existsSync(p));
+      if (!rcPath) return false;
       const rc = JSON.parse(readFileSync(rcPath, 'utf8'));
       testCommand = rc?.commands?.test;
       if (!testCommand || typeof testCommand !== 'string') return false;
     } catch {
-      return false; // malformed .devpanelrc.json — can't mechanize, fail closed
+      return false; // malformed rc file — can't mechanize, fail closed
     }
 
     try {

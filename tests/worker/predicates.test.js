@@ -63,10 +63,12 @@ describe('predicates', () => {
     let dir;
     afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-    function makeWorktree(commandsTest) {
+    // Canonical target-repo config name (no "e" — src/worker/index.js:22,
+    // ADR-003 R1, scripts/bench/sandbox-seed/.devpanlrc.json all agree).
+    function makeWorktree(commandsTest, rcName = '.devpanlrc.json') {
       dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
       if (commandsTest !== undefined) {
-        writeFileSync(join(dir, '.devpanelrc.json'), JSON.stringify({
+        writeFileSync(join(dir, rcName), JSON.stringify({
           commands: { test: commandsTest }
         }));
       }
@@ -100,21 +102,35 @@ describe('predicates', () => {
       expect(predicates.tests_green({}, { context: { worktree_path: '/no/such/path/xyz' } })).toBe(false);
     });
 
-    it('returns false (fail closed) when .devpanelrc.json is missing', () => {
+    it('returns false (fail closed) when the rc file is missing entirely', () => {
       const wt = makeWorktree(undefined);
       expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(false);
     });
 
     it('returns false (fail closed) when commands.test is not declared', () => {
       dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
-      writeFileSync(join(dir, '.devpanelrc.json'), JSON.stringify({ project: 'x' }));
+      writeFileSync(join(dir, '.devpanlrc.json'), JSON.stringify({ project: 'x' }));
       expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(false);
     });
 
-    it('returns false (fail closed) on malformed .devpanelrc.json', () => {
+    it('returns false (fail closed) on malformed rc file', () => {
       dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
-      writeFileSync(join(dir, '.devpanelrc.json'), 'not json{{{');
+      writeFileSync(join(dir, '.devpanlrc.json'), 'not json{{{');
       expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(false);
+    });
+
+    it('falls back to .devpanelrc.json (with "e") when .devpanlrc.json is absent', () => {
+      // Historical second spelling used by the dev-panel CLI for its own
+      // project config. A target repo that happens to use it must still work.
+      const wt = makeWorktree('true', '.devpanelrc.json');
+      expect(predicates.tests_green({}, { context: { worktree_path: wt } })).toBe(true);
+    });
+
+    it('prefers .devpanlrc.json over .devpanelrc.json when both are present', () => {
+      dir = mkdtempSync(join(tmpdir(), 'dp-tests-green-'));
+      writeFileSync(join(dir, '.devpanlrc.json'), JSON.stringify({ commands: { test: 'true' } }));
+      writeFileSync(join(dir, '.devpanelrc.json'), JSON.stringify({ commands: { test: 'false' } }));
+      expect(predicates.tests_green({}, { context: { worktree_path: dir } })).toBe(true);
     });
   });
 
