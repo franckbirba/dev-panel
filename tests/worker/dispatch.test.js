@@ -60,6 +60,55 @@ d('enqueueWorkflowStart', () => {
     expect(out.error).toBe('already_running');
   });
 
+  // Engine contract §9 — idempotence: the refusal must carry the existing
+  // instance_id (same pattern as project_not_linked's message field) so the
+  // caller can act on it (show a link, or drive force:true cancel+redispatch
+  // at the MCP layer) instead of a dead-end string.
+  it('already_running refusal carries the existing instance_id and a helpful message', async () => {
+    __setEnqueueForTests(vi.fn().mockResolvedValue({ id: 'j' }));
+    const first = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-d2b' }
+    });
+    expect(first.ok).toBe(true);
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-d2b' }
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('already_running');
+    expect(Number(out.instance_id)).toBe(Number(first.instance_id));
+    expect(out.message).toMatch(/wi-d2b/);
+    expect(out.message).toMatch(new RegExp(String(first.instance_id)));
+  });
+
+  // Engine contract §9 / migration 013 — awaiting_input is a LIVE state
+  // (§3.2's enumeration: running · awaiting_approval · awaiting_input) but
+  // the original unique partial index only covered running/awaiting_approval.
+  // A work item paused on a human via the await_human MCP tool must ALSO
+  // block a duplicate dispatch — otherwise a second dispatch races the
+  // human's eventual answer with a brand-new instance on the same work item.
+  it('blocks a duplicate dispatch when the existing instance is awaiting_input', async () => {
+    const { updateInstance } = await import('../../src/server/workflow-instances.js');
+    __setEnqueueForTests(vi.fn().mockResolvedValue({ id: 'j-awaiting' }));
+    const first = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-awaiting-input' }
+    });
+    expect(first.ok).toBe(true);
+    await updateInstance(
+      { work_item_id: 'wi-awaiting-input', workflow_name: 'work-item' },
+      { status: 'awaiting_input' }
+    );
+    const out = await enqueueWorkflowStart({
+      workflow: 'work-item',
+      plane: { work_item_id: 'wi-awaiting-input' }
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('already_running');
+    expect(Number(out.instance_id)).toBe(Number(first.instance_id));
+  });
+
   it('rejects unknown workflow', async () => {
     const out = await enqueueWorkflowStart({
       workflow: 'no-such-flow',
