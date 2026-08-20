@@ -329,6 +329,10 @@ export function spawnGoose({ jobId, prompt, agentRole, cwd, activeProcesses, age
       '--recipe', recipePath,
     ], {
       cwd,
+      // Engine contract §5: kill must target the whole process GROUP (goose
+      // can spawn its own MCP server subprocesses), not just the direct
+      // child. Matches the native claude spawn in src/worker/index.js.
+      detached: true,
       env: {
         ...process.env,
         ...goose,

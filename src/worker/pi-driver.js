@@ -412,6 +412,16 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
 
     const proc = spawn(DEFAULT_PI_BIN, args, {
       cwd,
+      // Engine contract §5 : le kill doit viser le GROUPE de processus (pi
+      // lance ses propres sous-processus MCP via l'extension mcp-bridge), pas
+      // seulement l'enfant direct. Même traitement que le spawn claude natif
+      // dans src/worker/index.js.
+      detached: true,
+      // H8 (ADR-005) : env assaini — NODE_ENV=development forcé (le
+      // NODE_ENV=production de l'host fuyait dans les jobs et cassait les
+      // npm install), git identity injectée, variables npm parasites
+      // retirées. Les deux besoins sont orthogonaux : detached pour tuer
+      // proprement, buildPiEnv pour ne pas hériter n'importe quoi.
       env: buildPiEnv({ jobId, agentRole, PI_MCP_CONFIG }),
       stdio: ['ignore', 'pipe', 'pipe']
     });
