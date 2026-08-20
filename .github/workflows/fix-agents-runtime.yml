@@ -38,7 +38,11 @@ jobs:
 
       - name: Restart worker
         run: |
-          sudo systemctl restart devpanel-worker.service
-          sleep 8
-          systemctl is-active devpanel-worker.service
-          journalctl -u devpanel-worker.service --no-pager -n 12 || true
+          if sudo test -f /home/deploy/.fleet-paused; then
+            echo "fleet-paused — worker NON redémarré (OFF voulu). Relight: workflow Fleet Pause/Resume."
+          else
+            sudo systemctl restart devpanel-worker.service
+            sleep 8
+            systemctl is-active devpanel-worker.service
+            journalctl -u devpanel-worker.service --no-pager -n 12 || true
+          fi
