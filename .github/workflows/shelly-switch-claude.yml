@@ -30,7 +30,11 @@ jobs:
           sudo -n systemctl daemon-reload
           sudo -n systemctl enable shelly.service 2>/dev/null || true
           sudo -n systemctl start shelly.service
-          sudo -n systemctl restart devpanel-worker.service
+          if sudo -n test -f /home/deploy/.fleet-paused; then
+            echo "fleet-paused — worker NON redémarré (OFF voulu)."
+          else
+            sudo -n systemctl restart devpanel-worker.service
+          fi
           sudo -n bash scripts/shelly-switch.sh status || true
 
       - name: Post-check units

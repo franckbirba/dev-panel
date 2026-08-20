@@ -24,11 +24,20 @@ jobs:
         run: |
           if [ "${{ inputs.action }}" = "pause" ]; then
             sudo -n systemctl stop devpanel-worker.service
-            echo "worker: $(systemctl is-active devpanel-worker.service || true) (pause)"
+            # Le flag rend la pause durable : aucun deploy ne rallumera le
+            # worker tant qu'il est là (cf. deploy-agents.sh + le job
+            # quick-refresh de deploy-agents.yml).
+            sudo -n touch /home/deploy/.fleet-paused
+            sudo -n systemctl disable devpanel-worker.service || true
+            echo "worker: $(systemctl is-active devpanel-worker.service || true) (pause, flag posé)"
             echo "== claude jobs restants (devraient disparaître) =="
             sleep 5
             pgrep -af "claude -p" | head -5 || echo "aucun job claude en cours"
           else
+            # Ce workflow EST le geste explicite de relight : il retire le
+            # flag, contrairement à tout chemin de deploy.
+            sudo -n rm -f /home/deploy/.fleet-paused
+            sudo -n systemctl enable devpanel-worker.service || true
             sudo -n systemctl start devpanel-worker.service
             sleep 5
             echo "worker: $(systemctl is-active devpanel-worker.service)"

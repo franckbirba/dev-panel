@@ -154,7 +154,22 @@ jobs:
 
       - name: Restart devpanel-worker.service
         if: needs.decide.outputs.restart_worker == 'true'
-        run: sudo systemctl restart devpanel-worker.service
+        # Fleet pause guard — MÊME règle que deploy-agents.sh (PR #310).
+        # Ce job `quick-refresh` redémarrait le worker directement en YAML,
+        # donc sans passer par le script : le guard posé dans le script ne
+        # couvrait que le chemin `full-redeploy`. Résultat le 2026-08-20 à
+        # 15:11 — le merge des PRs #311/#312/#313 a rallumé la fleet et
+        # repris 14 jobs, alors que /home/deploy/.fleet-paused était bien en
+        # place. Un guard qui ne couvre qu'un chemin sur deux n'est pas un
+        # guard. Relight = retirer le flag PUIS un geste explicite.
+        run: |
+          if sudo test -f /home/deploy/.fleet-paused; then
+            echo "fleet-paused — worker NON redémarré (OFF voulu), et stoppé s'il tournait"
+            sudo systemctl stop devpanel-worker.service || true
+            sudo systemctl disable devpanel-worker.service || true
+          else
+            sudo systemctl restart devpanel-worker.service
+          fi
 
       - name: Smoke test (telegram-multi heartbeat)
         if: needs.decide.outputs.restart_shelly == 'true'
