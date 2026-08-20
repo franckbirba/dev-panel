@@ -94,3 +94,30 @@ describe('buildPrompt — DEVPA-228 parent_context', () => {
     expect(prompt).not.toContain('## Parent context');
   });
 });
+
+// Engine contract §4.2 — invalid-envelope agent_failure gets exactly one
+// retry-with-feedback. The worker threads the previous validation error
+// through context.retry_feedback; buildPrompt must render it prominently
+// so a floor-tier model can self-correct on the first try (ADR-004 v2).
+describe('buildPrompt — §4.2 envelope retry feedback', () => {
+  it('renders context.retry_feedback as a dedicated section when present', () => {
+    const jobData = {
+      job_id: 'test-retry-1',
+      agent: 'builder',
+      work_item: { title: 'x', description: 'y' },
+      context: { retry_feedback: 'Previous attempt missing field: status' }
+    };
+    const prompt = buildPrompt(jobData);
+    expect(prompt).toContain('Previous attempt missing field: status');
+  });
+
+  it('omits the retry feedback section entirely when absent', () => {
+    const jobData = {
+      job_id: 'test-retry-2',
+      agent: 'builder',
+      work_item: { title: 'x', description: 'y' }
+    };
+    const prompt = buildPrompt(jobData);
+    expect(prompt).not.toContain('Previous attempt');
+  });
+});

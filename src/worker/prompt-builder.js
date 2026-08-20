@@ -125,6 +125,15 @@ export function buildPrompt(jobData, opts = {}) {
     if (block) sections.push(block);
   }
 
+  // 3c. Engine contract §4.2 — the ONE retry-with-feedback for an invalid
+  // envelope. The worker threads the exact validation error through
+  // context.retry_feedback on the single re-enqueue after a parseResult
+  // failure; render it as its own prominent section so a floor-tier model
+  // sees it before the Rules section repeats the schema.
+  if (context.retry_feedback) {
+    sections.push(String(context.retry_feedback));
+  }
+
   // 4. Allowed MCP allowlist
   if (allowed_mcp.length) {
     sections.push('## Allowed MCP servers\n\n' + allowed_mcp.map(m => `- ${m}`).join('\n'));

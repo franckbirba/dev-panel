@@ -8,10 +8,19 @@ import { buildPrompt, parseResult } from './prompt-builder.js';
 import { createStreamParser, getFinalResultText, classifyEvent } from './stream-parser.js';
 import { appendEvent, broadcastDone } from '../server/jobs-events.js';
 import { recordHarnessEvent } from './harness-telemetry.js';
-import { QUEUES } from '../server/bullmq.js';
+import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
 import { startReaper } from './reaper.js';
+import {
+  classifyPreSpawnError, classifyEnvelopeFailure,
+  decideInfraRetry, decideEnvelopeRetry, buildEnvelopeFeedback
+} from './failure-classifier.js';
+import { agentTimeoutMs, stallTimeoutMs, budgetTokensFor, killGraceMs, computeLockDurationMs, checkLockDurationInvariant } from './timeout-policy.js';
+import { createProcessTimeoutController } from './process-timeout-controller.js';
+import { createUsageAccumulator, isBudgetExceeded } from './token-usage.js';
+import { reconcileOnBoot, killOrphanedSpawnProcesses } from './boot-reconciler.js';
+import { execSync } from 'child_process';
 
 // Resolve per-project Plane settings, preferring the project's own
 // .devpanlrc.json over the worker's PLANE_* env vars. This is what lets
@@ -112,6 +121,19 @@ initMasterDatabase(process.env.DEVPANEL_STORAGE || './storage');
 // Active processes map: jobId -> { process, startedAt }
 const activeProcesses = new Map();
 
+// Engine contract §4.2 — the worker's own re-enqueue path. BullMQ now runs
+// the agents queue at attempts=1 (src/server/bullmq.js), so infra_failure
+// retries and the single envelope-retry-with-feedback are no longer BullMQ's
+// job; the worker decides and re-enqueues explicitly. Kept as a reassignable
+// binding so tests can substitute a spy.
+let _reenqueue = async (payload) => {
+  const queue = getQueue(QUEUES.agents);
+  const prio = PRIORITY_MAP[payload.priority || 'p2'] || 10;
+  const name = `${payload.agent}:${payload.plane?.work_item_id || 'adhoc'}`;
+  return queue.add(name, payload, { priority: prio });
+};
+export function __setReenqueueForTests(fn) { _reenqueue = fn; }
+
 /**
  * Read current Shelly mode
  */
@@ -209,6 +231,12 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
 
     const proc = spawn('claude', argv, {
       cwd,
+      // Engine contract §5: kill must target the whole process GROUP
+      // (claude -p can fork MCP server subprocesses), not just the direct
+      // child. `detached: true` on POSIX puts the child in its own process
+      // group (pid becomes the group id), so process-timeout-controller.js
+      // can `process.kill(-pid, signal)` to reach every descendant.
+      detached: true,
       env: {
         ...process.env,
         JOB_ID: jobId,
@@ -234,6 +262,22 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
 
     activeProcesses.set(jobId, { process: proc, startedAt: Date.now() });
 
+    // Engine contract §5/§6 — stall detection, wall-clock timeout, and
+    // token-budget enforcement. `killInfo` is set synchronously by
+    // onKill/onBudgetKill BEFORE the process actually dies, so the
+    // proc.on('close', ...) handler below can reject with a classified
+    // reason instead of a generic non-zero-exit error.
+    let killInfo = null; // { reason: 'stall' | 'wall_clock' | 'budget' }
+    const usage = createUsageAccumulator();
+    const budgetTokens = budgetTokensFor(agentRole);
+    const timeoutController = createProcessTimeoutController({
+      proc,
+      wallClockMs: agentTimeoutMs(agentRole),
+      stallMs: stallTimeoutMs(),
+      graceMs: killGraceMs(),
+      onKill: (info) => { killInfo = info; },
+    });
+
     const events = [];
     // Gap #1 (2026-05-25): tool-error feedback loop. Count tool_result errors
     // streamed by the agent. When the count crosses WORKER_TOOL_ERROR_THRESHOLD
@@ -247,6 +291,19 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
     const parser = createStreamParser(({ seq, event }) => {
       events.push(event);
       const { event_type, event_subtype } = classifyEvent(event);
+      // §5: any driver event resets the stall window — the agent is alive.
+      timeoutController.recordEvent();
+      // §6: accumulate token usage on every event that carries it; kill as
+      // soon as the running total crosses the role's budget. Checked here
+      // (not on a timer) so the kill fires on the very event that crosses
+      // the line, not up to a poll-interval late.
+      usage.record(event);
+      if (!killInfo && isBudgetExceeded(usage.total(), budgetTokens)) {
+        killInfo = { reason: 'budget', tokens: usage.total(), budgetTokens };
+        timeoutController.stop();
+        try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch { /* gone */ } }
+      }
+
       // Fire-and-forget: the stream parser callback is sync, and `seq` is
       // monotonic so out-of-order persistence is harmless (listEvents sorts
       // by seq). Errors are surfaced to stderr but don't abort the stream —
@@ -288,6 +345,7 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
 
     proc.on('close', (code) => {
       activeProcesses.delete(jobId);
+      timeoutController.stop();
       parser.flush();
       errStream.end();
       // Gap #2 telemetry: surface stream-parser line failures so a job that
@@ -305,8 +363,26 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
           });
         }
       } catch { /* telemetry is best-effort */ }
-      broadcastDone(String(jobId), { exit_code: code, events: events.length });
-      if (code === 0) {
+      broadcastDone(String(jobId), { exit_code: code, events: events.length, kill_reason: killInfo?.reason || null });
+      if (killInfo) {
+        // Engine contract §5/§6 — the kill preempted whatever exit code the
+        // process would otherwise have produced. Classify explicitly so the
+        // caller (spawnAgent's caller in the worker job processor) sees
+        // agent_failure/{stall,timeout,budget} instead of a generic
+        // non-zero-exit crash. The worktree is left untouched — the
+        // finally-block cleanup in the job processor still runs the rescue
+        // path against whatever diff exists.
+        const err = new Error(
+          killInfo.reason === 'stall'
+            ? `agent stalled: no driver event for ${stallTimeoutMs()}ms`
+            : killInfo.reason === 'budget'
+              ? `agent exceeded token budget: ${killInfo.tokens} > ${killInfo.budgetTokens}`
+              : `agent exceeded wall-clock timeout: ${agentTimeoutMs(agentRole)}ms`
+        );
+        err.failure_class = 'agent_failure';
+        err.reason = killInfo.reason;
+        reject(err);
+      } else if (code === 0) {
         // Gap #1: return text + toolErrorCount. The caller normalizes
         // (drivers other than Claude still resolve a string) and stashes
         // the count on parsed.data for the `tool_errors_excessive` predicate.
@@ -318,6 +394,7 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
 
     proc.on('error', (err) => {
       activeProcesses.delete(jobId);
+      timeoutController.stop();
       errStream.end();
       broadcastDone(String(jobId), { exit_code: null, error: err.message });
       reject(err);
@@ -383,6 +460,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   // — those still target the dev-panel repo by design.
   const repoRoot = jobData.context?.project_root || PROJECT_ROOT;
   let worktree = null;
+  // Set true when this attempt scheduled a retry (infra or envelope) that
+  // reuses the SAME worktree/branch — cleanup must be skipped so the retry
+  // has something to resume. Normal completion and terminal failure paths
+  // leave this false and the finally block cleans up as before.
+  let skipWorktreeCleanup = false;
   try {
     worktree = await prepareWorktree(jobData.job_id, {
       agent: jobData.agent,
@@ -394,17 +476,37 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       repoRoot
     });
   } catch (err) {
-    // Worktree setup failure is fatal for coding agents — running them in
-    // PROJECT_ROOT alongside other concurrent jobs is exactly the bug we're
-    // fixing. Fail loudly so the job retries with a clean slate.
+    // Worktree setup failure happens BEFORE the agent ever ran — engine
+    // contract §4.2 classifies this as infra_failure (spawn/clone/fetch
+    // impossible), never agent_failure. It gets its own bounded retry
+    // (MAX_INFRA_RETRIES=2, engine-owned since BullMQ's own attempts is now
+    // 1 for this queue — src/server/bullmq.js), not a blind BullMQ retry.
     if (shouldUseWorktree(jobData.agent)) {
+      const { reason } = classifyPreSpawnError(err);
+      const infraRetryCount = jobData.infra_retry_count || 0;
+      const { shouldRetry } = decideInfraRetry(infraRetryCount);
+
+      if (shouldRetry) {
+        console.warn(`[Worker] infra_failure (worktree) on job ${jobData.job_id}, retry ${infraRetryCount + 1}/2: ${reason}`);
+        try {
+          await _reenqueue({ ...jobData, infra_retry_count: infraRetryCount + 1 });
+          // The retry is now queued under a new BullMQ job id; let THIS
+          // attempt end quietly (no throw) so BullMQ doesn't also count it
+          // as a failure against a queue that already has attempts=1.
+          return { status: 'infra_retry_scheduled', reason };
+        } catch (reenqueueErr) {
+          console.warn(`[Worker] infra retry re-enqueue failed, falling through to terminal failure: ${reenqueueErr.message}`);
+          // fall through to terminal handling below
+        }
+      }
+
+      // Retries exhausted (or re-enqueue itself failed) — terminal.
       // On the FINAL attempt, mark the workflow_instance as 'failed' so a
       // fresh re-dispatch can land cleanly. Without this, the row stays in
       // its previous status (typically 'running') and re-dispatch hits the
       // unique-partial-index 'already_running' guard, requiring a manual
       // SQL cancel. Best-effort — never let a DB hiccup mask the real error.
-      const isFinalAttempt = (job.attemptsMade + 1) >= (job.opts.attempts || 1);
-      if (isFinalAttempt && jobData.workflow && jobData.plane?.work_item_id) {
+      if (jobData.workflow && jobData.plane?.work_item_id) {
         try {
           await updateInstance(
             { work_item_id: jobData.plane.work_item_id, workflow_name: jobData.workflow },
@@ -449,16 +551,51 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // resolved repoRoot — non-coding agents (pm/architect/designer) on
     // cross-project work still need to be IN the target repo so any tools
     // that shell out (cat, grep) find the right files.
-    const spawnResult = await spawnAgent(
-      jobData.job_id,
-      prompt,
-      jobData.agent,
-      worktree?.path || repoRoot,
-      {
-        work_item_id: jobData.plane?.work_item_id || null,
-        workflow_name: jobData.workflow || null,
+    let spawnResult;
+    try {
+      spawnResult = await spawnAgent(
+        jobData.job_id,
+        prompt,
+        jobData.agent,
+        worktree?.path || repoRoot,
+        {
+          work_item_id: jobData.plane?.work_item_id || null,
+          workflow_name: jobData.workflow || null,
+        }
+      );
+    } catch (spawnErr) {
+      // Engine contract §4.3 — every arrival in a terminal state notifies,
+      // and §5/§6 kills preserve whatever diff exists via rescue, exactly
+      // like the parseResult-failure path below. Without this catch, a
+      // stall/timeout/budget kill (spawnErr.failure_class set by spawnAgent
+      // in the Claude branch) or any other spawn crash bypassed both rescue
+      // AND notification — the job just died silently into BullMQ's own
+      // 'failed' event with no work-item context.
+      const reason = spawnErr.reason
+        || (spawnErr.failure_class ? spawnErr.failure_class : null)
+        || spawnErr.message;
+      let rescue = { rescued: false };
+      try {
+        rescue = rescueWorktreeOnParseFailure({
+          jobData, output: '', parseError: `spawn failed: ${reason}`
+        });
+      } catch (e) {
+        console.warn(`[Worker] rescue threw after spawn failure for job ${jobData.job_id}: ${e.message}`);
       }
-    );
+      await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'spawnAgent',
+                status: 'error', error: spawnErr.message });
+      const rescueNote = rescue.rescued
+        ? ` rescued: ${rescue.pr_url}`
+        : (rescue.reason ? ` no_rescue:${rescue.reason}` : '');
+      await notifyJob({
+        job_id: jobData.job_id, agent: jobData.agent,
+        work_item_id: jobData.plane?.work_item_id || jobData.task?.id,
+        title: jobData.work_item?.title || jobData.task?.title,
+        status: 'failed',
+        extra: `${spawnErr.failure_class || 'agent_failure'}:${reason}${rescueNote}`
+      });
+      throw spawnErr;
+    }
 
     // Gap #1 (2026-05-25): the Claude branch of spawnAgent now resolves
     // { output, toolErrorCount }. Other drivers (goose/pi/mini-swe/container)
@@ -470,6 +607,41 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // Parse result (strict: returns { ok, data } | { ok: false, error })
     const parsed = parseResult(output);
     if (!parsed.ok) {
+      const { reason: envelopeReason } = classifyEnvelopeFailure(parsed.error);
+      const envelopeRetriesUsed = jobData.envelope_retry_count || 0;
+      const { shouldRetry: shouldRetryEnvelope } = decideEnvelopeRetry(envelopeRetriesUsed);
+
+      // Engine contract §4.2 — the ONE retry-with-feedback. The agent ran
+      // and produced output, it just didn't close with a valid envelope;
+      // hand back the exact validation error + schema and try exactly once
+      // more before falling to rescue+fail. Only meaningful when there's a
+      // worktree to keep working in (non-coding agents never hit parseResult
+      // failures from a missing envelope in the same way, but guard anyway).
+      if (shouldRetryEnvelope) {
+        console.warn(`[Worker] ${envelopeReason} on job ${jobData.job_id}, retry-with-feedback (1/1): ${parsed.error}`);
+        await logStep({ job_id: jobData.job_id, agent: jobData.agent, step: 'parseResult',
+                  status: 'error', error: `${parsed.error} (retrying with feedback)` });
+        try {
+          await _reenqueue({
+            ...jobData,
+            envelope_retry_count: envelopeRetriesUsed + 1,
+            context: {
+              ...(jobData.context || {}),
+              // worktree_path/branch are per-spawn; the retry keeps the SAME
+              // worktree/branch so the agent's partial work isn't discarded.
+              retry_feedback: buildEnvelopeFeedback(parsed.error)
+            }
+          });
+          // Do not clean up the worktree for this attempt — the retry reuses
+          // it (context carries the same worktree_path/branch forward).
+          skipWorktreeCleanup = true;
+          return { status: 'envelope_retry_scheduled', reason: envelopeReason };
+        } catch (reenqueueErr) {
+          console.warn(`[Worker] envelope retry re-enqueue failed, falling through to rescue+fail: ${reenqueueErr.message}`);
+          // fall through to rescue+fail below
+        }
+      }
+
       // Rescue first, throw second. The agent may have done real work in the
       // worktree even without emitting the closing JSON; the finally block
       // below will delete the worktree shortly, so this is our only chance
@@ -522,8 +694,10 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     // runAutomation already ran publishWorkItem (push + PR). On parseResult
     // failure, the rescue path above already pushed + opened a review PR.
     // Either way the worktree's contents are preserved remotely before we
-    // delete the local copy here.
-    if (worktree) {
+    // delete the local copy here. Exception: a scheduled infra/envelope
+    // retry (§4.2) reuses this same worktree/branch — skip cleanup so the
+    // retried attempt has something to resume instead of re-cloning.
+    if (worktree && !skipWorktreeCleanup) {
       try { await worktree.cleanup(); }
       catch (err) { console.warn(`[Worker] worktree cleanup failed for ${job.id}: ${err.message}`); }
     }
@@ -533,8 +707,35 @@ const worker = new Worker(QUEUES.agents, async (job) => {
   connection,
   concurrency: CONCURRENCY,
   stalledInterval: 120000,
-  lockDuration: 1800000
+  // Engine contract §5 invariant: lockDuration must exceed max(role
+  // timeouts) + 5 min, or BullMQ's lock can expire before the worker's own
+  // kill fires — opening the door to double-dispatch on the same job.
+  // Derived from timeout-policy.js so a future AGENT_TIMEOUT_<ROLE>_MS bump
+  // can't silently violate the invariant again (previously hardcoded
+  // 1_800_000 — happened to satisfy it, by luck rather than by construction).
+  lockDuration: computeLockDurationMs(),
+  // Engine contract §8: reconciliation must run BEFORE the queue is
+  // consumed. autorun:false constructs the Worker (so its `.opts` and event
+  // listeners exist for the invariant check + pipeline handlers below)
+  // without starting job processing; runBootReconciliation() at the bottom
+  // of this file calls worker.run() once reconciliation completes.
+  autorun: false
 });
+
+// Defensive startup assertion — belt-and-braces even though lockDuration is
+// now DERIVED FROM the same role-timeout table (so it cannot drift out of
+// sync with itself). Guards against a future direct override of the Worker
+// options that reintroduces a hardcoded, unchecked value.
+{
+  const { ok, minRequiredMs } = checkLockDurationInvariant(worker.opts.lockDuration);
+  if (!ok) {
+    console.error(
+      `[Worker] FATAL: lockDuration invariant violated — lockDuration=${worker.opts.lockDuration}ms ` +
+      `must exceed max(role timeouts)+5min=${minRequiredMs}ms. Refusing to start.`
+    );
+    process.exit(1);
+  }
+}
 
 // ============================================================================
 // PIPELINE: builder -> reviewer -> merge
@@ -614,8 +815,35 @@ startReaper();
 // agent_job_log write streams live to the dashboard instead of waiting
 // for the next poll cycle. Postgres still gets the durable record;
 // socket.io is now the bus.
-import('./agent-hub-client.js').then(m => m.connectAgentHub()).catch(
+import('./agent-hub-client.js').then(m => {
+  m.connectAgentHub();
+  // Wire the same cancel handler the Redis worker:control subscriber below
+  // uses, so a cancel delivered over the socket.io hub (if that connection
+  // happens to be up) also works — see the comment in agent-hub-client.js.
+  m.wireCancelHandler(activeProcesses);
+}).catch(
   err => console.warn('[agent-hub-client] not connected:', err.message)
+);
+
+// Engine contract §7 — cancel channel. Redis pub/sub on `worker:control` is
+// the PRIMARY cancel path (replaces the socket.io admin:command stub that
+// used to sit here unimplemented). Uses a dedicated Redis connection —
+// ioredis subscriber connections can only issue pub/sub commands once
+// `.subscribe()` is called, so this can't share `connection` above (BullMQ
+// needs that one free for normal commands). `POST /kill/:jobId` (worker
+// api.js) remains as the local HTTP fallback the cancel_job capability
+// falls back to if pub/sub delivery can't be confirmed.
+const controlSubscriber = new Redis({
+  host: REDIS_HOST,
+  port: REDIS_PORT,
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false
+});
+import('./worker-control.js').then(({ subscribeWorkerControl, createCancelHandler }) =>
+  subscribeWorkerControl(controlSubscriber, createCancelHandler(activeProcesses))
+).then(
+  () => console.log('[Worker] subscribed to worker:control for cancel'),
+  err => console.warn('[worker-control] subscribe failed:', err.message)
 );
 
 // Export for api.js
@@ -623,3 +851,64 @@ export { activeProcesses, worker, getMode };
 
 // Start worker API server
 import('./api.js').catch(err => console.error('[Worker API] Failed to start:', err));
+
+// ============================================================================
+// BOOT RECONCILIATION (§8) — runs before the queue is consumed
+// ============================================================================
+//
+// Engine contract §8: "Au boot, avant de consommer la queue, le worker
+// exécute la réconciliation." The Worker above was constructed with
+// autorun:false specifically so this can run first — worker.run() (last
+// line of this block) is what actually starts job processing.
+//
+// listSpawnSignaturePids uses pgrep to find claude -p / pi / docker run
+// processes tagged with our own JOB_ID env marker that ISN'T anything this
+// fresh process knows about (activeProcesses is empty at this point by
+// construction — nothing has been dispatched yet). Best-effort: pgrep may
+// not exist on all hosts (macOS dev boxes have it via BSD userland, but the
+// pattern below still degrades to "found nothing" rather than throwing).
+function listSpawnSignaturePids() {
+  try {
+    const out = execSync('pgrep -f "JOB_ID=" 2>/dev/null || true', { encoding: 'utf8' });
+    return out.split('\n').map(s => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function bootReconcileAndStart() {
+  try {
+    killOrphanedSpawnProcesses({
+      listSpawnSignaturePids,
+      killPid: (pid) => process.kill(Number(pid), 'SIGKILL'),
+    });
+  } catch (err) {
+    console.warn('[Worker] killOrphanedSpawnProcesses threw:', err.message);
+  }
+
+  try {
+    const { listLiveInstances, updateInstance: updateInst } = await import('../server/workflow-instances.js');
+    await reconcileOnBoot({
+      queue: getQueue(QUEUES.agents),
+      listLiveInstances,
+      updateInstance: updateInst,
+      notify: (msg) => {
+        notifyJob({
+          job_id: null, agent: 'worker',
+          work_item_id: null, title: 'boot reconciliation',
+          status: 'done', extra: msg,
+        }).catch(() => {});
+      },
+    });
+  } catch (err) {
+    console.error('[Worker] reconcileOnBoot threw (starting queue anyway):', err.message);
+  }
+
+  await worker.run();
+  console.log('[Worker] queue consumption started');
+}
+
+bootReconcileAndStart().catch(err => {
+  console.error('[Worker] FATAL: bootReconcileAndStart failed:', err);
+  process.exit(1);
+});
