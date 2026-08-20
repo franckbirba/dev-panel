@@ -34,6 +34,27 @@ export function buildWorkflowGraph(doc) {
   return graph;
 }
 
+/**
+ * Le premier agent d'un workflow, quel que soit son format.
+ *
+ * Deux sites lisaient `flow.steps[0].agent` en dur (dispatch.js et
+ * engine.js#maybeResumeParent) : un workflow au format graphe n'a pas de
+ * `steps`, et ces appels jetteraient un TypeError au premier dispatch — la
+ * review C8 a trouvé le second site, qui n'avait pas été signalé. Un seul
+ * helper, pour qu'il n'y ait plus de site à oublier.
+ *
+ * Format graphe : le point d'entrée est le premier nœud déclaré (les nœuds
+ * sont ordonnés dans le YAML, comme les steps l'étaient).
+ */
+export function firstAgentOf(flow) {
+  if (Array.isArray(flow?.steps) && flow.steps.length) return flow.steps[0].agent;
+  const nodes = flow?.graph?.nodes ?? flow?.nodes;
+  if (Array.isArray(nodes) && nodes.length) return nodes[0].agent ?? nodes[0].id;
+  throw new Error(
+    `workflow ${flow?.name ?? '(sans nom)'}: aucun agent d'entrée (ni steps[0] ni nodes[0])`,
+  );
+}
+
 // ---------------------------------------------------------------------
 // New format: doc.nodes / doc.edges / doc.loops, taken close to verbatim.
 // ---------------------------------------------------------------------
@@ -155,21 +176,43 @@ function validateLoopDeclarations(flowName, graph) {
   }
 }
 
-// Every cycle detected in the FULL graph must be a subset of some declared
-// loop's body. If any cycle escapes all declared loops, reject by name.
+// Tout cycle du graphe doit être RÉELLEMENT compté par une boucle déclarée.
+//
+// Première version : « les nœuds du cycle sont un sous-ensemble du body ».
+// Insuffisant, trouvé en review (2026-08-20) : le compteur d'itérations ne
+// s'incrémente que sur le back-edge de la boucle (body[last] -> body[0], cf.
+// engine.js#findLoopForTransition). Un cycle inclus dans le body mais passant
+// par un AUTRE arc (typiquement un self-loop b->b dans un body [a,b])
+// satisfaisait la règle tout en ne consommant jamais ni compteur ni budget —
+// il retombait sur le garde-fou global max_revisions, pas sur la borne PAR
+// BOUCLE que la spec promet. La lettre était respectée, pas l'intention.
+//
+// Règle durcie : un cycle est couvert si ses nœuds sont dans le body ET s'il
+// emprunte le back-edge que le moteur compte effectivement.
 function validateCyclesAreDeclared(flowName, graph) {
   const cycles = findAllCycles(graph);
-  const declaredBodies = graph.loops.map(l => new Set(l.body || []));
+
+  // Le cycle traverse-t-il l'arc from->to ? (le cycle est ordonné et sa
+  // dernière transition reboucle sur le premier nœud)
+  const cycleUsesEdge = (cycle, from, to) =>
+    cycle.some((n, i) => n === from && cycle[(i + 1) % cycle.length] === to);
 
   for (const cycle of cycles) {
     const cycleSet = new Set(cycle);
-    const covered = declaredBodies.some(bodySet =>
-      [...cycleSet].every(n => bodySet.has(n))
-    );
+    const covered = graph.loops.some((loop) => {
+      const body = loop.body || [];
+      const bodySet = new Set(body);
+      if (![...cycleSet].every((n) => bodySet.has(n))) return false;
+      // Les boucles legacy synthétisées gardent la sémantique globale
+      // (max_revisions) — c'est leur contrat documenté, pas un back-edge.
+      if (loop._legacy) return true;
+      return cycleUsesEdge(cycle, body[body.length - 1], body[0]);
+    });
     if (!covered) {
       throw new Error(
         `workflow ${flowName}: undeclared cycle detected among nodes [${cycle.join(' -> ')}] — ` +
-        `every cycle must belong to a declared loop (with until, max_iterations, budget_tokens)`
+        `every cycle must belong to a declared loop (with until, max_iterations, budget_tokens) ` +
+        `AND go through that loop's counted back-edge (body[last] -> body[0])`
       );
     }
   }

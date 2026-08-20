@@ -4,7 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseYAML } from 'yaml';
 import { predicates } from './predicates.js';
-import { buildWorkflowGraph } from './workflow-graph.js';
+import { buildWorkflowGraph, firstAgentOf } from './workflow-graph.js';
 import {
   loadInstance, createInstance, updateInstance, loadInstanceById
 } from '../server/workflow-instances.js';
@@ -513,7 +513,7 @@ async function maybeResumeParent(instance, flow, result, flows, enqueue, _emit) 
   if (!parentFlow) return;
 
   if (result.status === 'done') {
-    const firstAgent = parentFlow.steps[0].agent;
+    const firstAgent = firstAgentOf(parentFlow);
     const newRev = parent.revision + 1;
     if (newRev > parentFlow.max_revisions) {
       return applyExhaustion(parent, parentFlow, _emit);

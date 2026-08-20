@@ -290,4 +290,53 @@ steps:
     const flows = loadWorkflows(dir);
     expect(flows['legacy-cycle'].graph.loops.length).toBeGreaterThanOrEqual(1);
   });
+  // Trous trouvés en review (2026-08-20) — deux corrections vérifiées ici.
+  it('rejette un cycle inclus dans un body mais qui n\'emprunte PAS le back-edge compté', () => {
+    // Le compteur d'itérations ne s'incrémente que sur body[last] -> body[0].
+    // Un self-loop b->b dans un body [a,b] passait la règle "sous-ensemble"
+    // tout en ne consommant jamais ni compteur ni budget.
+    const dir = tmpDir();
+    writeFlow(dir, 'sneaky.yaml', `
+name: sneaky-selfloop
+nodes:
+  - { id: a, agent: builder }
+  - { id: b, agent: reviewer }
+loops:
+  - id: outer
+    body: [a, b]
+    until: reviewer_rejected_pr
+    max_iterations: 3
+    budget_tokens: 400000
+    on_exhaustion: block
+edges:
+  - { from: a, on: done, to: b }
+  - { from: b, on: failed, to: a }
+  - { from: b, on: blocked, to: b }
+  - { from: b, on: done, terminal: true }
+`);
+    expect(() => loadWorkflows(dir)).toThrow(/back-edge|undeclared cycle/i);
+  });
+
+  it('accepte le cycle qui emprunte bien le back-edge déclaré', () => {
+    const dir = tmpDir();
+    writeFlow(dir, 'ok.yaml', `
+name: proper-loop
+nodes:
+  - { id: a, agent: builder }
+  - { id: b, agent: reviewer }
+loops:
+  - id: revision
+    body: [a, b]
+    until: reviewer_rejected_pr
+    max_iterations: 3
+    budget_tokens: 400000
+    on_exhaustion: block
+edges:
+  - { from: a, on: done, to: b }
+  - { from: b, on: failed, to: a }
+  - { from: b, on: done, terminal: true }
+`);
+    const flows = loadWorkflows(dir);
+    expect(flows['proper-loop'].graph.loops[0].id).toBe('revision');
+  });
 });
