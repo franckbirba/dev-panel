@@ -150,8 +150,54 @@ export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
   return flows;
 }
 
+// findStep works against BOTH shapes. Legacy flows have flow.steps
+// directly. Graph-format flows (nodes:/edges:/loops:, no steps:) get a
+// steps-shaped view synthesized on the fly from flow.graph so the rest of
+// triggerNext (pickBranch, applyRetreat) doesn't need two code paths.
 function findStep(flow, agent) {
-  return flow.steps.find(s => s.agent === agent);
+  if (Array.isArray(flow.steps)) {
+    return flow.steps.find(s => s.agent === agent);
+  }
+  return stepFromGraph(flow, agent);
+}
+
+// Node `id` is the graph identity (what edges/loop bodies reference).
+// Node `agent` is the dispatch identity (what jobData.agent / enque({agent})
+// use — defaults to `id` when a node doesn't set `agent` explicitly, so
+// nodes: [{id: build, agent: builder}] and nodes: [{id: builder}] both work.
+function nodeAgent(node) {
+  return node?.agent || node?.id;
+}
+
+function findNodeByAgent(flow, agent) {
+  return flow.graph?.nodes.find(n => nodeAgent(n) === agent) || null;
+}
+
+function stepFromGraph(flow, agent) {
+  const node = findNodeByAgent(flow, agent);
+  if (!node) return null;
+  const on = {};
+  for (const edge of flow.graph.edges) {
+    if (edge.from !== node.id) continue;
+    const branch = {};
+    if (edge.when) branch.when = edge.when;
+    if (edge.terminal) {
+      branch.terminal = true;
+    } else if (edge.workflow) {
+      branch.workflow = edge.workflow;
+      branch.next = edge.to; // cross-workflow jump target is an agent name already (e.g. 'pm')
+    } else {
+      const targetNode = flow.graph.nodes.find(n => n.id === edge.to);
+      branch.next = targetNode ? nodeAgent(targetNode) : edge.to;
+    }
+    // Multiple edges can share the same `on:` status when they're
+    // predicate-gated alternatives (when:) — pickBranch only supports one
+    // branch per status today (matches legacy `on: { status: {...} }`
+    // shape), so first-declared wins per status. V1 has no such case in
+    // shipped/tested graphs; documented here for the next author.
+    if (!on[edge.on]) on[edge.on] = branch;
+  }
+  return { agent: nodeAgent(node), on, retreat_allowed: node.retreat_allowed, _nodeId: node.id };
 }
 
 function pickBranch(step, status, result) {
@@ -171,6 +217,49 @@ function applyRetreat(branch, step, result) {
     return { branch: { ...branch, next: hint, _retreat: true } };
   }
   return { branch };
+}
+
+// ADR-006 §Décision 1/2 — find the declared loop (if any) this transition
+// CLOSES, i.e. consumes one iteration of. `loop.body` is an ORDERED list
+// of node ids describing the cycle's path (ADR-006 example: [build,
+// review] means build -> review -> (back to) build). Only the back-edge —
+// body[last] -> body[0] — is the edge that actually re-enters the loop and
+// should consume budget; a forward edge like build -> review (index 0 -> 1)
+// is normal traversal INTO the loop, not a repeat of it, and must not be
+// double-counted. Everything else (edges that leave the loop, or aren't
+// part of any declared loop) falls back to the workflow's existing global
+// revision/max_revisions guard — unchanged legacy behavior.
+//
+// fromAgent/toAgent are dispatch agent names (jobData.agent / effective.
+// next); loop bodies are declared in node ids, so translate both before
+// comparing (id != agent when a node sets `agent` explicitly — legacy
+// flows have no such split, so this is a no-op there).
+function findLoopForTransition(flow, fromAgent, toAgent) {
+  const loops = flow.graph?.loops;
+  if (!loops || loops.length === 0) return null;
+  const fromId = findNodeByAgent(flow, fromAgent)?.id ?? fromAgent;
+  const toId = findNodeByAgent(flow, toAgent)?.id ?? toAgent;
+  return loops.find(loop => {
+    const body = loop.body || [];
+    if (body.length === 0) return false;
+    return body[body.length - 1] === fromId && body[0] === toId;
+  }) || null;
+}
+
+function getLoopCounters(instance) {
+  try {
+    const meta = instance.metadata ? JSON.parse(instance.metadata) : null;
+    return { ...(meta?.loop_counters || {}) };
+  } catch {
+    return {};
+  }
+}
+
+function mergeMetadata(instance, patch) {
+  let meta;
+  try { meta = instance.metadata ? JSON.parse(instance.metadata) : {}; }
+  catch { meta = {}; }
+  return { ...meta, ...patch };
 }
 
 /**
@@ -310,10 +399,29 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
 
   // Forward (or retreat) transition within the same workflow
   if (effective.next) {
-    const currentRev = jobData.workflow_revision ?? instance.revision;
-    if (currentRev >= flow.max_revisions) {
-      return applyExhaustion(instance, flow, _emit);
+    // ADR-006 §Décision 1/2 — if this edge closes a declared loop (both
+    // endpoints in the loop's body), bound it by THAT loop's own
+    // max_iterations/budget, counted independently per loop id, instead of
+    // the single anonymous global revision counter. Transitions outside any
+    // declared loop (e.g. leaving the loop toward the next step) keep using
+    // the existing global revision/max_revisions guard — unchanged behavior
+    // for legacy flows and for non-loop edges in graph-format flows.
+    const loop = findLoopForTransition(flow, jobData.agent, effective.next);
+    let loopCounters = null;
+    if (loop) {
+      loopCounters = getLoopCounters(instance);
+      const nextCount = (loopCounters[loop.id] || 0) + 1;
+      if (nextCount > loop.max_iterations) {
+        return applyLoopExhaustion(instance, flow, loop, _emit);
+      }
+      loopCounters[loop.id] = nextCount;
+    } else {
+      const currentRev = jobData.workflow_revision ?? instance.revision;
+      if (currentRev >= flow.max_revisions) {
+        return applyExhaustion(instance, flow, _emit);
+      }
     }
+    const currentRev = jobData.workflow_revision ?? instance.revision;
     // Sanitize context before forwarding. Per-spawn fields (worktree_path)
     // belong to the CURRENT job only — the next agent will derive its own
     // worktree in src/worker/index.js. Carrying worktree_path forward was
@@ -333,8 +441,9 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
       work_item: jobData.work_item,
       context: workflow_context
     });
-    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name },
-                   { current_step: effective.next, last_job_id: jobData.job_id });
+    const patch = { current_step: effective.next, last_job_id: jobData.job_id };
+    if (loopCounters) patch.metadata = mergeMetadata(instance, { loop_counters: loopCounters });
+    await updateInstance({ work_item_id: workItemId, workflow_name: flow.name }, patch);
     _emit('workflow.transitioned', {
       instance_id: instance.id,
       from_agent: jobData.agent, to_agent: effective.next,
@@ -355,6 +464,31 @@ async function applyExhaustion(instance, flow, _emit) {
   );
   _emit('workflow.finished', { instance_id: instance.id, status: 'exhausted' });
   return { action: 'exhausted' };
+}
+
+// ADR-006 §Arbitrages (2026-08-18) — loop budget exhaustion ends the
+// ATTEMPT, never the work item: the instance goes to 'exhausted' with a
+// diagnostic (which loop, how many iterations), same terminal status as
+// applyExhaustion's global path, so dashboards/backlog-return logic don't
+// need to distinguish the two. `on_exhaustion: block` (the only value the
+// 4 shipped workflows and current dashboard UX handle) and `escalate` are
+// treated identically for now — 'escalate' ships its button UX later, same
+// deferral as applyExhaustion above.
+async function applyLoopExhaustion(instance, flow, loop, _emit) {
+  await updateInstance(
+    { work_item_id: instance.work_item_id, workflow_name: flow.name },
+    {
+      status: 'exhausted',
+      metadata: mergeMetadata(instance, {
+        exhausted_loop: { id: loop.id, max_iterations: loop.max_iterations, on_exhaustion: loop.on_exhaustion }
+      })
+    }
+  );
+  _emit('workflow.finished', {
+    instance_id: instance.id, status: 'exhausted',
+    reason: 'loop-exhausted', loop_id: loop.id, max_iterations: loop.max_iterations
+  });
+  return { action: 'exhausted', loop_id: loop.id };
 }
 
 async function maybeResumeParent(instance, flow, result, flows, enqueue, _emit) {
