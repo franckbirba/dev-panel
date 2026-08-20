@@ -279,6 +279,80 @@ const DEFAULT_PI_EXTENSIONS = [
 // is already Aider-style SEARCH/REPLACE).
 const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
 
+// H8 fix (docs/architecture/harness-pi.md §3, ADR-005 H8): `env:
+// {...process.env}` on the spawn below used to propagate the agents host's
+// ambient NODE_ENV=production straight into every pi job. That's the root
+// cause of the 2026-08-11 lockfile drift: a role's SOUL/bash_exec running
+// `npm install` inside the worktree silently picked up `--omit=dev`
+// (npm's NODE_ENV=production behavior) and dropped devDependencies from
+// the lockfile without the model — or anyone — asking for that.
+//
+// buildPiEnv() is the single place that decides what a pi subprocess sees.
+// It is deliberately NOT a strip-everything allowlist: mcp-bridge (the pi
+// extension that gives agents MCP access) spawns every configured MCP
+// server by copying ITS OWN process.env into the child (see
+// infra/pi-extensions/mcp-bridge/index.ts#connectServer) — so PLANE_*,
+// ADMIN_API_KEY, PG_*, GITHUB_TOKEN etc. are load-bearing for pi jobs, not
+// incidental leakage, and dropping them would break every MCP tool call a
+// job makes. What IS safe and correct to strip: variables that only
+// exist because pi itself was spawned from an `npm run`-flavored parent
+// (npm injects `npm_config_*` / `npm_lifecycle_*` into every child of an
+// npm script) and would otherwise silently alter the behavior of any
+// npm/node command the model runs via bash_exec inside the job — the same
+// class of bug as the NODE_ENV leak, just not yet observed in an incident.
+//
+// Exported for unit testing (pure function, no process spawn).
+const NODE_ENV_POLLUTION_PREFIXES = ['npm_config_', 'npm_lifecycle_', 'npm_package_'];
+const NODE_ENV_POLLUTION_KEYS = ['NODE_OPTIONS', 'npm_execpath', 'npm_node_execpath'];
+
+export function buildPiEnv({ baseEnv = process.env, jobId, agentRole, PI_MCP_CONFIG, home } = {}) {
+  const HOME = home || baseEnv.HOME || '/home/deploy';
+  const env = { ...baseEnv };
+
+  for (const key of Object.keys(env)) {
+    if (NODE_ENV_POLLUTION_PREFIXES.some(p => key.startsWith(p)) || NODE_ENV_POLLUTION_KEYS.includes(key)) {
+      delete env[key];
+    }
+  }
+
+  // Force development so devDependencies never get silently omitted by
+  // any npm invocation the job makes (npm install, npm ci, npm run test
+  // via the .devpanlrc.json commands.test path). Forced, not just
+  // defaulted-if-unset, because the leak is specifically the HOST'S
+  // ambient production value winning — an operator who genuinely wants a
+  // production-flavored job env has no legitimate reason to want it via
+  // ambient inheritance rather than an explicit per-job override.
+  env.NODE_ENV = 'development';
+
+  // Deterministic git identity so a `git commit` run from inside the job
+  // (bash_exec, or a model probing repo state) never fails on "Author
+  // identity unknown" when the agents host's ~/.gitconfig has no global
+  // user.name/user.email set (or a job runs in an environment — like a
+  // container — that doesn't inherit it at all). The worker itself
+  // remains the sole real commit authority (automation.js#verifyAndCommit)
+  // — this identity exists so pi's OWN sandbox git calls don't crash, not
+  // to attribute real commits to "pi agent". Respect an explicit operator
+  // override instead of clobbering it.
+  if (!env.GIT_AUTHOR_NAME) env.GIT_AUTHOR_NAME = `devpanl-agent-${agentRole || 'unknown'}`;
+  if (!env.GIT_AUTHOR_EMAIL) env.GIT_AUTHOR_EMAIL = 'agent@devpanl.dev';
+  if (!env.GIT_COMMITTER_NAME) env.GIT_COMMITTER_NAME = env.GIT_AUTHOR_NAME;
+  if (!env.GIT_COMMITTER_EMAIL) env.GIT_COMMITTER_EMAIL = env.GIT_AUTHOR_EMAIL;
+
+  env.JOB_ID = jobId;
+  env.AGENT_ROLE = agentRole;
+  if (PI_MCP_CONFIG) env.PI_MCP_CONFIG = PI_MCP_CONFIG;
+  env.PATH = [
+    join(HOME, '.npm-global/bin'),
+    join(HOME, '.bun/bin'),
+    join(HOME, '.local/bin'),
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin'
+  ].join(':');
+
+  return env;
+}
+
 export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentLogDir }) {
   return new Promise((resolve, reject) => {
     const selected = selectPiModel(agentRole);
@@ -325,20 +399,7 @@ export function spawnPi({ jobId, prompt, agentRole, cwd, activeProcesses, agentL
 
     const proc = spawn(DEFAULT_PI_BIN, args, {
       cwd,
-      env: {
-        ...process.env,
-        JOB_ID: jobId,
-        AGENT_ROLE: agentRole,
-        PI_MCP_CONFIG,
-        PATH: [
-          join(process.env.HOME || '/home/deploy', '.npm-global/bin'),
-          join(process.env.HOME || '/home/deploy', '.bun/bin'),
-          join(process.env.HOME || '/home/deploy', '.local/bin'),
-          '/usr/local/bin',
-          '/usr/bin',
-          '/bin'
-        ].join(':')
-      },
+      env: buildPiEnv({ jobId, agentRole, PI_MCP_CONFIG }),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
