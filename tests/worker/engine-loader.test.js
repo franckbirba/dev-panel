@@ -10,7 +10,11 @@ describe('loadWorkflows', () => {
     const flows = loadWorkflows();
     expect(Object.keys(flows).sort()).toEqual(['cycle-audit', 'merge-coordinator', 'replan', 'work-item']);
     expect(flows['work-item'].max_revisions).toBe(3);
-    expect(flows['work-item'].steps.map(s => s.agent)).toEqual(['builder', 'reviewer', 'qa']);
+    // work-item est passé au format graphe (ADR-006) le 2026-08-20 : c'est
+    // le premier workflow réel à exercer boucles + tests_green en prod. Les
+    // agents et leur ordre sont inchangés, seule la représentation diffère.
+    expect(flows['work-item'].graph.nodes.map(n => n.agent)).toEqual(['builder', 'reviewer', 'qa']);
+    expect(flows['work-item'].graph.loops.map(l => l.id)).toEqual(['revision']);
   });
 
   it('rejects a YAML file that references an unknown predicate', () => {

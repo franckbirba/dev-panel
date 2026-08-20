@@ -89,6 +89,13 @@ export function loadWorkflows(dir = DEFAULT_WORKFLOW_DIR) {
       for (const edge of doc.edges || []) {
         if (edge?.when) usedPredicates.add(edge.when);
       }
+      // Le `until` d'une boucle est un prédicat comme un autre : il doit
+      // résoudre, sinon la sortie de boucle repose sur un nom qui n'existe
+      // pas. Trou trouvé en migrant work-item (2026-08-20) — un `until`
+      // inconnu passait le chargement sans un mot.
+      for (const loop of doc.loops || []) {
+        if (loop?.until) usedPredicates.add(loop.until);
+      }
     } else {
       if (!Array.isArray(doc.steps) || doc.steps.length === 0) {
         throw new Error(`workflow ${doc.name} has no steps`);
