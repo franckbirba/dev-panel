@@ -99,7 +99,7 @@ nodes:
 loops:
   - id: revision
     body: [build, review]
-    until: review_done
+    until: reviewer_approved
     budget_tokens: 100000
     on_exhaustion: block
 edges:
@@ -122,7 +122,7 @@ nodes:
 loops:
   - id: revision
     body: [build, review]
-    until: review_done
+    until: reviewer_approved
     max_iterations: 3
     on_exhaustion: block
 edges:
@@ -147,7 +147,7 @@ nodes:
 loops:
   - id: revision
     body: [build, review]
-    until: review_done
+    until: reviewer_approved
     max_iterations: 3
     budget_tokens: 400000
     on_exhaustion: block
@@ -179,7 +179,7 @@ nodes:
 loops:
   - id: revision
     body: [build, review]
-    until: review_done
+    until: reviewer_approved
     max_iterations: 3
     budget_tokens: 100000
     on_exhaustion: block
@@ -236,7 +236,7 @@ nodes:
 loops:
   - id: cycle3
     body: [a, b, c]
-    until: c_done
+    until: reviewer_approved
     max_iterations: 5
     budget_tokens: 50000
     on_exhaustion: block
