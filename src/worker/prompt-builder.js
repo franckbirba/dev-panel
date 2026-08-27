@@ -220,16 +220,27 @@ export function parseResult(output) {
     } catch { /* try next */ }
   }
 
-  const m = output.match(/```json\s*\n?([\s\S]*?)\n?```\s*$/);
-  if (m) {
+  // Blocs ```json — on prend le DERNIER, où qu'il soit dans la sortie.
+  //
+  // L'ancien motif exigeait que le bloc termine la sortie (`\s*$`). Un
+  // modèle plancher qui ajoute une phrase de politesse après son enveloppe
+  // la rendait donc illisible : le driver tombait dans la synthèse de
+  // secours et produisait une enveloppe imbriquée, non parsable. Constaté
+  // au premier bench e2e sur Qwen3 (2026-08-27) — le modèle avait fait le
+  // travail correctement, c'est le harness qui perdait son compte rendu.
+  const fenced = [...output.matchAll(/```json\s*\n?([\s\S]*?)\n?```/g)];
+  for (let i = fenced.length - 1; i >= 0; i--) {
     try {
-      const parsed = coerceSummary(JSON.parse(m[1]));
+      const parsed = coerceSummary(JSON.parse(fenced[i][1]));
       const err = validate(parsed);
       if (!err) return { ok: true, data: parsed };
+      // Bloc syntaxiquement valide mais incomplet : on le signale plutôt
+      // que de continuer à chercher — c'est l'intention de l'agent.
       return { ok: false, error: err, raw: parsed };
-    } catch (e) {
-      return { ok: false, error: `invalid json in fenced block: ${e.message}` };
-    }
+    } catch { /* bloc illisible, on tente le précédent */ }
+  }
+  if (fenced.length) {
+    return { ok: false, error: 'invalid json in fenced block' };
   }
 
   const multilineCandidate = extractTrailingJsonObject(output);

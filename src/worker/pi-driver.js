@@ -193,10 +193,20 @@ function synthesizePiResult({ cwd, lastAssistantText, toolUseCount, exitCode }) 
   } catch { /* ignore */ }
 
   const status = exitCode === 0 && (hasChanges || toolUseCount > 0) ? 'done' : 'blocked';
-  const summaryText = (lastAssistantText || '').trim();
-  const summarySnippet = summaryText
-    ? summaryText.slice(-1200).replace(/\s+/g, ' ').trim()
-    : `Pi exited ${exitCode} with ${toolUseCount} tool call(s) — no closing JSON emitted`;
+  // Le dernier message peut CONTENIR une enveloppe (bloc ```json, ou un
+  // objet JSON brut) que parseResult n'a pas su lire. La recopier telle
+  // quelle dans `summary` produit une enveloppe imbriquée — illisible pour
+  // qui la relit ensuite, et impossible à parser (constaté au bench e2e du
+  // 2026-08-27). On retire donc le JSON du texte avant d'en faire un
+  // résumé : ce qui reste, c'est la prose de l'agent, la seule partie qui
+  // ait valeur de compte rendu ici.
+  const stripped = (lastAssistantText || '')
+    .replace(/```json[\s\S]*?```/g, ' ')
+    .replace(/\{[\s\S]*"status"\s*:[\s\S]*\}/g, ' ')
+    .trim();
+  const summarySnippet = stripped
+    ? stripped.slice(-1200).replace(/\s+/g, ' ').trim()
+    : `Pi exited ${exitCode} with ${toolUseCount} tool call(s) — no readable closing envelope`;
 
   return {
     status,
@@ -272,12 +282,22 @@ const DEFAULT_PI_EXTENSIONS = [
   join(PI_EXTENSIONS_ROOT, 'submit-result')
 ];
 
-// Pi built-in tool allowlist (passed via --tools). We keep everything
-// EXCEPT `write` — the built-in write is a Claude-tuned whole-file tool
-// that weak coders catastrophically fail. Replaced by our `create_file`
-// extension above; modifications go through Pi's built-in `edit` (which
-// is already Aider-style SEARCH/REPLACE).
-const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash';
+// Allowlist passée à `--tools`. Deux choses à savoir, la seconde ayant
+// coûté un bench :
+//
+// 1. On garde tout SAUF `write` — le write builtin est un outil whole-file
+//    calibré Claude, catastrophique pour un coder faible. Remplacé par
+//    notre extension `create_file` ; les modifications passent par le
+//    `edit` builtin (Aider-style SEARCH/REPLACE).
+//
+// 2. `--tools` ne filtre PAS que les builtins : il filtre AUSSI les tools
+//    fournis par les extensions. `submit_result` était donc chargé puis
+//    silencieusement exclu — le modèle ne le voyait pas et retombait sur
+//    l'impression de JSON, exactement le comportement que H3 devait
+//    supprimer. Symptôme au bench e2e du 2026-08-27, dit par le modèle
+//    lui-même : « It seems there's no submit_result command available ».
+//    Tout tool d'extension destiné au modèle doit figurer ici.
+const PI_BUILTIN_ALLOWLIST = 'read,edit,grep,find,ls,bash,submit_result';
 
 // H8 fix (docs/architecture/harness-pi.md §3, ADR-005 H8): `env:
 // {...process.env}` on the spawn below used to propagate the agents host's
@@ -341,14 +361,25 @@ export function buildPiEnv({ baseEnv = process.env, jobId, agentRole, PI_MCP_CON
   env.JOB_ID = jobId;
   env.AGENT_ROLE = agentRole;
   if (PI_MCP_CONFIG) env.PI_MCP_CONFIG = PI_MCP_CONFIG;
-  env.PATH = [
+  // PATH : on PRÉFIXE les emplacements de l'agents host, on n'écrase pas.
+  //
+  // La version précédente remplaçait le PATH par cette liste figée. Sur
+  // l'agents host ça marche (node y est sous ~/.npm-global). Ailleurs — un
+  // node Homebrew, nvm, ou un container — `node` disparaît de
+  // l'environnement de pi, et pi meurt sur `env: node: No such file or
+  // directory` (exit 127). Constaté au premier bench e2e local, 2026-08-27 :
+  // un défaut qui ne pouvait apparaître que hors de l'host de prod, donc
+  // invisible jusqu'au jour où on sort de l'host de prod.
+  //
+  // Préfixer garde la priorité voulue (les binaires du studio d'abord) sans
+  // amputer l'environnement de ce dont l'outil a besoin pour vivre.
+  const preferred = [
     join(HOME, '.npm-global/bin'),
     join(HOME, '.bun/bin'),
     join(HOME, '.local/bin'),
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin'
-  ].join(':');
+  ];
+  const inherited = (baseEnv.PATH || '/usr/local/bin:/usr/bin:/bin').split(':').filter(Boolean);
+  env.PATH = [...preferred, ...inherited.filter((p) => !preferred.includes(p))].join(':');
 
   return env;
 }
