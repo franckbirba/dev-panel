@@ -22,6 +22,7 @@ consequences:
   - Les nouveaux drivers héritent du même cycle de vie et des mêmes preuves.
   - Toute divergence native reste confinée à buildInvocation et handleNativeEvent.
   - Les libellés produits restent distincts des identifiants techniques de contrat.
+  - La reprise Kimi exige de conserver le répertoire de création de la session native ; toute autre directory est refusée par le CLI.
   - L’attestation réelle de Claude reste bloquée tant que sa session OAuth est expirée ; les tests mockés ne valent pas attestation de version.
 references:
   - "https://github.com/franckbirba/dev-panel/commit/7a033a22fc91ebc089244bb185090be2f4445c86"

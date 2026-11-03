@@ -10,7 +10,7 @@ Ces attestations sont limitées au node `192.168.1.9` et aux versions/procédure
 | `stream` | `verified` | Événements réels `started`, `stdout`, `artifact_created`, `completed` et session native `session_d2f1c215-7305-4be7-81a5-5bfe2592c7bd` |
 | `cancel` | `verified` | Test de contrat : `cancelled` émis uniquement après le `close` du processus |
 | `export` | `verified` | Journal `events.jsonl` réel, avec taille et SHA-256 rattachés à `artifact_created` et `completed` |
-| `resume` | `unsupported` | La commande est testée par mock ; la continuité d’une vraie session reste à prouver |
+| `resume` | `verified` | Reprise réelle de `session_d2f1c215-7305-4be7-81a5-5bfe2592c7bd` dans son répertoire d’origine, avec `REPRISE_OK` et artefact. Kimi exige le répertoire de création de la session ; une autre directory est refusée |
 | `design` | `unsupported` | Aucun benchmark de prototype réel exécuté |
 | `cron` | `unsupported` | Rappels natifs présents, mais non testés comme capacité durable de production |
 | `goal` | `unsupported` | Aucun objectif natif réel exécuté pour cette attestation |
@@ -45,7 +45,7 @@ Le blocage OAuth est environnemental et doit être résolu avant de modifier les
 | `stream` | `verified` | Événements réels `started`, `stdout`, `artifact_created`, `completed` |
 | `cancel` | `verified` | Test de contrat : `cancelled` émis uniquement après le `close` du processus |
 | `export` | `verified` | Journal réel, avec taille et SHA-256 rattachés à `artifact_created` et `completed` |
-| `resume` | `unsupported` | Continuité d’une vraie session non démontrée |
+| `resume` | `verified` | Reprise réelle de `ses_e5dca331bffeRkr24o1EqFmadC`, réponse `REPRISE_OK`, nouvelle session native `ses_e5d930df2ffeJ7Nb1a2A1tvpuu` et artefact SHA-256 |
 | `design` | `unsupported` | Aucun benchmark de prototype réel exécuté |
 | `cron` | `unsupported` | Aucune capacité de scheduling durable validée |
 | `multimodal` | `unsupported` | Aucune entrée image réelle testée |
