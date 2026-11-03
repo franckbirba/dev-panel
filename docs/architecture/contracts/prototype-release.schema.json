@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.devpanel.local/prototype-release.schema.json",
+  "title": "PrototypeRelease DevPanel",
+  "description": "Version immuable d’un prototype exécutable, de ses preuves visuelles et de sa traçabilité produit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "prototype_id",
+    "work_item_id",
+    "prototype_version",
+    "source_format",
+    "source_location",
+    "source_sha",
+    "preview_url",
+    "design_system_sha",
+    "screenshots",
+    "user_flows",
+    "supported_states",
+    "decision_refs",
+    "native_session_ids",
+    "created_by",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version du contrat au format MAJOR.MINOR, sans préfixe ni métadonnée.",
+      "examples": ["1.0"]
+    },
+    "prototype_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant unique du prototype, stable entre ses versions."
+    },
+    "work_item_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant Plane du work item auquel le prototype est rattaché."
+    },
+    "prototype_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version explicite du prototype ; une référence implicite à la dernière version est interdite.",
+      "examples": ["1.0.0"]
+    },
+    "source_format": {
+      "type": "string",
+      "enum": ["html", "react", "native-design"],
+      "description": "Format de la source livrée au Builder ou à l’ExperienceWorkflow."
+    },
+    "source_location": {
+      "type": "string",
+      "format": "uri",
+      "description": "URI immuable de la source versionnée, sans credential ni URL présignée."
+    },
+    "source_sha": {
+      "$ref": "#/$defs/gitSha",
+      "description": "SHA Git complet du commit contenant exactement cette source."
+    },
+    "preview_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL de la preview exécutable correspondant à source_sha, sans credential embarqué."
+    },
+    "design_system_sha": {
+      "$ref": "#/$defs/gitSha",
+      "description": "SHA Git complet de la version du design system utilisée par le prototype."
+    },
+    "screenshots": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Preuves visuelles immuables couvrant les viewports et états vérifiés.",
+      "items": {
+        "$ref": "#/$defs/screenshot"
+      }
+    },
+    "user_flows": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Parcours utilisateur exécutables couverts par la release.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "supported_states": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "États d’interface effectivement implémentés et vérifiables.",
+      "items": {
+        "type": "string",
+        "enum": ["empty", "loading", "error", "success"]
+      }
+    },
+    "decision_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Décisions versionnées ayant contribué à cette release.",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      }
+    },
+    "native_session_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Sessions natives des drivers ayant produit ou modifié le prototype ; jamais des tokens.",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      }
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identité auditable de l’acteur ou du composant ayant créé la release."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant de création de la release au format RFC 3339."
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-HJKMNP-TV-Z]{26})$",
+      "description": "UUID canonique ou ULID Crockford majuscule encodé sur 26 caractères."
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "SHA Git complet du commit, en SHA-1 ou SHA-256 minuscule."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Empreinte SHA-256 hexadécimale minuscule du contenu référencé."
+    },
+    "screenshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "viewport", "state", "sha256"],
+      "description": "Capture externalisée et vérifiable par empreinte SHA-256.",
+      "properties": {
+        "artifact_ref": {
+          "type": "string",
+          "format": "uri",
+          "description": "URI stable de la capture dans le stockage d’artefacts, sans URL présignée."
+        },
+        "viewport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "description": "Dimensions CSS du viewport utilisé pour la capture.",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Largeur du viewport en pixels CSS."
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Hauteur du viewport en pixels CSS."
+            }
+          }
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "description": "État d’interface visible dans la capture, couvert par supported_states."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

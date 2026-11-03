@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Migration BullMQ → Temporal",
+    "output": "migration.html",
+    "quality_profile": "showcase",
+    "viewBox": [900, 460]
+  },
+  "lanes": [
+    { "id": "authority", "label": "Autorité des runs" },
+    { "id": "proof", "label": "Preuves et retrait" }
+  ],
+  "phases": [
+    { "id": "compare", "label": "Comparer sans double effet", "fromCol": 0, "toCol": 1 },
+    { "id": "switch", "label": "Basculer par génération", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "retire", "label": "Retirer après preuves", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["shadow", "dual", "fencing", "temporal", "readonly", "removal"],
+  "semanticChecks": {
+    "allowedRoots": ["shadow"],
+    "allowedTerminals": ["removal"],
+    "requiredPaths": [
+      { "from": "shadow", "to": "fencing" },
+      { "from": "fencing", "to": "readonly" }
+    ]
+  },
+  "nodes": [
+    { "id": "shadow", "lane": "authority", "col": 0, "type": "backend", "label": "Shadow", "sublabel": "Intentions, aucun effet" },
+    { "id": "dual", "lane": "authority", "col": 1, "type": "backend", "label": "Dual-read", "sublabel": "7 jours sans divergence" },
+    { "id": "fencing", "lane": "proof", "col": 1, "type": "security", "label": "Fencing", "sublabel": "Génération et registre" },
+    { "id": "temporal", "lane": "authority", "col": 2, "type": "messagebus", "label": "Temporal", "sublabel": "Nouveaux runs" },
+    { "id": "readonly", "lane": "authority", "col": 3, "type": "database", "label": "Read-only", "sublabel": "Aucun job autoritaire" },
+    { "id": "removal", "lane": "proof", "col": 4, "type": "security", "label": "Removal", "sublabel": "Après A–F · gate R3" }
+  ],
+  "edges": [
+    { "from": "shadow", "to": "dual" },
+    { "from": "dual", "to": "fencing" },
+    { "from": "fencing", "to": "temporal", "variant": "emphasis" },
+    { "from": "temporal", "to": "readonly" },
+    { "from": "readonly", "to": "removal", "label": "exports restaurés", "variant": "dashed" }
+  ]
+}

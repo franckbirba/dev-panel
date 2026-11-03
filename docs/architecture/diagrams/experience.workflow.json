@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ExperienceWorkflow — du brief au prototype validé",
+    "output": "experience.html",
+    "quality_profile": "showcase",
+    "viewBox": [900, 500]
+  },
+  "lanes": [
+    { "id": "design", "label": "Conception" },
+    { "id": "proof", "label": "Preuves et gates" }
+  ],
+  "phases": [
+    { "id": "brief", "label": "Brief et driver", "fromCol": 0, "toCol": 1 },
+    { "id": "prototype", "label": "Prototype", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "release", "label": "Validation et release", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["brief", "driver", "prototype", "preview", "evidence", "quality", "released"],
+  "semanticChecks": {
+    "allowedRoots": ["brief"],
+    "allowedTerminals": ["released", "waiting"],
+    "requiredPaths": [
+      { "from": "brief", "to": "preview" },
+      { "from": "preview", "to": "released" }
+    ]
+  },
+  "nodes": [
+    { "id": "brief", "lane": "design", "col": 0, "type": "external", "label": "DesignBrief", "sublabel": "Spec · parcours · états" },
+    { "id": "driver", "lane": "design", "col": 1, "type": "backend", "label": "Driver", "sublabel": "Capacités vérifiées" },
+    { "id": "prototype", "lane": "design", "col": 2, "type": "frontend", "label": "Prototype", "sublabel": "Sources à SHA fixe" },
+    { "id": "preview", "lane": "design", "col": 3, "type": "cloud", "label": "Preview", "sublabel": "Application exécutable" },
+    { "id": "evidence", "lane": "proof", "col": 3, "type": "database", "label": "Preuves", "sublabel": "Screenshots · parcours" },
+    { "id": "quality", "lane": "proof", "col": 4, "type": "security", "label": "Quality gate", "sublabel": "UX · accessibilité · DS" },
+    { "id": "released", "lane": "design", "col": 4, "type": "external", "label": "Release", "sublabel": "Prototype immuable" },
+    { "id": "waiting", "lane": "proof", "col": 2, "type": "security", "label": "Attente locale", "sublabel": "PC offline · Temporal", "tag": "fallback ou escalade" }
+  ],
+  "edges": [
+    { "from": "brief", "to": "driver" },
+    { "from": "driver", "to": "prototype", "variant": "emphasis" },
+    { "from": "prototype", "to": "preview" },
+    { "from": "preview", "to": "evidence" },
+    { "from": "evidence", "to": "quality" },
+    { "from": "quality", "to": "released", "variant": "emphasis" },
+    { "from": "driver", "to": "waiting", "label": "capacité indisponible", "role": "branch" }
+  ]
+}

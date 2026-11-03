@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Traçabilité — pourquoi avons-nous fait ça ?",
+    "output": "traceability.html",
+    "quality_profile": "showcase",
+    "viewBox": [1068, 620]
+  },
+  "stages": [
+    { "label": "Demande" },
+    { "label": "Produit" },
+    { "label": "Conception" },
+    { "label": "Preuves" },
+    { "label": "Delivery" }
+  ],
+  "nodes": [
+    { "id": "request", "type": "external", "label": "Demande originale", "sublabel": "Message et provenance", "stage": 0, "row": 1 },
+    { "id": "plane", "type": "external", "label": "Work item Plane", "sublabel": "Périmètre et priorité", "stage": 1, "row": 1 },
+    { "id": "spec", "type": "backend", "label": "Spec versionnée", "sublabel": "Critères à SHA fixe", "stage": 2, "row": 0 },
+    { "id": "prototype", "type": "frontend", "label": "PrototypeRelease", "sublabel": "Sources et preview", "stage": 2, "row": 2 },
+    { "id": "decision", "type": "security", "label": "DecisionRecord", "sublabel": "Choix", "stage": 3, "row": 0 },
+    { "id": "artifacts", "type": "database", "label": "Preuves MinIO", "sublabel": "Captures · traces", "stage": 3, "row": 2 },
+    { "id": "pr", "type": "backend", "label": "PR et commits", "sublabel": "Implémentation révisée", "stage": 4, "row": 0 },
+    { "id": "release", "type": "cloud", "label": "Release", "sublabel": "Merge SHA · déploiement", "stage": 4, "row": 2 }
+  ],
+  "flows": [
+    { "from": "request", "to": "plane", "label": "qualification", "classification": "demande", "variant": "emphasis" },
+    { "from": "plane", "to": "spec", "label": "spécification", "classification": "produit" },
+    { "from": "plane", "to": "prototype", "label": "conception UI", "classification": "design" },
+    { "from": "spec", "to": "decision", "label": "arbitrages", "classification": "décision", "route": "straight", "labelAt": [560, 100] },
+    { "from": "prototype", "to": "decision", "label": "choix retenus", "classification": "décision" },
+    { "from": "prototype", "to": "artifacts", "label": "preuves visuelles", "classification": "artefact", "route": "straight", "labelAt": [777, 470] },
+    { "from": "decision", "to": "pr", "label": "implémentation", "classification": "code", "variant": "emphasis" },
+    { "from": "pr", "to": "release", "label": "merge et deploy", "classification": "release", "variant": "emphasis", "labelAt": [960, 200] },
+    { "from": "artifacts", "to": "release", "label": "dossier de preuves", "classification": "preuve" }
+  ]
+}

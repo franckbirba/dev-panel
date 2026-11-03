@@ -21,7 +21,7 @@ Commits de preuve :
 - `7a033a22fc91ebc089244bb185090be2f4445c86`
 - `a8ad6c213863073bf1ce41aa9063a0822ebc3ee3`
 
-Tests de contrat : **24/24 réussis** pour Claude, Kimi et le parser historique.
+Tests de contrat : **35/35 réussis** pour OpenCode, Claude, Kimi, l’intégration et l’expurgation.
 
 ## Claude Code CLI
 
@@ -37,11 +37,30 @@ Tests de contrat : **24/24 réussis** pour Claude, Kimi et le parser historique.
 
 Le blocage OAuth est environnemental et doit être résolu avant de modifier les statuts `process` et `stream`. Aucun contournement de permission n’est appliqué.
 
+## OpenCode 2.1.4
+
+| Capacité | Statut | Preuve |
+|---|---|---|
+| `process` | `verified` | `opencode run` réel avec réponse `OK`, statut `completed` |
+| `stream` | `verified` | Événements réels `started`, `stdout`, `artifact_created`, `completed` |
+| `cancel` | `verified` | Test de contrat : `cancelled` émis uniquement après le `close` du processus |
+| `export` | `verified` | Journal réel, avec taille et SHA-256 rattachés à `artifact_created` et `completed` |
+| `resume` | `unsupported` | Continuité d’une vraie session non démontrée |
+| `design` | `unsupported` | Aucun benchmark de prototype réel exécuté |
+| `cron` | `unsupported` | Aucune capacité de scheduling durable validée |
+| `multimodal` | `unsupported` | Aucune entrée image réelle testée |
+
+Commit de preuve : `269070a0776db0cceac4b08f50c275fe817a85f9`.
+
 ## Références
 
 - `src/worker/cli-process-driver.js`
 - `src/worker/claude-code-cli-driver.js`
 - `src/worker/kimi-code-cli-driver.js`
+- `src/worker/opencode-cli-driver.js`
+- `src/worker/redact-text.js`
 - `tests/worker/claude-code-cli-driver.test.js`
 - `tests/worker/kimi-code-cli-driver.test.js`
+- `tests/worker/opencode-cli-driver.test.js`
+- `tests/worker/redact-text.test.js`
 - `docs/work-items/DEVPA-252/decisions/DEC-0001-shared-cli-process-driver.yaml`

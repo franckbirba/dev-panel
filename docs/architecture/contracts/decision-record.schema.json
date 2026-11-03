@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.devpanel.local/decision-record.schema.json",
+  "title": "DecisionRecord DevPanel",
+  "description": "Décision produit ou technique versionnée, reliant son contexte, ses options, son choix et ses preuves.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_id",
+    "work_item_id",
+    "status",
+    "context",
+    "options",
+    "chosen_option",
+    "rationale",
+    "consequences",
+    "references",
+    "author",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version du contrat au format MAJOR.MINOR, sans préfixe ni métadonnée.",
+      "examples": ["1.0"]
+    },
+    "decision_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant unique et stable de la décision."
+    },
+    "work_item_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant Plane du work item concerné."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "superseded", "rejected"],
+      "description": "État actuel de la décision dans l’historique du work item."
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Problème, contraintes et informations nécessaires pour comprendre le choix."
+    },
+    "options": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Options effectivement étudiées, y compris l’option retenue.",
+      "items": {
+        "$ref": "#/$defs/option"
+      }
+    },
+    "chosen_option": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifiant de l’option retenue ; sa valeur doit correspondre à un options[].id."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Justification du choix au regard du contexte et des alternatives."
+    },
+    "consequences": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Conséquences positives, négatives et contraintes introduites par la décision.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "references": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "URI immuables des specs, prototypes, commits ou autres preuves citées.",
+      "items": {
+        "type": "string",
+        "format": "uri"
+      }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "driver", "native_session_id"],
+      "description": "Auteur auditable de la décision et session native permettant de retrouver sa production.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type d’acteur, par exemple human ou agent.",
+          "examples": ["human", "agent"]
+        },
+        "driver": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Driver ou composant ayant produit la décision.",
+          "examples": ["kimi-code-cli"]
+        },
+        "native_session_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Identifiant de la session native associée ; jamais un token de session."
+        }
+      }
+    },
+    "supersedes": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant de la décision remplacée, le cas échéant."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant de création de la décision au format RFC 3339."
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-HJKMNP-TV-Z]{26})$",
+      "description": "UUID canonique ou ULID Crockford majuscule encodé sur 26 caractères."
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description"],
+      "description": "Alternative étudiée avant le choix.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifiant local stable de l’option, référencé par chosen_option."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Description de l’option et de son périmètre."
+        }
+      }
+    }
+  }
+}

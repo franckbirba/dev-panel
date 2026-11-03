@@ -1,0 +1,492 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.devpanel.local/execution-event.schema.json",
+  "title": "Événement d’exécution CLI DevPanel",
+  "description": "Événement ordonné émis par un ExecutionAdapter ; le payload est fermé et dépend de type.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "run_id",
+    "sequence",
+    "timestamp",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version du contrat au format MAJOR.MINOR, sans préfixe ni métadonnée.",
+      "examples": ["1.0"]
+    },
+    "event_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant unique et idempotent de l’événement."
+    },
+    "run_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Run CLI auquel appartient l’événement."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Position strictement croissante dans le flux du run, en commençant à 1."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant d’émission au format RFC 3339 avec offset ou Z obligatoire."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "started",
+        "stdout",
+        "stderr",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "heartbeat",
+        "waiting_decision",
+        "resumed",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "description": "Type normalisé du cycle de vie ou de la sortie du driver."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Données non secrètes propres au type. Tokens, mots de passe, cookies, credentials et valeurs secrètes sont interdits ; les données volumineuses sont remplacées par une référence artifact_ref."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "started" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/startedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "enum": ["stdout", "stderr"] } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/logPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "tool_started" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/toolStartedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "tool_finished" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/toolFinishedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "artifact_created" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/artifactCreatedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "heartbeat" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/heartbeatPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "waiting_decision" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/waitingDecisionPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "resumed" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/resumedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "completed" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/completedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "failed" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/failedPayload" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["type"],
+        "properties": { "type": { "const": "cancelled" } }
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/cancelledPayload" } }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-HJKMNP-TV-Z]{26})$",
+      "description": "UUID canonique ou ULID Crockford majuscule encodé sur 26 caractères."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Empreinte SHA-256 hexadécimale minuscule du contenu référencé."
+    },
+    "mimeType": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "description": "Type MIME sous la forme type/sous-type."
+    },
+    "artifactKind": {
+      "type": "string",
+      "enum": [
+        "screenshot",
+        "trace",
+        "video",
+        "session-export",
+        "prototype-source",
+        "test-report",
+        "design-export"
+      ],
+      "description": "Nature normalisée d’un artefact de preuve."
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "mime_type", "size_bytes", "sha256"],
+      "description": "Référence immuable remplaçant un contenu volumineux dans le flux d’événements.",
+      "properties": {
+        "artifact_ref": {
+          "type": "string",
+          "format": "uri",
+          "description": "URI de l’objet stocké, sans URL présignée ni credential."
+        },
+        "mime_type": {
+          "$ref": "#/$defs/mimeType"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Taille exacte du contenu référencé en octets."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "startedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "process_id"],
+      "description": "Informations non sensibles disponibles au démarrage du processus.",
+      "properties": {
+        "driver": {
+          "type": "string",
+          "enum": ["claude-code-cli", "kimi-code-cli", "opencode-cli"]
+        },
+        "process_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "PID local du processus, utilisable uniquement pour le diagnostic du node."
+        },
+        "native_session_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Session native du CLI si elle est déjà connue ; jamais un token de session."
+        }
+      }
+    },
+    "logPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truncated"],
+      "description": "Extrait UTF-8 expurgé de secrets et référence du flux complet s’il est conservé comme artefact.",
+      "properties": {
+        "content": {
+          "type": "string",
+          "maxLength": 65536,
+          "description": "Extrait texte expurgé, limité à 65 536 caractères."
+        },
+        "artifact_ref": {
+          "$ref": "#/$defs/artifactReference",
+          "description": "Flux complet externalisé ; obligatoire lorsque content est tronqué."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Indique si content est un extrait du flux complet."
+        }
+      },
+      "anyOf": [
+        { "required": ["content"] },
+        { "required": ["artifact_ref"] }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": ["truncated"],
+            "properties": { "truncated": { "const": true } }
+          },
+          "then": { "required": ["artifact_ref"] }
+        }
+      ]
+    },
+    "toolStartedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "tool_name"],
+      "description": "Début d’un appel d’outil avec entrée résumée ou externalisée, jamais de secret brut.",
+      "properties": {
+        "tool_call_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Identifiant de corrélation entre le début et la fin de l’appel."
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nom de l’outil effectivement invoqué."
+        },
+        "input_summary": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Résumé expurgé de l’entrée, limité à 4 000 caractères."
+        },
+        "input_artifact_ref": {
+          "$ref": "#/$defs/artifactReference",
+          "description": "Entrée complète externalisée lorsque sa taille dépasse le résumé."
+        }
+      }
+    },
+    "toolFinishedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "status"],
+      "description": "Résultat d’un appel d’outil avec sortie résumée ou externalisée.",
+      "properties": {
+        "tool_call_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["succeeded", "failed", "cancelled"],
+          "description": "Résultat technique de l’outil, distinct de l’état global du run."
+        },
+        "output_summary": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Résumé expurgé de la sortie, limité à 4 000 caractères."
+        },
+        "output_artifact_ref": {
+          "$ref": "#/$defs/artifactReference",
+          "description": "Sortie complète externalisée lorsque sa taille dépasse le résumé."
+        },
+        "error_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "description": "Code d’erreur stable en snake_case lorsque status vaut failed ou cancelled."
+        }
+      }
+    },
+    "artifactCreatedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "kind", "mime_type", "size_bytes", "sha256"],
+      "description": "Preuve immuable produite par le run et stockée hors du flux d’événements.",
+      "properties": {
+        "artifact_ref": {
+          "type": "string",
+          "format": "uri",
+          "description": "URI stable de l’artefact, sans URL présignée ni credential."
+        },
+        "kind": {
+          "$ref": "#/$defs/artifactKind"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/mimeType"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Taille exacte de l’artefact en octets."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "heartbeatPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active_duration_seconds"],
+      "description": "Signal de vie ne contenant ni sortie brute ni donnée secrète.",
+      "properties": {
+        "active_duration_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Durée active cumulée du processus au moment du heartbeat."
+        }
+      }
+    },
+    "waitingDecisionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "question", "options", "expires_at"],
+      "description": "Attente durable Temporal ; le worker CLI ne reste pas occupé.",
+      "properties": {
+        "decision_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Identifiant de la décision humaine attendue."
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Question expurgée présentée à l’approbateur."
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Choix autorisés pour reprendre ou arrêter le run.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Expiration RFC 3339 de la décision."
+        }
+      }
+    },
+    "resumedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "selected_option", "decided_by"],
+      "description": "Décision enregistrée pour reprendre le run après waiting_decision.",
+      "properties": {
+        "decision_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "selected_option": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Option choisie parmi celles de waiting_decision."
+        },
+        "decided_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identité auditable de l’approbateur, sans credential."
+        }
+      }
+    },
+    "completedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "artifacts"],
+      "description": "Clôture technique du run ; les artefacts restent nécessaires à la validation de l’étape.",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Résumé expurgé du résultat, limité à 4 000 caractères."
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Artefacts produits et vérifiables rattachés au run.",
+          "items": {
+            "$ref": "#/$defs/artifactReference"
+          }
+        }
+      }
+    },
+    "failedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_code", "message", "retryable"],
+      "description": "Échec normalisé sans stack trace brute potentiellement secrète.",
+      "properties": {
+        "error_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "description": "Code d’erreur stable en snake_case utilisé par la politique de retry."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Message de diagnostic expurgé, limité à 4 000 caractères."
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "Indique si l’erreur est transitoire ; Temporal reste l’autorité du retry."
+        },
+        "artifact_ref": {
+          "$ref": "#/$defs/artifactReference",
+          "description": "Trace ou diagnostic complet expurgé et externalisé."
+        }
+      }
+    },
+    "cancelledPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "cancelled_by"],
+      "description": "Annulation explicite et auditable du processus.",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Motif expurgé de l’annulation."
+        },
+        "cancelled_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identité auditable de l’acteur ou du composant ayant annulé le run."
+        }
+      }
+    }
+  }
+}

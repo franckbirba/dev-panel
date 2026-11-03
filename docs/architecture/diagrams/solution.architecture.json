@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "DevPanel — Usine logicielle agentique",
+    "output": "solution.html",
+    "quality_profile": "showcase",
+    "viewBox": [1390, 730]
+  },
+  "components": [
+    {
+      "id": "inputs",
+      "type": "external",
+      "label": "Demandes et roadmap",
+      "sublabel": "Clients · Captures · Plane",
+      "pos": [60, 250],
+      "size": [210, 88]
+    },
+    {
+      "id": "control-plane",
+      "type": "frontend",
+      "label": "DevPanel Control Plane",
+      "sublabel": "API · Dashboard · Politiques · Routage",
+      "pos": [360, 250],
+      "size": [250, 88]
+    },
+    {
+      "id": "temporal",
+      "type": "messagebus",
+      "label": "Temporal",
+      "sublabel": "Workflows · Timers · Signals · Task queues",
+      "pos": [700, 250],
+      "size": [250, 88],
+      "tag": "Autorité technique"
+    },
+    {
+      "id": "cloud-workers",
+      "type": "backend",
+      "label": "Workers cloud",
+      "sublabel": "Claude CLI · Kimi CLI · OpenCode · CI",
+      "pos": [1110, 80],
+      "size": [250, 88]
+    },
+    {
+      "id": "local-runner",
+      "type": "backend",
+      "label": "Runner local PC",
+      "sublabel": "CLI · KimiDesignBridge · Outils locaux",
+      "pos": [1110, 430],
+      "size": [250, 88],
+      "tag": "Capacité optionnelle"
+    },
+    {
+      "id": "plane",
+      "type": "external",
+      "label": "Plane",
+      "sublabel": "Work items · Roadmap · Cycles",
+      "pos": [60, 520],
+      "size": [210, 88],
+      "tag": "Autorité produit"
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub / Git",
+      "sublabel": "Code · Specs · Prototypes · Décisions",
+      "pos": [360, 610],
+      "size": [250, 88]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "Postgres DevPanel",
+      "sublabel": "Événements · Métriques · Traçabilité",
+      "pos": [700, 610],
+      "size": [250, 88]
+    },
+    {
+      "id": "minio",
+      "type": "database",
+      "label": "MinIO / S3",
+      "sublabel": "Screenshots · Traces · Exports",
+      "pos": [1110, 610],
+      "size": [250, 88]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Cloud DevPanel",
+      "wraps": ["control-plane", "temporal", "cloud-workers", "postgres", "minio"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Machine locale — connexions sortantes uniquement",
+      "wraps": ["local-runner"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "inputs-to-control",
+      "from": "inputs",
+      "to": "control-plane",
+      "label": "Qualification",
+      "variant": "emphasis"
+    },
+    {
+      "id": "control-to-temporal",
+      "from": "control-plane",
+      "to": "temporal",
+      "label": "Dispatch",
+      "variant": "emphasis"
+    },
+    {
+      "id": "temporal-to-cloud",
+      "from": "temporal",
+      "to": "cloud-workers",
+      "label": "Task queues cloud"
+    },
+    {
+      "id": "temporal-to-local",
+      "from": "temporal",
+      "to": "local-runner",
+      "label": "Task queues locales",
+      "variant": "security"
+    },
+    {
+      "id": "plane-to-control",
+      "from": "plane",
+      "to": "control-plane",
+      "label": "Work items et statuts"
+    },
+    {
+      "id": "cloud-to-github",
+      "from": "cloud-workers",
+      "to": "github",
+      "label": "PR et commits",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [[1380, 124], [1380, 740], [485, 740], [485, 698]],
+      "labelAt": [960, 725]
+    },
+    {
+      "id": "control-to-postgres",
+      "from": "control-plane",
+      "to": "postgres",
+      "label": "Projections"
+    },
+    {
+      "id": "cloud-to-minio",
+      "from": "cloud-workers",
+      "to": "minio",
+      "label": "Preuves",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [[1370, 124], [1370, 654], [1360, 654]],
+      "labelAt": [1320, 400]
+    },
+    {
+      "id": "local-to-minio",
+      "from": "local-runner",
+      "to": "minio",
+      "label": "Exports et artefacts",
+      "variant": "security",
+      "labelAt": [1280, 540]
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.devpanel.local/node-registration.schema.json",
+  "title": "NodeRegistration DevPanel",
+  "description": "Annonce d’un worker cloud ou local, de ses capacités vérifiées et de son état de disponibilité.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "node_id",
+    "hostname",
+    "capabilities",
+    "status",
+    "started_at",
+    "last_heartbeat_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version du contrat au format MAJOR.MINOR, sans préfixe ni métadonnée.",
+      "examples": ["1.0"]
+    },
+    "node_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant unique et stable du node d’exécution."
+    },
+    "hostname": {
+      "type": "string",
+      "format": "hostname",
+      "description": "Nom d’hôte du node, utilisé pour le diagnostic et non comme identité de contrat."
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Capacités effectivement vérifiées sur les versions installées ; aucune capacité n’est supposée.",
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["online", "degraded", "offline"],
+      "description": "Disponibilité actuelle du node pour le routage Temporal."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant de démarrage du node au format RFC 3339."
+    },
+    "last_heartbeat_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant du dernier heartbeat reçu au format RFC 3339."
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-HJKMNP-TV-Z]{26})$",
+      "description": "UUID canonique ou ULID Crockford majuscule encodé sur 26 caractères."
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "driver", "version", "placement"],
+      "description": "Capacité annoncée pour une version et un placement précis.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "description": "Nom normalisé de la capacité, par exemple cli.kimi-code ou browser.local."
+        },
+        "driver": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Driver ou composant fournissant la capacité.",
+          "examples": ["kimi-code-cli", "kimi-design-bridge"]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version installée sur laquelle la capacité a été vérifiée."
+        },
+        "placement": {
+          "type": "string",
+          "enum": ["local", "cloud", "preferred-local", "any"],
+          "description": "Placement compatible avec la capacité annoncée."
+        }
+      }
+    }
+  }
+}
