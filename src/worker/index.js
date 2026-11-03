@@ -202,9 +202,9 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
   }
   const cliDriver = process.env[`DRIVER_${agentRole.toUpperCase().replace(/-/g, '_')}`]
     || process.env.DRIVER_DEFAULT;
-  if (cliDriver === 'kimi-cli' || cliDriver === 'claude-cli') {
+  if (['kimi-cli', 'claude-cli', 'opencode-cli'].includes(cliDriver)) {
     return spawnCliAgent({
-      driverName: cliDriver === 'kimi-cli' ? 'kimi-code-cli' : 'claude-code-cli',
+      driverName: cliDriver === 'kimi-cli' ? 'kimi-code-cli' : cliDriver === 'claude-cli' ? 'claude-code-cli' : 'opencode-cli',
       jobId, prompt, cwd, activeProcesses,
     });
   }

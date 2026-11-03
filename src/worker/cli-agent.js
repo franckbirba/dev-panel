@@ -1,11 +1,13 @@
 import { spawn } from 'child_process';
 import { ClaudeCodeCliDriver } from './claude-code-cli-driver.js';
 import { KimiCodeCliDriver } from './kimi-code-cli-driver.js';
+import { OpenCodeCliDriver } from './opencode-cli-driver.js';
 import { appendEvent as defaultAppendEvent } from '../server/jobs-events.js';
 
 const DRIVER_FACTORIES = {
   'claude-code-cli': options => new ClaudeCodeCliDriver(options),
-  'kimi-code-cli': options => new KimiCodeCliDriver(options)
+  'kimi-code-cli': options => new KimiCodeCliDriver(options),
+  'opencode-cli': options => new OpenCodeCliDriver(options)
 };
 
 export function spawnCliAgent({
