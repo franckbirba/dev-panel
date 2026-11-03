@@ -22,6 +22,7 @@ import { guardDriverRun } from './guard-driver.js';
 import { createUsageAccumulator, isBudgetExceeded } from './token-usage.js';
 import { reconcileOnBoot, killOrphanedSpawnProcesses } from './boot-reconciler.js';
 import { execSync } from 'child_process';
+import { spawnCliAgent } from './cli-agent.js';
 
 // Resolve per-project Plane settings, preferring the project's own
 // .devpanlrc.json over the worker's PLANE_* env vars. This is what lets
@@ -197,6 +198,14 @@ function spawnAgent(jobId, prompt, agentRole = 'unknown', cwd = PROJECT_ROOT, me
         jobId, prompt, agentRole, cwd,
         activeProcesses, agentLogDir: AGENT_LOG_DIR, meta,
       }),
+    });
+  }
+  const cliDriver = process.env[`DRIVER_${agentRole.toUpperCase().replace(/-/g, '_')}`]
+    || process.env.DRIVER_DEFAULT;
+  if (cliDriver === 'kimi-cli' || cliDriver === 'claude-cli') {
+    return spawnCliAgent({
+      driverName: cliDriver === 'kimi-cli' ? 'kimi-code-cli' : 'claude-code-cli',
+      jobId, prompt, cwd, activeProcesses,
     });
   }
   if (shouldUseMiniSwe(agentRole)) {
