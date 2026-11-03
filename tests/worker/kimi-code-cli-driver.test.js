@@ -85,6 +85,18 @@ describe('KimiCodeCliDriver', () => {
     expect(events.map(event => event.sequence)).toEqual([1, 2, 3, 4]);
   });
 
+  it('n’écrit pas les secrets dans le journal ou les événements', () => {
+    driver.start(runSpec(worktree), 'Test');
+    proc.stdout.emit('data', Buffer.from('{"role":"assistant","content":"Bearer abcdef1234567890"}\n'));
+    proc.emit('close', 0);
+
+    const artifact = events.find(event => event.type === 'artifact_created').payload;
+    const log = readFileSync(artifact.path, 'utf8');
+    expect(log).not.toContain('abcdef1234567890');
+    expect(log).toContain('[REDACTED]');
+    expect(events[1].payload.content).toBe('[REDACTED]');
+  });
+
   it('reprend une session native et émet resumed', () => {
     const handle = driver.resume(
       runSpec(worktree),

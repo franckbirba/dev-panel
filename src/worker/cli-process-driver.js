@@ -4,6 +4,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { ExecutionAdapter } from './execution-adapter.js';
+import { redactValue } from './redact-text.js';
 
 export class CliProcessDriver extends ExecutionAdapter {
   constructor({ spawnImpl = spawn, onEvent = () => {} } = {}) {
@@ -90,7 +91,7 @@ export class CliProcessDriver extends ExecutionAdapter {
         sequence: ++handle.sequence,
         timestamp: new Date().toISOString(),
         type,
-        payload
+        payload: redactValue(payload)
       };
       appendFileSync(eventLogPath, `${JSON.stringify(event)}\n`);
       this.onEvent(event);
