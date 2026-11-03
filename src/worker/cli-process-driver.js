@@ -72,6 +72,7 @@ export class CliProcessDriver extends ExecutionAdapter {
       process: proc,
       run_id: runSpec.run_id,
       driver: this.driverName,
+      displayName: this.displayName,
       native_session_id: nativeSessionId,
       status: 'running',
       artifacts: [],
