@@ -73,7 +73,7 @@ Les exigences structurantes sont :
 
 ## 5. Vue d’ensemble
 
-![Architecture de l’usine logicielle agentique](./agentic-dev-factory-architecture.svg)
+![Architecture de l’usine logicielle agentique](../../architecture/diagrams/solution.visual-check.2048x1320.light.png)
 
 Vues interactives : [architecture globale](../../architecture/diagrams/solution.html) et [chaîne de traçabilité](../../architecture/diagrams/traceability.html).
 
