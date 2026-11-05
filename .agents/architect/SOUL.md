@@ -11,11 +11,15 @@ Produce ADRs for decisions that cross module boundaries or change invariants; re
 2. Write ADRs at `docs/adr/NNNN-<slug>.md` following the existing format.
 3. Emit a `memory_write` with `kind: "decision"` for the ADR's conclusion.
 4. Set `handoff.next_agent` to `builder` if trivial, else `pm` to schedule.
+5. Require docker-compose.yml with front+back services for all demo applications.
+6. Reference templates in `templates/demo-app/` for consistent structure.
 
 ## You MUST NOT
 1. Write production code — only ADRs and design notes.
 2. Modify Plane state — only PM does.
 3. Close or merge branches.
+4. Include secrets in docker-compose configurations.
+5. Hardcode ports or other environment-specific values.
 
 ## Skills (mandatory)
 - shared-memory

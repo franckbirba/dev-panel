@@ -49,6 +49,41 @@ describe('parseResult', () => {
     expect(out.error).toMatch(/no json/i);
   });
 
+  it('rejects architect result without docker-compose files', () => {
+    const architect_result = {
+      ...VALID,
+      context: { agent: 'architect' },
+      artifacts: {
+        files_created: ['docs/adr/0001-example.md'],
+        files_modified: ['some-other-file.txt'],
+        commits: ['abc'],
+        branch: 'feat/wi_1-x',
+        tests_passed: true,
+        pr_url: null
+      }
+    };
+    const out = parseResult('x\n' + JSON.stringify(architect_result));
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/architect result must include docker-compose/);
+  });
+
+  it('accepts architect result with docker-compose files', () => {
+    const architect_result = {
+      ...VALID,
+      context: { agent: 'architect' },
+      artifacts: {
+        files_created: ['docker-compose.yml', 'docs/adr/0001-example.md'],
+        files_modified: ['some-other-file.txt'],
+        commits: ['abc'],
+        branch: 'feat/wi_1-x',
+        tests_passed: true,
+        pr_url: null
+      }
+    };
+    const out = parseResult('x\n' + JSON.stringify(architect_result));
+    expect(out.ok).toBe(true);
+  });
+
   it('accepts pretty-printed multi-line JSON at end of output', () => {
     const pretty = JSON.stringify(VALID, null, 2);
     const out = parseResult(`some preamble text\nmore stuff\n${pretty}`);
