@@ -108,21 +108,17 @@ function buildPiArgv(prompt, agentRole) {
 export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, activeProcesses, agentLogDir, meta = {}, isExternalNode = false, taskToken = null }) {
   return new Promise((resolve, reject) => {
     const containerName = `agent-${jobId}`;
-    const mcpConfigHost = process.env.WORKER_MCP_CONFIG
-      || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
-    const piExtensionsHost = process.env.PI_EXTENSIONS_ROOT
-      || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
-
+    
+    // For external nodes, do NOT mount any centralized configs
+    // Only internal nodes get access to centralized secrets
     const dockerArgs = [
       'run', '--rm', '-i',
       '--name', containerName,
-      '--network', 'host',
+      '--network', isExternalNode ? 'none' : 'host',
       '-v', `${cwd}:/workspace`,
       '-w', '/workspace',
-      '-v', `${mcpConfigHost}:/etc/devpanel/mcp.json:ro`,
       '-e', `JOB_ID=${jobId}`,
       '-e', `AGENT_ROLE=${agentRole}`,
-      '-e', 'WORKER_MCP_CONFIG=/etc/devpanel/mcp.json',
       // H8 (docs/architecture/harness-pi.md §3): explicit NODE_ENV so the
       // worker image's own Dockerfile ENV (commonly NODE_ENV=production for
       // a lean prod image) can't silently make `npm install`/`npm ci` run
@@ -152,6 +148,15 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
       if (process.env.GOOSE_MODEL) dockerArgs.push('-e', `GOOSE_MODEL=${process.env.GOOSE_MODEL}`);
     } else {
       // For internal nodes, pass all environment variables as before
+      // Mount the MCP config for internal nodes only
+      const mcpConfigHost = process.env.WORKER_MCP_CONFIG
+        || join(process.env.HOME || '/home/deploy', '.mcp-worker.json');
+      const piExtensionsHost = process.env.PI_EXTENSIONS_ROOT
+        || join(process.env.PROJECT_ROOT || process.cwd(), 'infra/pi-extensions');
+        
+      dockerArgs.push('-v', `${mcpConfigHost}:/etc/devpanel/mcp.json:ro`);
+      dockerArgs.push('-e', 'WORKER_MCP_CONFIG=/etc/devpanel/mcp.json');
+      
       if (meta.work_item_id) dockerArgs.push('-e', `WORK_ITEM_ID=${meta.work_item_id}`);
       if (meta.workflow_name) dockerArgs.push('-e', `WORKFLOW_NAME=${meta.workflow_name}`);
 
@@ -160,15 +165,15 @@ export function spawnContainer({ jobId, prompt, agentRole = 'unknown', cwd, acti
           dockerArgs.push('-e', `${k}=${process.env[k]}`);
         }
       }
-    }
-
-    if (INNER_DRIVER === 'pi') {
-      // pi reads PI_MCP_CONFIG to know which mcp.json mcp-bridge should
-      // load. Inside the container that's the same file as WORKER_MCP_CONFIG.
-      dockerArgs.push(
-        '-v', `${piExtensionsHost}:/opt/pi-extensions:ro`,
-        '-e', 'PI_MCP_CONFIG=/etc/devpanel/mcp.json',
-      );
+      
+      // Mount pi extensions for internal nodes
+      dockerArgs.push('-v', `${piExtensionsHost}:/opt/pi-extensions:ro`);
+      
+      if (INNER_DRIVER === 'pi') {
+        // pi reads PI_MCP_CONFIG to know which mcp.json mcp-bridge should
+        // load. Inside the container that's the same file as WORKER_MCP_CONFIG.
+        dockerArgs.push('-e', 'PI_MCP_CONFIG=/etc/devpanel/mcp.json');
+      }
     }
 
     dockerArgs.push(CONTAINER_IMAGE);

@@ -1209,6 +1209,12 @@ export function getAgentNode(nodeId) {
   return db.prepare('SELECT * FROM agent_nodes WHERE id = ? AND revoked_at IS NULL').get(nodeId);
 }
 
+export function getAgentNodeByToken(token) {
+  const db = getMasterDatabase();
+  // In the new protocol, the token is the node ID itself
+  return db.prepare('SELECT * FROM agent_nodes WHERE id = ? AND revoked_at IS NULL').get(token);
+}
+
 export function revokeAgentNode(nodeId, reason) {
   const db = getMasterDatabase();
   const stmt = db.prepare(`

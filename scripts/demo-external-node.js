@@ -16,7 +16,7 @@ const TASK_TOKEN = process.env.TASK_TOKEN;
 // Connect to the agent hub
 const socket = connectAgentHub({
   url: process.env.AGENT_HUB_URL || 'http://localhost:3000/agents/socket.io',
-  token: process.env.AGENT_HUB_TOKEN || 'test-shared-token'
+  token: process.env.AGENT_HUB_TOKEN || NODE_ID // Use node ID as token for external nodes
 });
 
 socket.on('connect', async () => {

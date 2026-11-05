@@ -74,10 +74,24 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
       console.error('[agent-hub] AGENT_HUB_TOKEN not set, refusing connection');
       return next(new Error('hub auth not configured'));
     }
-    if (provided !== token) {
-      return next(new Error('invalid agent token'));
-    }
-    next();
+
+    // First check if this is a node token (new protocol)
+    getAgentNodeByToken(provided).then(node => {
+      if (node) {
+        // Valid node token - attach node_id to socket
+        socket.data = { node_id: node.id };
+        return next();
+      }
+
+      // Fall back to legacy shared token for internal workers
+      if (provided !== token) {
+        return next(new Error('invalid agent token'));
+      }
+      next();
+    }).catch(err => {
+      console.error('[agent-hub] Error validating token:', err);
+      return next(new Error('internal error validating token'));
+    });
   });
 
   io.on('connection', async (socket) => {
@@ -129,6 +143,12 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
           return callback?.({ success: false, error: 'Token already claimed' });
         }
 
+        // Verify that the socket is authorized to claim this token
+        // External nodes can only claim tokens assigned to their node_id
+        if (socket.data?.node_id && token.node_id !== socket.data.node_id) {
+          return callback?.({ success: false, error: 'Token not assigned to this node' });
+        }
+
         // Atomically claim the token
         const claimed = claimTaskToken(token_id);
         if (!claimed) {
@@ -163,6 +183,19 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
           return callback?.({ success: false, error: 'Invalid or expired token' });
         }
 
+        // Verify that the socket is authorized to send heartbeat for this token
+        // External nodes can only heartbeat tokens assigned to their node_id
+        // and that they previously claimed
+        const taskChannel = taskChannels.get(token.task_id);
+        if (socket.data?.node_id) {
+          if (token.node_id !== socket.data.node_id) {
+            return callback?.({ success: false, error: 'Token not assigned to this node' });
+          }
+          if (!taskChannel || taskChannel.socket_id !== socket.id) {
+            return callback?.({ success: false, error: 'Token not claimed by this socket' });
+          }
+        }
+
         // Update heartbeat
         const updated = heartbeatTaskToken(token_id);
         if (!updated) {
@@ -187,6 +220,19 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
         const token = getTaskToken(token_id);
         if (!token) {
           return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Verify that the socket is authorized to send result for this token
+        // External nodes can only send results for tokens assigned to their node_id
+        // and that they previously claimed
+        const taskChannel = taskChannels.get(token.task_id);
+        if (socket.data?.node_id) {
+          if (token.node_id !== socket.data.node_id) {
+            return callback?.({ success: false, error: 'Token not assigned to this node' });
+          }
+          if (!taskChannel || taskChannel.socket_id !== socket.id) {
+            return callback?.({ success: false, error: 'Token not claimed by this socket' });
+          }
         }
 
         // Mark token as completed (idempotent)
