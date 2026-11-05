@@ -11,7 +11,7 @@ jobs:
       - name: Install OpenCode 2.1.4 for the deploy user
         run: |
           if ! sudo -u deploy test -x /home/deploy/.opencode/bin/opencode; then
-            sudo -u deploy bash -c 'curl -fsSL https://opencode.ai/install | bash -s -- --version 2.1.4 --no-modify-path'
+            sudo -u deploy bash -c 'curl -fsSL https://opencode.ai/v2/install | bash -s -- --version 2.1.4 --no-modify-path'
           fi
           sudo -u deploy mkdir -p /home/deploy/.local/bin
           sudo -u deploy ln -sf /home/deploy/.opencode/bin/opencode /home/deploy/.local/bin/opencode
