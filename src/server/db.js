@@ -1250,16 +1250,27 @@ export function getTaskToken(tokenId) {
   const db = getMasterDatabase();
   return db.prepare(`
     SELECT * FROM agent_task_tokens 
-    WHERE id = ? AND revoked_at IS NULL AND completed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    WHERE id = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
   `).get(tokenId);
 }
 
 export function claimTaskToken(tokenId) {
   const db = getMasterDatabase();
+  // First check if the token exists and is eligible for claiming
+  const tokenCheck = db.prepare(`
+    SELECT id FROM agent_task_tokens 
+    WHERE id = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
+  `).get(tokenId);
+  
+  if (!tokenCheck) {
+    return false;
+  }
+  
+  // If token is valid, claim it
   const stmt = db.prepare(`
     UPDATE agent_task_tokens 
     SET claimed_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    WHERE id = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
   `);
   const result = stmt.run(tokenId);
   return result.changes > 0;
@@ -1270,7 +1281,7 @@ export function heartbeatTaskToken(tokenId) {
   const stmt = db.prepare(`
     UPDATE agent_task_tokens 
     SET heartbeat_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND revoked_at IS NULL AND completed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    WHERE id = ? AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
   `);
   const result = stmt.run(tokenId);
   return result.changes > 0;
@@ -1281,7 +1292,7 @@ export function completeTaskToken(tokenId) {
   const stmt = db.prepare(`
     UPDATE agent_task_tokens 
     SET completed_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    WHERE id = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
   `);
   const result = stmt.run(tokenId);
   return result.changes > 0;

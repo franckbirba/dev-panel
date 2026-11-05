@@ -199,6 +199,7 @@ describe('Task Tokens', () => {
     
     // Verify the token is marked as completed
     const token = getTaskToken(tokenId);
+    expect(token).toBeDefined();
     expect(token.completed_at).toBeDefined();
   });
 
