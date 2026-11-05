@@ -177,7 +177,9 @@ function validate(obj) {
   if (!Array.isArray(obj.issues_found)) return 'issues_found must be array';
   
   // For architect agent outputs, validate docker-compose requirement
-  if (obj.context?.agent === 'architect') {
+  // Make this check retrocompatible by accepting an optional agent parameter
+  const agent = obj.context?.agent || (obj.artifacts?.branch?.includes('architect') ? 'architect' : null);
+  if (agent === 'architect') {
     // Check if artifacts include docker-compose files
     const { files_created = [], files_modified = [] } = obj.artifacts;
     const all_files = [...files_created, ...files_modified];

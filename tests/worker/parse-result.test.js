@@ -84,6 +84,23 @@ describe('parseResult', () => {
     expect(out.ok).toBe(true);
   });
 
+  it('accepts architect result with retrocompatible detection (no context.agent)', () => {
+    const architect_result = {
+      ...VALID,
+      context: {}, // No agent field
+      artifacts: {
+        files_created: ['docker-compose.yml', 'Dockerfile.frontend', 'Dockerfile.backend'],
+        files_modified: ['some-other-file.txt'],
+        commits: ['abc'],
+        branch: 'feat/architect-wi_1-x', // Contains 'architect' in branch name
+        tests_passed: true,
+        pr_url: null
+      }
+    };
+    const out = parseResult('x\n' + JSON.stringify(architect_result));
+    expect(out.ok).toBe(true);
+  });
+
   it('accepts pretty-printed multi-line JSON at end of output', () => {
     const pretty = JSON.stringify(VALID, null, 2);
     const out = parseResult(`some preamble text\nmore stuff\n${pretty}`);

@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "${PORT_FRONTEND:-3000}:3000"
+      - "127.0.0.1::3000"  # Dynamic port mapping on localhost
     environment:
       - BACKEND_URL=http://backend:8000
     depends_on:
@@ -22,7 +22,7 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     ports:
-      - "${PORT_BACKEND:-8000}:8000"
+      - "127.0.0.1::8000"  # Dynamic port mapping on localhost
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/demo
       - REDIS_URL=redis://redis:6379
@@ -50,6 +50,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # No ports exposed - internal service only
 
   redis:
     image: redis:7-alpine
@@ -58,6 +59,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # No ports exposed - internal service only
 
 volumes:
   db_data:
