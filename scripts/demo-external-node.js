@@ -4,28 +4,27 @@
 // This would run on a separate machine (builder node) with no Redis or centralized secrets
 
 import { connectAgentHub, claimTask, sendHeartbeat, sendResult } from '../src/worker/agent-hub-client.js';
-import { randomUUID } from 'crypto';
 
-// Node identity (would be pre-registered with the hub)
-const NODE_ID = process.env.NODE_ID || randomUUID();
 const NODE_NAME = process.env.NODE_NAME || 'demo-external-node';
-
-// Task token (would be issued by the hub)
+const NODE_TOKEN = process.env.NODE_TOKEN;
 const TASK_TOKEN = process.env.TASK_TOKEN;
 
-// Connect to the agent hub
+if (!NODE_TOKEN || !TASK_TOKEN) {
+  console.error(`[${NODE_NAME}] NODE_TOKEN and TASK_TOKEN are required`);
+  process.exit(1);
+}
+
 const socket = connectAgentHub({
-  url: process.env.AGENT_HUB_URL || 'http://localhost:3000/agents/socket.io',
-  token: process.env.AGENT_HUB_TOKEN || NODE_ID // Use node ID as token for external nodes
+  url: process.env.AGENT_HUB_URL || 'http://localhost:3000',
+  token: NODE_TOKEN
 });
 
 socket.on('connect', async () => {
   console.log(`[${NODE_NAME}] Connected to agent hub`);
   
   try {
-    // Claim a task using the provided token
     if (TASK_TOKEN) {
-      console.log(`[${NODE_NAME}] Claiming task with token: ${TASK_TOKEN}`);
+      console.log(`[${NODE_NAME}] Claiming assigned task`);
       const task = await claimTask(TASK_TOKEN);
       console.log(`[${NODE_NAME}] Successfully claimed task:`, task);
       

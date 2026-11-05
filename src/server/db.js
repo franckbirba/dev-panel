@@ -515,6 +515,7 @@ export function initMasterDatabase(storagePath = './storage') {
       -- Table for task tokens issued to agent nodes
       CREATE TABLE IF NOT EXISTS agent_task_tokens (
         id TEXT PRIMARY KEY,
+        token_hash TEXT UNIQUE NOT NULL,
         node_id TEXT NOT NULL,
         task_id TEXT NOT NULL,
         repository TEXT NOT NULL,
@@ -536,6 +537,11 @@ export function initMasterDatabase(storagePath = './storage') {
         WHERE revoked_at IS NULL AND completed_at IS NULL;
     `);
     masterDb.pragma(`user_version = ${AGENT_NODES_VERSION}`);
+  }
+
+  const taskTokenColumns = masterDb.pragma('table_info(agent_task_tokens)').map(column => column.name);
+  if (!taskTokenColumns.includes('token_hash')) {
+    masterDb.exec('ALTER TABLE agent_task_tokens ADD COLUMN token_hash TEXT');
   }
 
   return masterDb;
@@ -1195,13 +1201,18 @@ export function getDocStats(storagePath, projectId) {
 // AGENT NODES AND TASK TOKENS
 // ============================================================================
 
-export function registerAgentNode({ id, name, public_key }) {
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+export function registerAgentNode({ id = crypto.randomUUID(), name, public_key = null }) {
   const db = getMasterDatabase();
-  const stmt = db.prepare(`
+  const token = public_key || crypto.randomBytes(32).toString('hex');
+  const result = db.prepare(`
     INSERT INTO agent_nodes (id, name, public_key)
     VALUES (?, ?, ?)
-  `);
-  return stmt.run(id, name, public_key);
+  `).run(id, name, hashToken(token));
+  return { ...result, node_id: id, token };
 }
 
 export function getAgentNode(nodeId) {
@@ -1210,9 +1221,9 @@ export function getAgentNode(nodeId) {
 }
 
 export function getAgentNodeByToken(token) {
+  if (!token) return undefined;
   const db = getMasterDatabase();
-  // In the new protocol, the token is the node ID itself
-  return db.prepare('SELECT * FROM agent_nodes WHERE id = ? AND revoked_at IS NULL').get(token);
+  return db.prepare('SELECT * FROM agent_nodes WHERE public_key = ? AND revoked_at IS NULL').get(hashToken(token));
 }
 
 export function revokeAgentNode(nodeId, reason) {
@@ -1235,77 +1246,67 @@ export function updateAgentNodeLastSeen(nodeId) {
   return stmt.run(nodeId);
 }
 
-export function createTaskToken({ id, node_id, task_id, repository, branch, expires_at }) {
+export function createTaskToken({ id = crypto.randomUUID(), node_id, task_id, repository, branch, expires_at }) {
   const db = getMasterDatabase();
-  const stmt = db.prepare(`
-    INSERT INTO agent_task_tokens (id, node_id, task_id, repository, branch, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  // Convert Date object to ISO string if needed
+  const token = crypto.randomBytes(32).toString('hex');
   const expiresAtStr = expires_at instanceof Date ? expires_at.toISOString() : expires_at;
-  return stmt.run(id, node_id, task_id, repository, branch, expiresAtStr);
+  const result = db.prepare(`
+    INSERT INTO agent_task_tokens (id, token_hash, node_id, task_id, repository, branch, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, hashToken(token), node_id, task_id, repository, branch, expiresAtStr);
+  return { ...result, id, token };
 }
 
-export function getTaskToken(tokenId) {
+export function getTaskToken(token) {
+  if (!token) return undefined;
   const db = getMasterDatabase();
   return db.prepare(`
     SELECT * FROM agent_task_tokens 
-    WHERE id = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
-  `).get(tokenId);
+    WHERE token_hash = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
+  `).get(hashToken(token));
 }
 
-export function claimTaskToken(tokenId) {
+export function claimTaskToken(token) {
   const db = getMasterDatabase();
-  // First check if the token exists and is eligible for claiming
-  const tokenCheck = db.prepare(`
-    SELECT id FROM agent_task_tokens 
-    WHERE id = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
-  `).get(tokenId);
-  
-  if (!tokenCheck) {
-    return false;
-  }
-  
-  // If token is valid, claim it
-  const stmt = db.prepare(`
+  const result = db.prepare(`
     UPDATE agent_task_tokens 
     SET claimed_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
-  `);
-  const result = stmt.run(tokenId);
+    WHERE token_hash = ? AND claimed_at IS NULL AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
+  `).run(hashToken(token));
   return result.changes > 0;
 }
 
-export function heartbeatTaskToken(tokenId) {
+export function heartbeatTaskToken(token) {
   const db = getMasterDatabase();
-  const stmt = db.prepare(`
+  const result = db.prepare(`
     UPDATE agent_task_tokens 
-    SET heartbeat_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
-  `);
-  const result = stmt.run(tokenId);
+    SET heartbeat_at = CURRENT_TIMESTAMP,
+        expires_at = CASE
+          WHEN datetime(expires_at) > datetime(CURRENT_TIMESTAMP, '+15 minutes') THEN expires_at
+          ELSE datetime(CURRENT_TIMESTAMP, '+15 minutes')
+        END
+    WHERE token_hash = ? AND revoked_at IS NULL AND completed_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
+  `).run(hashToken(token));
   return result.changes > 0;
 }
 
-export function completeTaskToken(tokenId) {
+export function completeTaskToken(token) {
   const db = getMasterDatabase();
-  const stmt = db.prepare(`
+  const result = db.prepare(`
     UPDATE agent_task_tokens 
-    SET completed_at = CURRENT_TIMESTAMP 
-    WHERE id = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
-  `);
-  const result = stmt.run(tokenId);
+    SET completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+    WHERE token_hash = ? AND revoked_at IS NULL AND datetime(expires_at) > datetime(CURRENT_TIMESTAMP)
+  `).run(hashToken(token));
   return result.changes > 0;
 }
 
-export function revokeTaskToken(tokenId, reason) {
+export function revokeTaskToken(token, reason) {
   const db = getMasterDatabase();
-  const stmt = db.prepare(`
+  return db.prepare(`
     UPDATE agent_task_tokens 
     SET revoked_at = CURRENT_TIMESTAMP 
-    WHERE id = ?
-  `);
-  return stmt.run(tokenId);
+    WHERE token_hash = ?
+  `).run(hashToken(token));
 }
 
 // ============================================================================

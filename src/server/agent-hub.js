@@ -24,11 +24,10 @@
 //
 // Auth
 // ----
-// Agent connections present `auth.token` matching env.AGENT_HUB_TOKEN. Token
-// shared between services-VPS and agents-host (loaded from .env.production
-// on both — the same shared-secret pattern used for redis + pg). No browser
-// connects here; dashboards still receive events via the existing SSE
-// fan-out (`broadcast` from sse.js).
+// External nodes authenticate with individual random tokens stored as SHA-256
+// hashes and bound to their node_id. The legacy AGENT_HUB_TOKEN remains limited
+// to the internal worker. No browser connects here; dashboards still receive
+// events via the existing SSE fan-out (`broadcast` from sse.js).
 //
 // Channels
 // --------
@@ -39,15 +38,12 @@
 // 'agent:goodbye'    — clean disconnect (reason)
 
 import { Server as IoServer } from 'socket.io';
-import { randomUUID } from 'crypto';
-import { 
-  getAgentNode, 
-  updateAgentNodeLastSeen, 
-  getTaskToken, 
-  claimTaskToken, 
-  heartbeatTaskToken, 
-  completeTaskToken,
-  revokeTaskToken
+import {
+  getAgentNodeByToken,
+  getTaskToken,
+  claimTaskToken,
+  heartbeatTaskToken,
+  completeTaskToken
 } from './db.js';
 
 let io = null;
@@ -63,35 +59,28 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
     pingInterval: 15_000,
   });
 
-  io.use((socket, next) => {
-    // Per-connection bearer token check. We accept the token via the
-    // `auth: { token }` payload that socket.io-client supports natively.
+  io.use(async (socket, next) => {
     const provided = socket.handshake.auth?.token;
     if (!token) {
-      // Guard against accidentally running an unauthenticated hub in prod.
-      // If the env var isn't set we refuse all connections — better to fail
-      // loud than silently accept any worker.
       console.error('[agent-hub] AGENT_HUB_TOKEN not set, refusing connection');
       return next(new Error('hub auth not configured'));
     }
 
-    // First check if this is a node token (new protocol)
-    getAgentNodeByToken(provided).then(node => {
+    try {
+      const node = await getAgentNodeByToken(provided);
       if (node) {
-        // Valid node token - attach node_id to socket
         socket.data = { node_id: node.id };
         return next();
       }
 
-      // Fall back to legacy shared token for internal workers
       if (provided !== token) {
         return next(new Error('invalid agent token'));
       }
       next();
-    }).catch(err => {
+    } catch (err) {
       console.error('[agent-hub] Error validating token:', err);
       return next(new Error('internal error validating token'));
-    });
+    }
   });
 
   io.on('connection', async (socket) => {
@@ -284,6 +273,14 @@ export function sendAgentCommand({ agent_id = null, type, payload = {} }) {
   }
   io.emit('admin:command', { type, payload });
   return true;
+}
+
+export async function closeAgentHub() {
+  if (!io) return;
+  await new Promise(resolve => io.close(resolve));
+  io = null;
+  agents.clear();
+  taskChannels.clear();
 }
 
 export function listConnectedAgents() {

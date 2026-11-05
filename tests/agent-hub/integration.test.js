@@ -6,7 +6,7 @@ import {
   registerAgentNode,
   createTaskToken
 } from '../../src/server/db.js';
-import { initAgentHub } from '../../src/server/agent-hub.js';
+import { initAgentHub, closeAgentHub } from '../../src/server/agent-hub.js';
 import { io as ioClient } from 'socket.io-client';
 import { randomUUID } from 'crypto';
 
@@ -23,13 +23,12 @@ describe('Agent Hub Integration', () => {
     initMasterDatabase(testStoragePath);
   });
 
-  afterEach(() => {
-    // Close database connections
+  afterEach(async () => {
+    await closeAgentHub();
     closeAllDatabases();
     
-    // Close server if exists
     if (httpServer) {
-      httpServer.close();
+      await new Promise(resolve => httpServer.close(resolve));
       httpServer = null;
     }
   });
@@ -45,11 +44,11 @@ describe('Agent Hub Integration', () => {
     });
     
     const port = httpServer.address().port;
-    const url = `http://127.0.0.1:${port}/agents/socket.io`;
+    const url = `http://127.0.0.1:${port}`;
     
     // Register a test node
     const nodeId = randomUUID();
-    registerAgentNode({
+    const { token: nodeToken } = registerAgentNode({
       id: nodeId,
       name: 'test-node',
       public_key: 'test-public-key'
@@ -57,7 +56,9 @@ describe('Agent Hub Integration', () => {
     
     // Connect with node token
     const socket = ioClient(url, {
-      auth: { token: nodeId }
+      path: '/agents/socket.io',
+      transports: ['websocket'],
+      auth: { token: nodeToken }
     });
     
     // Wait for connection
@@ -86,10 +87,12 @@ describe('Agent Hub Integration', () => {
     });
     
     const port = httpServer.address().port;
-    const url = `http://127.0.0.1:${port}/agents/socket.io`;
+    const url = `http://127.0.0.1:${port}`;
     
     // Connect with invalid token
     const socket = ioClient(url, {
+      path: '/agents/socket.io',
+      transports: ['websocket'],
       auth: { token: 'invalid-token' }
     });
     
@@ -116,11 +119,11 @@ describe('Agent Hub Integration', () => {
     });
     
     const port = httpServer.address().port;
-    const url = `http://127.0.0.1:${port}/agents/socket.io`;
+    const url = `http://127.0.0.1:${port}`;
     
     // Register a test node
     const nodeId = randomUUID();
-    registerAgentNode({
+    const { token: nodeToken } = registerAgentNode({
       id: nodeId,
       name: 'test-node',
       public_key: 'test-public-key'
@@ -131,7 +134,7 @@ describe('Agent Hub Integration', () => {
     const taskId = randomUUID();
     const expiresAt = new Date(Date.now() + 3600000); // 1 hour from now
     
-    createTaskToken({
+    const { token: issuedToken } = createTaskToken({
       id: tokenId,
       node_id: nodeId,
       task_id: taskId,
@@ -142,7 +145,9 @@ describe('Agent Hub Integration', () => {
     
     // Connect with node token
     const socket = ioClient(url, {
-      auth: { token: nodeId }
+      path: '/agents/socket.io',
+      transports: ['websocket'],
+      auth: { token: nodeToken }
     });
     
     // Wait for connection
@@ -156,7 +161,7 @@ describe('Agent Hub Integration', () => {
     
     // Try to claim task
     const result = await new Promise((resolve, reject) => {
-      socket.emit('agent:claim', { token_id: tokenId }, resolve);
+      socket.emit('agent:claim', { token_id: issuedToken }, resolve);
       
       // Timeout
       setTimeout(() => reject(new Error('Claim timeout')), 5000);
