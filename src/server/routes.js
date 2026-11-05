@@ -55,6 +55,7 @@ import { defineTeamRoutes } from './routes-team.js';
 import { defineInboxRoutes } from './routes-inbox.js';
 import { defineMemoryRoutes } from './routes-memory.js';
 import { defineFleetRoutes } from './routes-fleet.js';
+import { defineAgentNodeRoutes } from './routes-agent-nodes.js';
 import { defineCommandRoutes } from './routes-commands.js';
 import { defineWidgetRoutes } from './routes-widget.js';
 import { defineWidgetBridgeRoutes } from './routes-widget-bridge.js';
@@ -1608,6 +1609,7 @@ export function createRouter(config = {}) {
   defineInboxRoutes(router, authenticateProject);
   defineMemoryRoutes(router, authenticateProject);
   defineFleetRoutes(router, authenticateProject, authenticateAdmin, authenticateSpaBootstrap);
+  defineAgentNodeRoutes(router, authenticateAdmin);
   defineCommandRoutes(router, authenticateProject);
   defineWidgetRoutes(router);
   defineWidgetBridgeRoutes(router, authenticateProject);
