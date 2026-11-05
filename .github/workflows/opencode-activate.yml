@@ -21,10 +21,36 @@ jobs:
           /home/deploy/.local/bin/opencode --version
           /home/deploy/.local/bin/opencode run --help
 
+      - name: Configure DeepInfra without storing its secret
+        run: |
+          sudo -u deploy mkdir -p /home/deploy/.config/opencode
+          sudo -u deploy tee /home/deploy/.config/opencode/opencode.jsonc > /dev/null <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "providers": {
+              "deepinfra": {
+                "name": "DeepInfra",
+                "env": ["DEEPINFRA_API_KEY"],
+                "package": "@opencode/ai/providers/openai-compatible",
+                "settings": {
+                  "baseURL": "https://api.deepinfra.com/v1/openai"
+                },
+                "models": {
+                  "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+                    "name": "Qwen3 Coder 480B"
+                  }
+                }
+              }
+            }
+          }
+          EOF
+          sudo -u deploy chmod 600 /home/deploy/.config/opencode/opencode.jsonc
+
       - name: Smoke test OpenCode before changing the worker
         run: |
           cd /home/deploy/projects/dev-panel
-          sudo -u deploy /home/deploy/.local/bin/opencode run --format json "Reply with exactly OK. Do not use tools."
+          sudo -u deploy bash -c 'set -a; . /home/deploy/projects/dev-panel/.env.agent; set +a; /home/deploy/.local/bin/opencode run --standalone --format json "Reply with exactly OK. Do not use tools."'
 
       - name: Activate the OpenCode driver
         run: |

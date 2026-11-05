@@ -52,7 +52,7 @@ describe('OpenCodeCliDriver', () => {
   it('lance OpenCode et normalise session, texte et artefact', () => {
     const handle = driver.start(runSpec(worktree), 'Réponds OK');
     expect(calls[0].command).toBe('opencode');
-    expect(calls[0].args).toEqual(['run', 'Réponds OK', '--format', 'json']);
+    expect(calls[0].args).toEqual(['run', '--standalone', 'Réponds OK', '--format', 'json']);
 
     proc.stdout.emit('data', Buffer.from('{"type":"step_start","sessionID":"ses_test","part":{"type":"step-start"}}\n'));
     proc.stdout.emit('data', Buffer.from('{"type":"text","sessionID":"ses_test","part":{"type":"text","text":"OK"}}\n'));
@@ -96,7 +96,7 @@ describe('OpenCodeCliDriver', () => {
     });
 
     expect(calls[0].args).toEqual([
-      'run', '--session', 'ses_test', 'Continue', '--format', 'json'
+      'run', '--standalone', '--session', 'ses_test', 'Continue', '--format', 'json'
     ]);
     expect(events[0].type).toBe('resumed');
   });
