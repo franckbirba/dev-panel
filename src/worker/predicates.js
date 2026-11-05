@@ -16,6 +16,39 @@ export const predicates = {
     const issues = result?.issues_found || [];
     return issues.some(i => P0_P1.has(i?.severity));
   },
+
+  // Predicates for assinie-demo workflow
+  security_issues_found(result) {
+    const issues = result?.issues_found || [];
+    // Check if any issue is related to security (assuming severity p0 or has security category)
+    return issues.some(i => 
+      P0_P1.has(i?.severity) || 
+      (i?.category && i.category.toLowerCase().includes('security')) ||
+      (i?.title && i.title.toLowerCase().includes('security'))
+    );
+  },
+
+  ops_issues_found(result) {
+    const issues = result?.issues_found || [];
+    // Check if any issue is related to operations
+    return issues.some(i => 
+      (i?.category && i.category.toLowerCase().includes('ops')) ||
+      (i?.category && i.category.toLowerCase().includes('operations')) ||
+      (i?.title && i.title.toLowerCase().includes('ops')) ||
+      (i?.title && i.title.toLowerCase().includes('operations'))
+    );
+  },
+
+  implementation_issues_found(result) {
+    const issues = result?.issues_found || [];
+    // Check if any issue is related to implementation problems
+    return issues.some(i => 
+      (i?.category && i.category.toLowerCase().includes('implementation')) ||
+      (i?.category && i.category.toLowerCase().includes('build')) ||
+      (i?.title && i.title.toLowerCase().includes('implementation')) ||
+      (i?.title && i.title.toLowerCase().includes('build'))
+    );
+  },
   qa_infra_only(result) {
     const blockers = result?.blockers || [];
     if (blockers.length === 0) return false;
