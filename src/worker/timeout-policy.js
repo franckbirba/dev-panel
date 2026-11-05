@@ -114,13 +114,17 @@ export function killGraceMs(env = process.env) {
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {number}
  */
-export function computeLockDurationMs(env = process.env) {
+function minimumLockDurationMs(env) {
   const roles = Object.keys(DEFAULT_AGENT_TIMEOUT_MS);
   const maxTimeout = Math.max(
     FALLBACK_AGENT_TIMEOUT_MS,
     ...roles.map((r) => agentTimeoutMs(r, env))
   );
   return maxTimeout + 5 * 60 * 1000;
+}
+
+export function computeLockDurationMs(env = process.env) {
+  return minimumLockDurationMs(env) + 1000;
 }
 
 /**
@@ -133,7 +137,7 @@ export function computeLockDurationMs(env = process.env) {
  * @returns {{ ok: boolean, minRequiredMs: number }}
  */
 export function checkLockDurationInvariant(lockDurationMs, env = process.env) {
-  const minRequiredMs = computeLockDurationMs(env);
+  const minRequiredMs = minimumLockDurationMs(env);
   return { ok: lockDurationMs > minRequiredMs, minRequiredMs };
 }
 

@@ -91,14 +91,19 @@ describe('timeout-policy', () => {
   });
 
   describe('computeLockDurationMs / checkLockDurationInvariant', () => {
-    it('is max(role timeouts) + 5 min with defaults', () => {
+    it('adds a strict one-second margin to max(role timeouts) + 5 min', () => {
       // max default timeout is builder's 20 min
-      expect(computeLockDurationMs({})).toBe(20 * 60 * 1000 + 5 * 60 * 1000);
+      expect(computeLockDurationMs({})).toBe(20 * 60 * 1000 + 5 * 60 * 1000 + 1000);
     });
 
     it('the current index.js lockDuration (30 min) satisfies the invariant with default timeouts', () => {
       const { ok } = checkLockDurationInvariant(30 * 60 * 1000, {});
       expect(ok).toBe(true);
+    });
+
+    it('produces a lockDuration that satisfies its own startup invariant', () => {
+      const lockDuration = computeLockDurationMs({});
+      expect(checkLockDurationInvariant(lockDuration, {}).ok).toBe(true);
     });
 
     it('flags a violated invariant when lockDuration is too small', () => {
@@ -109,8 +114,8 @@ describe('timeout-policy', () => {
 
     it('reacts to a raised per-role timeout override', () => {
       const env = { AGENT_TIMEOUT_BUILDER_MS: String(60 * 60 * 1000) }; // 1h builder
-      const min = computeLockDurationMs(env);
-      expect(min).toBe(65 * 60 * 1000);
+      const lockDuration = computeLockDurationMs(env);
+      expect(lockDuration).toBe(65 * 60 * 1000 + 1000);
       expect(checkLockDurationInvariant(30 * 60 * 1000, env).ok).toBe(false);
       expect(checkLockDurationInvariant(70 * 60 * 1000, env).ok).toBe(true);
     });
