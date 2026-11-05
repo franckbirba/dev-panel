@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.devpanel.local/execution-run-spec.schema.json",
+  "title": "RunSpec d’exécution CLI DevPanel",
+  "description": "Entrée immuable et complète d’un run exécuté par un driver CLI derrière ExecutionAdapter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "workflow_run_id",
+    "work_item_id",
+    "stage",
+    "repository",
+    "base_sha",
+    "branch",
+    "worktree",
+    "driver",
+    "required_capabilities",
+    "input_artifacts",
+    "permissions",
+    "execution_policy",
+    "output_contract"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version du contrat au format MAJOR.MINOR, sans préfixe ni métadonnée.",
+      "examples": ["1.0"]
+    },
+    "run_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant unique du run CLI."
+    },
+    "workflow_run_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant du run Temporal autoritaire pour cette exécution."
+    },
+    "work_item_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Identifiant Plane du work item auquel le run est rattaché."
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "discovery",
+        "specification",
+        "experience",
+        "build",
+        "verify",
+        "review",
+        "release",
+        "observe"
+      ],
+      "description": "Étape du processus de delivery produite par ce run."
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url"],
+      "description": "Dépôt Git contenant le code et les artefacts sources légers.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "Nom complet du dépôt sous la forme propriétaire/dépôt.",
+          "examples": ["franckbirba/dev-panel"]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL canonique du dépôt, sans credential embarqué."
+        }
+      }
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "SHA Git complet du commit de base, en SHA-1 ou SHA-256 minuscule."
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$",
+      "description": "Branche Git dédiée au run, créée à partir de base_sha."
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "placement"],
+      "description": "Worktree isolé du run et capacité d’exécution demandée.",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolutePath",
+          "description": "Chemin absolu du worktree dans l’environnement d’exécution."
+        },
+        "placement": {
+          "type": "string",
+          "enum": ["local", "cloud", "preferred-local", "any"],
+          "description": "Placement Temporal demandé ; le fallback reste régi par execution_policy."
+        }
+      }
+    },
+    "driver": {
+      "type": "string",
+      "enum": ["claude-code-cli", "kimi-code-cli", "opencode-cli"],
+      "description": "Processus CLI sélectionné après vérification des capacités de sa version installée."
+    },
+    "required_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Capacités natives indispensables ; aucune capacité non vérifiée ne peut être supposée.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+        "description": "Nom normalisé d’une capacité, par exemple resume, multimodal ou permissions."
+      }
+    },
+    "input_artifacts": {
+      "type": "array",
+      "description": "Entrées immuables du run, notamment instructions, specs, décisions et prototypes.",
+      "items": {
+        "$ref": "#/$defs/inputArtifact"
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_tools", "read_paths", "write_paths", "network_egress"],
+      "description": "Autorisations maximales du processus ; aucune permission globale implicite n’est accordée.",
+      "properties": {
+        "allowed_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Outils normalisés que le driver peut exposer à l’agent.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "read_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Chemins absolus lisibles par l’agent, credentials et secrets exclus.",
+          "items": {
+            "$ref": "#/$defs/absolutePath"
+          }
+        },
+        "write_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Chemins absolus modifiables, limités au worktree et aux sorties autorisées.",
+          "items": {
+            "$ref": "#/$defs/absolutePath"
+          }
+        },
+        "network_egress": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Noms d’hôtes sortants autorisés ; une liste vide interdit l’egress réseau.",
+          "items": {
+            "type": "string",
+            "format": "hostname"
+          }
+        }
+      }
+    },
+    "execution_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_duration_seconds", "max_cost", "fallback_policy", "autonomy_class"],
+      "description": "Limites de durée et de coût, fallback et niveau d’autonomie du run.",
+      "properties": {
+        "max_duration_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Durée active maximale du processus CLI, hors attente durable Temporal."
+        },
+        "max_cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount", "currency"],
+          "description": "Budget maximal du run dans une devise ISO 4217.",
+          "properties": {
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Montant maximal, taxes et arrondis compris selon la politique de facturation."
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$",
+              "description": "Code devise ISO 4217 en majuscules.",
+              "examples": ["USD", "EUR"]
+            }
+          }
+        },
+        "fallback_policy": {
+          "type": "string",
+          "enum": ["wait", "cloud_fallback", "escalate", "deadline"],
+          "description": "Politique appliquée lorsque la capacité demandée est indisponible."
+        },
+        "autonomy_class": {
+          "type": "string",
+          "enum": ["R0", "R1", "R2", "R3"],
+          "description": "Classe de risque et d’autonomie définie par la politique de sécurité."
+        }
+      }
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_artifacts", "acceptance_criteria"],
+      "description": "Preuves minimales attendues ; leur absence empêche la transition de delivery.",
+      "properties": {
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Artefacts que le run doit produire et référencer dans ses événements de sortie.",
+          "items": {
+            "$ref": "#/$defs/outputArtifact"
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Critères testables à satisfaire, indépendamment de toute déclaration de réussite de l’agent.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9A-HJKMNP-TV-Z]{26})$",
+      "description": "UUID canonique ou ULID Crockford majuscule encodé sur 26 caractères."
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Chemin POSIX absolu, sans credential ni fragment de commande."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Empreinte SHA-256 hexadécimale minuscule du contenu référencé."
+    },
+    "mimeType": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "description": "Type MIME sous la forme type/sous-type."
+    },
+    "artifactKind": {
+      "type": "string",
+      "enum": [
+        "screenshot",
+        "trace",
+        "video",
+        "session-export",
+        "prototype-source",
+        "test-report",
+        "design-export"
+      ],
+      "description": "Nature normalisée d’un artefact de preuve."
+    },
+    "inputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "mime_type", "sha256"],
+      "description": "Référence immuable et vérifiable d’une entrée ; les données volumineuses ne sont pas inline.",
+      "properties": {
+        "artifact_ref": {
+          "type": "string",
+          "format": "uri",
+          "description": "URI immuable de l’artefact d’entrée, idéalement ancrée sur un SHA ou une version."
+        },
+        "mime_type": {
+          "$ref": "#/$defs/mimeType"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "outputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "mime_type"],
+      "description": "Description d’un artefact de sortie obligatoire, sans imposer son emplacement de stockage.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nom logique stable utilisé pour rattacher la preuve produite au contrat."
+        },
+        "kind": {
+          "$ref": "#/$defs/artifactKind"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/mimeType"
+        }
+      }
+    }
+  }
+}

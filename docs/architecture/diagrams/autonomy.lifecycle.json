@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Autonomie — risque, décision et reprise",
+    "output": "autonomy.html",
+    "quality_profile": "showcase",
+    "viewBox": [980, 600]
+  },
+  "lanes": [
+    { "id": "main", "label": "Exécution" },
+    { "id": "waiting", "label": "Attentes et incidents" }
+  ],
+  "states": [
+    { "id": "submitted", "type": "start", "label": "RunSpec", "sublabel": "Périmètre validé", "lane": "main", "col": 0, "step": "01" },
+    { "id": "r0", "type": "active", "label": "R0", "sublabel": "Lecture et tests", "lane": "main", "col": 1, "step": "02", "tag": "automatique" },
+    { "id": "r1", "type": "active", "label": "R1", "sublabel": "Worktree et preview", "lane": "main", "col": 2, "step": "03", "tag": "audit" },
+    { "id": "r2", "type": "decision", "label": "R2", "sublabel": "Merge et deploy", "lane": "main", "col": 3, "step": "04", "tag": "preuves + rollback" },
+    { "id": "done", "type": "success", "label": "Done", "sublabel": "Release réconciliée", "lane": "main", "col": 4, "step": "05" },
+    { "id": "waiting", "type": "waiting", "label": "waiting_decision", "sublabel": "Worker libre", "lane": "waiting", "col": 1, "width": 150, "yOffset": 120, "tag": "R3 humain" },
+    { "id": "incident", "type": "failure", "label": "Incident", "sublabel": "Rollback et preuves", "lane": "waiting", "col": 2, "tag": "récupérable" }
+  ],
+  "transitions": [
+    { "from": "submitted", "to": "r0" },
+    { "from": "r0", "to": "r1" },
+    { "from": "r1", "to": "r2", "route": "straight" },
+    { "from": "r2", "to": "done", "route": "straight" },
+    { "from": "r2", "to": "waiting", "label": "R3 humain", "variant": "security", "labelAt": [556, 202] },
+    { "from": "r2", "to": "incident", "label": "deploy_failed", "variant": "security", "labelAt": [710, 240] },
+    { "from": "incident", "to": "r2", "label": "réconciliation", "variant": "emphasis", "labelAt": [710, 202] }
+  ]
+}

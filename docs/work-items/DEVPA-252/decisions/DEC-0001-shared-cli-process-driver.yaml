@@ -1,0 +1,37 @@
+schema_version: "1.0"
+decision_id: "83a5b77e-2c7d-4c8e-a1d2-7f4d0e1a9b01"
+work_item_id: "da5664c0-e7ab-4814-b4fa-b13b83e9981c"
+status: accepted
+context: >
+  Le chantier A exige un contrat ExecutionAdapter commun pour Claude Code et Kimi Code,
+  avec des preuves comparables et aucun appel direct aux API modèles. Une implémentation
+  séparée du cycle de vie JSONL pour chaque CLI aurait dupliqué spawn, buffers, reprise,
+  annulation et journalisation des artefacts.
+options:
+  - id: duplicated-drivers
+    description: Conserver un runner complet et indépendant pour chaque CLI.
+  - id: shared-cli-process-driver
+    description: Mutualiser le cycle de vie dans CliProcessDriver et ne laisser aux drivers que les commandes et mappings natifs.
+chosen_option: shared-cli-process-driver
+rationale: >
+  Le runner mutualisé évite la duplication et surtout la divergence des règles critiques :
+  annulation seulement après arrêt effectif, reprise par session native, séquence des
+  événements et artefacts SHA-256. Les tests prouvent le même comportement sur les deux
+  adaptateurs sans appel fournisseur.
+consequences:
+  - Les nouveaux drivers héritent du même cycle de vie et des mêmes preuves.
+  - Toute divergence native reste confinée à buildInvocation et handleNativeEvent.
+  - Les libellés produits restent distincts des identifiants techniques de contrat.
+  - La reprise Kimi exige de conserver le répertoire de création de la session native ; toute autre directory est refusée par le CLI.
+  - L’attestation réelle de Claude reste bloquée tant que sa session OAuth est expirée ; les tests mockés ne valent pas attestation de version.
+references:
+  - "https://github.com/franckbirba/dev-panel/commit/7a033a22fc91ebc089244bb185090be2f4445c86"
+  - "https://github.com/franckbirba/dev-panel/commit/a8ad6c213863073bf1ce41aa9063a0822ebc3ee3"
+  - "https://github.com/franckbirba/dev-panel/commit/c1cc6a0c0399ebd89efc9c1256fda9e92de7c24a"
+  - "https://github.com/franckbirba/dev-panel/commit/629883465b7d2a5c9fe31eebd7a03d8b17c447d8"
+  - "https://github.com/franckbirba/dev-panel/commit/269070a0776db0cceac4b08f50c275fe817a85f9"
+author:
+  type: agent
+  driver: kimi-code-cli
+  native_session_id: "492a2427-bf31-4c0c-9308-7b5c4c61e7e9"
+created_at: "2026-11-03T12:31:34Z"

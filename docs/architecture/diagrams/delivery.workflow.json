@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "DeliveryWorkflow — de la demande à la release",
+    "output": "delivery.html",
+    "quality_profile": "showcase",
+    "viewBox": [860, 440]
+  },
+  "lanes": [
+    { "id": "delivery", "label": "Delivery et release" },
+    { "id": "evidence", "label": "Gates et preuves" }
+  ],
+  "phases": [
+    { "id": "define", "label": "Cadrer", "fromCol": 0, "toCol": 2 },
+    { "id": "produce", "label": "Produire et vérifier", "fromCol": 3, "toCol": 4, "variant": "emphasis" },
+    { "id": "ship", "label": "Livrer et observer", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["intake", "discovery", "specification", "experience", "ready", "build", "verify", "review", "release_done"],
+  "semanticChecks": {
+    "allowedRoots": ["intake"],
+    "allowedTerminals": ["release_done"],
+    "requiredPaths": [
+      { "from": "intake", "to": "ready" },
+      { "from": "ready", "to": "release_done" }
+    ]
+  },
+  "nodes": [
+    { "id": "intake", "lane": "delivery", "col": 0, "type": "external", "label": "Intake", "sublabel": "Demande originale" },
+    { "id": "discovery", "lane": "delivery", "col": 1, "type": "backend", "label": "Discovery", "sublabel": "Problème et risques" },
+    { "id": "specification", "lane": "delivery", "col": 2, "type": "backend", "label": "Specification", "sublabel": "Critères testables" },
+    { "id": "experience", "lane": "delivery", "col": 3, "type": "frontend", "label": "Experience", "sublabel": "PrototypeRelease si UI" },
+    { "id": "ready", "lane": "evidence", "col": 3, "type": "security", "label": "Ready", "sublabel": "Definition of Ready" },
+    { "id": "build", "lane": "delivery", "col": 4, "type": "backend", "label": "Build", "sublabel": "CLI · commits · PR" },
+    { "id": "verify", "lane": "evidence", "col": 4, "type": "security", "label": "Verify", "sublabel": "Tests et preuves", "tag": "rework → build" },
+    { "id": "review", "lane": "evidence", "col": 5, "type": "security", "label": "Review", "sublabel": "Acceptation du head SHA", "tag": "attente libre" },
+    { "id": "release_done", "lane": "delivery", "col": 5, "type": "cloud", "label": "Release + Done", "sublabel": "Deploy · Plane" }
+  ],
+  "edges": [
+    { "from": "intake", "to": "discovery" },
+    { "from": "discovery", "to": "specification" },
+    { "from": "specification", "to": "experience", "label": "si UI significatif" },
+    { "from": "experience", "to": "ready" },
+    { "from": "ready", "to": "build", "variant": "emphasis" },
+    { "from": "build", "to": "verify" },
+    { "from": "verify", "to": "review" },
+    { "from": "review", "to": "release_done", "variant": "emphasis" }
+  ]
+}
