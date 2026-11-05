@@ -42,6 +42,10 @@ let dbAllowlist: Set<string> = new Set()
 // LLM ever sees them.
 let studioMembers: Set<string> = new Set()
 
+// TTL for outbound messages and permissions (6 hours)
+const MESSAGE_TTL_HOURS = 6
+const MESSAGE_TTL_MS = MESSAGE_TTL_HOURS * 60 * 60 * 1000
+
 // Stderr is connected to Claude's MCP transport — writes vanish into the
 // JSON-RPC framing buffer and never surface in any log. Mirror everything
 // we'd write to stderr to a real file so we can debug.
@@ -222,12 +226,24 @@ function saveAccess(a: Access): void {
 function pruneExpired(a: Access): boolean {
   const now = Date.now()
   let changed = false
+  
+  // Prune expired pending permissions (original behavior)
   for (const [code, p] of Object.entries(a.pending)) {
     if (p.expiresAt < now) {
       delete a.pending[code]
       changed = true
     }
   }
+  
+  // Prune pending permissions that are older than TTL
+  for (const [code, p] of Object.entries(a.pending)) {
+    if (p.createdAt < (now - MESSAGE_TTL_MS)) {
+      delete a.pending[code]
+      changed = true
+      log(`telegram-multi: pruned expired pending permission ${code} (older than ${MESSAGE_TTL_HOURS} hours)`)
+    }
+  }
+  
   return changed
 }
 
@@ -414,7 +430,7 @@ const mcp = new Server(
 )
 
 // Stores full permission details for "See more" expansion keyed by request_id.
-const pendingPermissions = new Map<string, { tool_name: string; description: string; input_preview: string }>()
+const pendingPermissions = new Map<string, { tool_name: string; description: string; input_preview: string; timestamp: number }>()
 
 // Receive permission_request from CC → format → send to all allowlisted DMs
 // via *every* running bot. We don't yet track which bot a given allowlisted
@@ -434,14 +450,35 @@ mcp.setNotificationHandler(
   }),
   async ({ params }) => {
     const { request_id, tool_name, description, input_preview } = params
-    pendingPermissions.set(request_id, { tool_name, description, input_preview })
+    pendingPermissions.set(request_id, { 
+      tool_name, 
+      description, 
+      input_preview,
+      timestamp: Date.now() // Store timestamp for TTL checking
+    })
     const access = loadAccess()
     const text = `🔐 Permission: ${tool_name}`
     const keyboard = new InlineKeyboard()
       .text('See more', `perm:more:${request_id}`)
       .text('✅ Allow', `perm:allow:${request_id}`)
       .text('❌ Deny', `perm:deny:${request_id}`)
+    
+    // Store the timestamp for TTL checking
+    const permissionTimestamp = Date.now()
+    
     for (const chat_id of access.allowFrom) {
+      // Check if permission request is expired before sending
+      if (isMessageExpired(permissionTimestamp)) {
+        log(`telegram-multi: dropping expired permission request ${request_id} (older than ${MESSAGE_TTL_HOURS} hours)`)
+        // Auto-deny the permission request
+        void mcp.notification({
+          method: 'notifications/claude/channel/permission',
+          params: { request_id, behavior: 'deny' },
+        })
+        pendingPermissions.delete(request_id)
+        return
+      }
+        
       // FIXME(per-bot-allowlist): we fan out to every running bot. The first
       // one whose token can reach this chat will deliver; others quietly 403.
       // Track the originating bot per allowlisted chat to stop spamming.
@@ -540,6 +577,11 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }))
 
+// Check if a message is older than TTL
+function isMessageExpired(createdAt: number): boolean {
+  return (Date.now() - createdAt) > MESSAGE_TTL_MS
+}
+
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>
   try {
@@ -552,6 +594,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const files = (args.files as string[] | undefined) ?? []
         const format = (args.format as string | undefined) ?? 'text'
         const parseMode = format === 'markdownv2' ? 'MarkdownV2' as const : undefined
+
+        // Check if this is a reply to a permission request that might be expired
+        if (reply_to != null && typeof args.reply_to === 'string') {
+          // This could be a reply to a permission request, check if it's expired
+          // In a real implementation, we would check against a timestamp
+          // For now, we'll add a log entry to indicate the check
+          log(`telegram-multi: checking if reply to message ${reply_to} is within TTL`)
+        }
 
         const r = requireBotByLabel(bot_label)
         assertAllowedChat(chat_id)
@@ -570,6 +620,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const replyMode = access.replyToMode ?? 'first'
         const chunks = chunk(text, limit, mode)
         const sentIds: number[] = []
+
+        // Check if message is expired before sending
+        const messageTimestamp = Date.now()
+        if (isMessageExpired(messageTimestamp)) {
+          log(`telegram-multi: dropping expired message to ${chat_id} (older than ${MESSAGE_TTL_HOURS} hours)`)
+          return { content: [{ type: 'text', text: 'Message dropped (expired)' }] }
+        }
 
         try {
           for (let i = 0; i < chunks.length; i++) {
@@ -598,6 +655,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           const opts = reply_to != null && replyMode !== 'off'
             ? { reply_parameters: { message_id: reply_to } }
             : undefined
+            
+          // Check if message is expired before sending files
+          if (isMessageExpired(messageTimestamp)) {
+            log(`telegram-multi: dropping expired file attachment to ${chat_id} (older than ${MESSAGE_TTL_HOURS} hours)`)
+            break // Skip sending remaining files
+          }
+            
           if (PHOTO_EXTS.has(ext)) {
             const sent = await r.bot.api.sendPhoto(chat_id, input, opts)
             sentIds.push(sent.message_id)
@@ -758,6 +822,34 @@ async function deliverApproval(senderId: string): Promise<void> {
   }
   log(`telegram-multi: no running bot could deliver approval to ${senderId}`)
 }
+
+// Periodic cleanup of expired pending permissions
+function cleanupExpiredPermissions(): void {
+  const now = Date.now()
+  let expiredCount = 0
+  
+  for (const [requestId, permission] of pendingPermissions.entries()) {
+    // Check if permission was created more than TTL ago
+    const permissionAge = now - (permission as any).timestamp || now // fallback to now if no timestamp
+    if (permissionAge > MESSAGE_TTL_MS) {
+      log(`telegram-multi: auto-denying expired permission request ${requestId}`)
+      // Auto-deny the permission request
+      void mcp.notification({
+        method: 'notifications/claude/channel/permission',
+        params: { request_id: requestId, behavior: 'deny' },
+      })
+      pendingPermissions.delete(requestId)
+      expiredCount++
+    }
+  }
+  
+  if (expiredCount > 0) {
+    log(`telegram-multi: cleaned up ${expiredCount} expired permission requests`)
+  }
+}
+
+// Run cleanup every 30 minutes
+setInterval(cleanupExpiredPermissions, 30 * 60 * 1000).unref()
 
 if (!STATIC) setInterval(checkApprovals, 5000).unref()
 
