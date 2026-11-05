@@ -13,7 +13,7 @@ export class OpenCodeCliDriver extends CliProcessDriver {
   }
 
   buildInvocation(prompt, nativeSessionId) {
-    const args = ['run'];
+    const args = ['run', '--standalone'];
     if (nativeSessionId) args.push('--session', nativeSessionId);
     args.push(prompt, '--format', 'json');
     return { command: this.opencodeBin, args };
