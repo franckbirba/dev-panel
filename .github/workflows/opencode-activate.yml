@@ -1,0 +1,37 @@
+name: Activate OpenCode for Agents
+
+on:
+  workflow_dispatch:
+
+jobs:
+  activate:
+    runs-on: [self-hosted, hetzner-agents]
+    timeout-minutes: 8
+    steps:
+      - name: Check OpenCode version
+        run: |
+          command -v opencode
+          opencode --version
+          opencode run --help
+
+      - name: Smoke test OpenCode before changing the worker
+        run: |
+          cd /home/deploy/projects/dev-panel
+          sudo -u deploy opencode run --format json "Reply with exactly OK. Do not use tools."
+
+      - name: Activate the OpenCode driver
+        run: |
+          if sudo -n test -f /home/deploy/.fleet-paused; then
+            echo "fleet-paused — refusing to restart the worker"
+            exit 1
+          fi
+          printf '%s\n' \
+            '# Managed by opencode-activate.yml' \
+            'DRIVER_DEFAULT=opencode-cli' \
+            | sudo -n tee /home/deploy/.driver-default > /dev/null
+          sudo -n chown deploy:deploy /home/deploy/.driver-default
+          sudo -n chmod 644 /home/deploy/.driver-default
+          sudo -n systemctl restart devpanel-worker.service
+          sleep 8
+          systemctl is-active devpanel-worker.service
+          cat /home/deploy/.driver-default

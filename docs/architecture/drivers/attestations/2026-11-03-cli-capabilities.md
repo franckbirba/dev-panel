@@ -52,6 +52,8 @@ Le blocage OAuth est environnemental et doit être résolu avant de modifier les
 
 Commit de preuve : `269070a0776db0cceac4b08f50c275fe817a85f9`.
 
+Vérification complémentaire du 2026-11-05 sur OpenCode 2.1.4 : le run réel `pwd` émet `tool_use` avec `part.state.input`, `part.state.output` et `part.state.status=completed`, sans `tool_result` séparé. Le driver normalise et déduplique ces snapshots ; l’état d’erreur est couvert par une fixture de contrat, pas présenté comme une observation réelle. Un smoke du driver a validé un premier run `completed` puis une reprise réelle avec `--session`, également `completed`. Les 42 tests ciblés des drivers, de l’expurgation et du timeout passent.
+
 ## Références
 
 - `src/worker/cli-process-driver.js`

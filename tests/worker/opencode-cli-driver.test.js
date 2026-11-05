@@ -88,4 +88,44 @@ describe('OpenCodeCliDriver', () => {
       cancelled_by: 'franck'
     });
   });
+
+  it('reprend une session native avec --session', () => {
+    driver.resume(runSpec(worktree), 'Continue', {
+      nativeSessionId: 'ses_test',
+      decision: { decision_id: 'decision-1' }
+    });
+
+    expect(calls[0].args).toEqual([
+      'run', '--session', 'ses_test', 'Continue', '--format', 'json'
+    ]);
+    expect(events[0].type).toBe('resumed');
+  });
+
+  it('normalise et déduplique les snapshots tool_use OpenCode 2.1.4', () => {
+    driver.start(runSpec(worktree), 'Test');
+    const completed = '{"type":"tool_use","sessionID":"ses_test","part":{"id":"call-1","partID":"part-1","type":"tool","tool":"shell","state":{"status":"completed","input":{"command":"pwd"},"output":"/tmp/demo\\n"}}}\n';
+    proc.stdout.emit('data', Buffer.from(completed));
+    proc.stdout.emit('data', Buffer.from(completed));
+    proc.stdout.emit('data', Buffer.from('{"type":"tool_use","sessionID":"ses_test","part":{"id":"call-2","partID":"part-2","type":"tool","tool":"shell","state":{"status":"error","input":{"command":"false"},"error":"exit 1"}}}\n'));
+
+    const toolEvents = events.filter(event => event.type.startsWith('tool_'));
+    expect(toolEvents.map(event => event.type)).toEqual([
+      'tool_started', 'tool_finished', 'tool_started', 'tool_finished'
+    ]);
+    expect(toolEvents[0].payload).toEqual({
+      tool_call_id: 'call-1',
+      tool_name: 'shell',
+      input_summary: '{"command":"pwd"}'
+    });
+    expect(toolEvents[1].payload).toEqual({
+      tool_call_id: 'call-1',
+      status: 'completed',
+      output_summary: '/tmp/demo\n'
+    });
+    expect(toolEvents[3].payload).toEqual({
+      tool_call_id: 'call-2',
+      status: 'failed',
+      output_summary: 'exit 1'
+    });
+  });
 });
