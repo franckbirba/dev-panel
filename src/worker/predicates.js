@@ -152,9 +152,5 @@ export const KNOWN_UNUSED = Object.freeze([
   // `until: tests_green`. No shipped YAML declares a graph-format loop yet
   // (the 4 prod workflows are still legacy steps:) — first consumer lands
   // with the first hand-authored loops: block, tracked separately.
-  'tests_green',
-  // Predicates for assinie-demo workflow - will be removed when tests are added
-  'security_issues_found',
-  'ops_issues_found',
-  'implementation_issues_found'
+  'tests_green'
 ]);
