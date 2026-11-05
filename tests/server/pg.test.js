@@ -1,6 +1,6 @@
 // tests/server/pg.test.js
 import { describe, it, expect, afterAll } from 'vitest';
-import { pool, memoryInsert, memorySearchSql, memoryList } from '../../src/server/pg.js';
+import { pool, memoryInsert, memorySearchSql, memoryList, memorySearchSqlWithValidity } from '../../src/server/pg.js';
 
 const RUN = process.env.TEST_PG === '1';
 const d = RUN ? describe : describe.skip;
@@ -34,5 +34,18 @@ d('pg memory helpers (integration)', () => {
     });
     expect(rows[0].id).toBe(id);
     expect(typeof rows[0].score).toBe('number');
+  });
+
+  it('searches by vector similarity with temporal validity', async () => {
+    const rows = await memorySearchSqlWithValidity({
+      namespace: 'test',
+      embedding: Array(1024).fill(0.01),
+      limit: 3
+    });
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(typeof rows[0].score).toBe('number');
+    // Check that temporal validity fields are present
+    expect(rows[0]).toHaveProperty('valid_from');
+    expect(rows[0]).toHaveProperty('valid_to');
   });
 });

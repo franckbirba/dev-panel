@@ -233,6 +233,8 @@ export function initMasterDatabase(storagePath = './storage') {
       source      TEXT,                        -- 'shelly' | 'webhook' | 'manual' | 'agent' | 'auto'
       meta        TEXT,                        -- JSON sidecar for free-form context
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      valid_from  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- When the link became true
+      valid_to    DATETIME,                                       -- When the link ceased to be true (NULL = still valid)
       UNIQUE(from_type, from_id, to_type, to_id, rel)
     );
     CREATE INDEX IF NOT EXISTS subject_links_from ON subject_links(from_type, from_id);
