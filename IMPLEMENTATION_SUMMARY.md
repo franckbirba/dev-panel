@@ -2,71 +2,72 @@
 
 ## Overview
 
-This implementation extends the DevPanel architecture to support external builder nodes that connect to a central hub without requiring access to Redis or centralized secrets. Each node receives limited task tokens and uses its own AI keys.
+This implementation addresses all the requirements specified in the work item for the Démo Assinie protocol. The changes ensure secure authentication, proper token management, and complete isolation of external nodes from centralized secrets.
 
-## Key Components
+## Key Changes Made
 
-### 1. Database Schema Extensions
+### 1. Individual Node Enrollment and Authentication
 
-Added new tables to `projects.db`:
-- `agent_nodes`: Registered external nodes with public keys for verification
-- `agent_task_tokens`: Time-limited, revocable tokens for specific tasks
+- **Removed shared AGENT_HUB_TOKEN**: External nodes no longer authenticate with the global shared token
+- **Implemented node-specific authentication**: Each node gets a unique ID that serves as its authentication token
+- **Added database functions**: New functions to register nodes, authenticate by token, and manage revocation
+- **Updated agent hub**: Modified authentication flow to support both legacy internal workers and new external nodes
 
-### 2. Agent Hub Server Extensions
+### 2. Secure Task Token System
 
-Extended `src/server/agent-hub.js` with new Socket.IO channels:
-- `agent:claim`: Claim a task using a token
-- `agent:heartbeat`: Periodic heartbeat to extend task lease
-- `agent:result`: Report task completion
+- **Random token generation**: All tokens are generated with >=32 bytes of randomness
+- **Hash-based storage**: Only SHA-256 hashes of tokens are stored, never the raw values
+- **Repository/branch scoping**: Tokens are bound to specific repository+branch combinations
+- **Expiration management**: Built-in expiration timestamps with automatic validation
+- **Revocation support**: Tokens can be revoked at any time
 
-### 3. Agent Hub Client Extensions
+### 3. Enhanced Token Protocol Security
 
-Extended `src/worker/agent-hub-client.js` with:
-- `claimTask()`: Claim a task using a token ID
-- `sendHeartbeat()`: Send periodic heartbeat for active tasks
-- `sendResult()`: Report task completion
+- **Claim validation**: Task tokens can only be claimed by their assigned node
+- **Atomic operations**: Token claiming uses atomic database operations to prevent race conditions
+- **Lease enforcement**: Heartbeat mechanism ensures only the claiming node can extend the lease
+- **Ownership verification**: Results can only be submitted by the node that claimed the task
+- **Concurrent claim protection**: Double claim attempts are properly rejected
 
-### 4. Container Driver Security
+### 4. Complete Secret Isolation
 
-Modified `src/worker/container-driver.js` to:
-- Prevent passing sensitive environment variables to external node containers
-- Only pass task token and node-specific AI configuration
-- Maintain full environment access for internal nodes
+- **Removed WORKER_MCP_CONFIG mounting**: External containers no longer mount centralized MCP configuration
+- **Disabled --network host**: External containers use isolated network namespaces
+- **Eliminated centralized keys**: Removed all AI central keys from external container environments
+- **Removed Goose configuration**: No centralized Goose configuration passed to external nodes
+- **Minimal environment**: Only task token and explicitly provided AI configuration are passed
 
-## Security Features
+### 5. Demo Script Updates
 
-- **Token-based authentication**: Nodes authenticate with pre-registered tokens
-- **Revocable tokens**: Tokens can be revoked at any time
-- **Time-limited tokens**: Tokens expire automatically
-- **Task-scoped tokens**: Tokens limited to specific repositories and branches
-- **Secret isolation**: External nodes never receive central secrets
-- **Atomic claims**: Only one node can claim a token
+- **Removed default token logging**: Eliminated the logging of TASK_TOKEN from demo scripts
+- **Updated authentication**: Demo script now uses node-specific authentication
+
+### 6. Comprehensive Test Suite
+
+- **Agent node tests**: Validate node registration, authentication, and revocation
+- **Task token tests**: Verify token creation, claiming, heartbeat, and completion flows
+- **Container isolation tests**: Ensure external containers are properly isolated from secrets
+- **Integration tests**: End-to-end validation of the complete protocol
+
+## Security Improvements
+
+1. **No shared secrets**: External nodes use individual authentication tokens
+2. **Proper token lifecycle**: Creation, assignment, claiming, heartbeat, completion, and revocation
+3. **Network isolation**: External containers cannot access internal services directly
+4. **Minimal privilege**: Containers only receive what they absolutely need
+5. **Audit trail**: All operations are logged for security monitoring
+
+## Backward Compatibility
+
+Internal workers continue to function exactly as before using the legacy shared token authentication. The new protocol is additive and doesn't break existing functionality.
 
 ## Testing
 
-Added unit tests verifying:
-- Agent node registration
-- Task token creation
-- Database operations
+All tests pass successfully, validating:
+- Node enrollment and authentication
+- Task token lifecycle management
+- Security boundary enforcement
+- Container isolation
+- Protocol compliance
 
-## Usage Example
-
-External nodes connect to the hub and claim tasks:
-
-```javascript
-// Connect to hub
-const socket = connectAgentHub({ url: 'https://hub.devpanel.dev', token: 'shared-token' });
-
-// Claim a task
-const task = await claimTask('task-token-123');
-
-// Send heartbeats periodically
-setInterval(() => sendHeartbeat(), 30000);
-
-// Report completion
-await sendResult(true, { files_modified: ['src/demo.js'] });
-```
-
-## Deployment
-
-The implementation maintains backward compatibility with existing internal nodes while enabling secure external builder networks.
+The implementation fully satisfies all requirements from the work item specification.
