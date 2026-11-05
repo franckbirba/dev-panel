@@ -8,16 +8,23 @@ jobs:
     runs-on: [self-hosted, hetzner-agents]
     timeout-minutes: 8
     steps:
+      - name: Install OpenCode 2.1.4 for the deploy user
+        run: |
+          if ! sudo -u deploy test -x /home/deploy/.opencode/bin/opencode; then
+            sudo -u deploy bash -c 'curl -fsSL https://opencode.ai/install | bash -s -- --version 2.1.4 --no-modify-path'
+          fi
+          sudo -u deploy mkdir -p /home/deploy/.local/bin
+          sudo -u deploy ln -sf /home/deploy/.opencode/bin/opencode /home/deploy/.local/bin/opencode
+
       - name: Check OpenCode version
         run: |
-          command -v opencode
-          opencode --version
-          opencode run --help
+          /home/deploy/.local/bin/opencode --version
+          /home/deploy/.local/bin/opencode run --help
 
       - name: Smoke test OpenCode before changing the worker
         run: |
           cd /home/deploy/projects/dev-panel
-          sudo -u deploy opencode run --format json "Reply with exactly OK. Do not use tools."
+          sudo -u deploy /home/deploy/.local/bin/opencode run --format json "Reply with exactly OK. Do not use tools."
 
       - name: Activate the OpenCode driver
         run: |
