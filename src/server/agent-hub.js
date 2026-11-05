@@ -39,9 +39,20 @@
 // 'agent:goodbye'    — clean disconnect (reason)
 
 import { Server as IoServer } from 'socket.io';
+import { randomUUID } from 'crypto';
+import { 
+  getAgentNode, 
+  updateAgentNodeLastSeen, 
+  getTaskToken, 
+  claimTaskToken, 
+  heartbeatTaskToken, 
+  completeTaskToken,
+  revokeTaskToken
+} from './db.js';
 
 let io = null;
 const agents = new Map(); // socket.id → {agent_id, host, version, connected_at}
+const taskChannels = new Map(); // task_id → {node_id, socket_id, token_id}
 
 export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN } = {}) {
   if (io) return io;
@@ -97,6 +108,98 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
       const meta = agents.get(socket.id);
       agents.delete(socket.id);
       if (meta) fanout('agent:offline', { ...meta, reason: 'goodbye' });
+    });
+
+    // New event handlers for task claim/heartbeat/result protocol
+    socket.on('agent:claim', async (payload, callback) => {
+      try {
+        const { token_id } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Check if token is already claimed
+        if (token.claimed_at) {
+          return callback?.({ success: false, error: 'Token already claimed' });
+        }
+
+        // Atomically claim the token
+        const claimed = claimTaskToken(token_id);
+        if (!claimed) {
+          return callback?.({ success: false, error: 'Failed to claim token' });
+        }
+
+        // Register this claim in our task channels map
+        taskChannels.set(token.task_id, {
+          node_id: token.node_id,
+          socket_id: socket.id,
+          token_id: token_id
+        });
+
+        // Send success response
+        callback?.({ success: true, task: { id: token.task_id, repository: token.repository, branch: token.branch } });
+      } catch (error) {
+        console.error('[agent-hub] claim error:', error);
+        callback?.({ success: false, error: error.message });
+      }
+    });
+
+    socket.on('agent:heartbeat', async (payload, callback) => {
+      try {
+        const { token_id } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Update heartbeat
+        const updated = heartbeatTaskToken(token_id);
+        if (!updated) {
+          return callback?.({ success: false, error: 'Failed to update heartbeat' });
+        }
+
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[agent-hub] heartbeat error:', error);
+        callback?.({ success: false, error: error.message });
+      }
+    });
+
+    socket.on('agent:result', async (payload, callback) => {
+      try {
+        const { token_id, success, result } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Mark token as completed (idempotent)
+        completeTaskToken(token_id);
+
+        // Remove from task channels
+        taskChannels.delete(token.task_id);
+
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[agent-hub] result error:', error);
+        callback?.({ success: false, error: error.message });
+      }
     });
 
     socket.on('disconnect', (reason) => {
