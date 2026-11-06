@@ -252,9 +252,9 @@ edges:
 });
 
 describe('loadWorkflows — legacy steps: format stays backward compatible', () => {
-  it('loads the 4 shipped legacy YAMLs and synthesizes an internal graph', () => {
+  it('loads the 5 shipped legacy YAMLs and synthesizes an internal graph', () => {
     const flows = loadWorkflows();
-    expect(Object.keys(flows).sort()).toEqual(['cycle-audit', 'merge-coordinator', 'replan', 'work-item']);
+    expect(Object.keys(flows).sort()).toEqual(['assinie-demo', 'cycle-audit', 'merge-coordinator', 'replan', 'work-item']);
     for (const flow of Object.values(flows)) {
       expect(flow.graph).toBeTruthy();
       expect(Array.isArray(flow.graph.nodes)).toBe(true);
