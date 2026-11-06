@@ -1,72 +1,45 @@
-# SOUL Agents Implementation Summary
+# Implementation Summaries
 
-## Overview
-Implemented three new SOUL agents for the Démo Assinie workflow:
-1. Full-Stack Developer
-2. Ops Engineer
-3. Cybersecurity Analyst
+## Node/Hub Protocol with Revocable Tokens and Secret Isolation
 
-Each agent follows the established SOUL pattern with proper identity, mission, rules, and workflow integration.
+### Authentication and enrollment
 
-## Files Created
+- External nodes authenticate with individual random tokens stored as SHA-256 hashes.
+- Admin routes enroll and revoke nodes, and issue repository/branch/time-scoped task tokens.
+- The legacy shared token remains limited to the internal worker.
+- Socket.IO connections are bound to the authenticated `node_id`.
 
-### 1. Agent Directories and SOUL Files
-- `.agents/full-stack/`
-  - `SOUL.md` - Defines the full-stack developer role with frontend/backend implementation focus
-  - `PLAYBOOK.md` - Brief playbook description
-  
-- `.agents/ops/`
-  - `SOUL.md` - Defines the ops engineer role with infrastructure and deployment focus
-  - `PLAYBOOK.md` - Brief playbook description
-  
-- `.agents/cybersecurity/`
-  - `SOUL.md` - Defines the cybersecurity analyst role with security audit focus
-  - `PLAYBOOK.md` - Brief playbook description
+### Task token lifecycle
 
-### 2. Workflow Integration
-- `src/worker/workflows/assine-demo.yaml` - New dedicated workflow that integrates all three new agents
+- Claims use atomic database updates and reject expired, revoked, completed, or already claimed tokens.
+- Heartbeats are restricted to the claiming node and extend the lease without shortening it.
+- Results are restricted to the claiming node and completion is idempotent.
+- Raw node and task tokens are never stored or logged.
 
-### 3. Tests
-- `tests/worker/assine-demo-workflow.test.js` - Tests for the new workflow transitions
-- `tests/worker/soul-agents.test.js` - Tests for SOUL agent loading and validation
+### Container isolation
 
-## Workflow Design
+- External containers do not mount the centralized MCP configuration or use the host network.
+- Central Redis, Postgres, Plane, GitHub, and AI credentials are not passed to external containers.
+- Only the task token and explicitly node-provided AI configuration are allowed.
 
-The new `assine-demo` workflow follows this sequence:
-1. **Builder** - Initial implementation
-2. **Cybersecurity** - Security audit and secret checking
-3. **Ops** - Infrastructure and deployment verification
-4. **Full-Stack** - Complete frontend/backend implementation
-5. **Reviewer** - Code review
-6. **QA** - Quality assurance testing
+### Verification
 
-Each step supports retreat to previous steps when issues are found, maintaining workflow integrity while adding security and operations checks.
+- Agent node and task token lifecycle tests.
+- Socket.IO authentication, claim, heartbeat, result, and ownership tests.
+- Admin enrollment and task token issuance tests.
+- Container environment isolation tests.
 
-## Key Features
+## SOUL Agents for the Démo Assinie Workflow
 
-### Full-Stack Developer Agent
-- Implements frontend and backend features
-- Separates concerns between UI and API layers
-- Uses appropriate frontend/backend development skills
+### Roles
 
-### Ops Agent
-- Verifies Docker Compose configurations
-- Checks health checks and build processes
-- Ensures operational readiness
-- Uses infrastructure review and security audit skills
+- `.agents/full-stack/` implements frontend and backend features.
+- `.agents/ops/` verifies Docker Compose, builds, health checks, and operational readiness.
+- `.agents/cybersecurity/` audits secrets and the configuration attack surface.
 
-### Cybersecurity Agent
-- Audits for hardcoded secrets and credentials
-- Verifies minimal attack surface in configurations
-- Uses security audit and vulnerability scanning skills
+### Workflow and tests
 
-## Compliance
-
-All implementation requirements have been met:
-- ✅ Each SOUL contains mission, MUST/MUST NOT, inputs, outputs, and handoff
-- ✅ YAML is properly parsed and validated
-- ✅ Each agent exists and transitions are valid
-- ✅ Tests cover success cases and failure scenarios
-- ✅ No automatic merging added - human signature remains required
-- ✅ Existing builder → reviewer → QA workflow preserved
-- ✅ No breaking changes to existing systems
+- `src/worker/workflows/assinie-demo.yaml` integrates the new roles with explicit transitions and bounded retreats.
+- Tests cover SOUL loading, workflow loading, successful transitions, security/ops rejection, and builder retreats.
+- The existing builder → reviewer → QA workflow remains available.
+- Pull requests may auto-merge only after required checks pass; no signature gate is imposed by this implementation.

@@ -24,11 +24,10 @@
 //
 // Auth
 // ----
-// Agent connections present `auth.token` matching env.AGENT_HUB_TOKEN. Token
-// shared between services-VPS and agents-host (loaded from .env.production
-// on both — the same shared-secret pattern used for redis + pg). No browser
-// connects here; dashboards still receive events via the existing SSE
-// fan-out (`broadcast` from sse.js).
+// External nodes authenticate with individual random tokens stored as SHA-256
+// hashes and bound to their node_id. The legacy AGENT_HUB_TOKEN remains limited
+// to the internal worker. No browser connects here; dashboards still receive
+// events via the existing SSE fan-out (`broadcast` from sse.js).
 //
 // Channels
 // --------
@@ -39,9 +38,17 @@
 // 'agent:goodbye'    — clean disconnect (reason)
 
 import { Server as IoServer } from 'socket.io';
+import {
+  getAgentNodeByToken,
+  getTaskToken,
+  claimTaskToken,
+  heartbeatTaskToken,
+  completeTaskToken
+} from './db.js';
 
 let io = null;
 const agents = new Map(); // socket.id → {agent_id, host, version, connected_at}
+const taskChannels = new Map(); // task_id → {node_id, socket_id, token_id}
 
 export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN } = {}) {
   if (io) return io;
@@ -52,21 +59,28 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
     pingInterval: 15_000,
   });
 
-  io.use((socket, next) => {
-    // Per-connection bearer token check. We accept the token via the
-    // `auth: { token }` payload that socket.io-client supports natively.
+  io.use(async (socket, next) => {
     const provided = socket.handshake.auth?.token;
     if (!token) {
-      // Guard against accidentally running an unauthenticated hub in prod.
-      // If the env var isn't set we refuse all connections — better to fail
-      // loud than silently accept any worker.
       console.error('[agent-hub] AGENT_HUB_TOKEN not set, refusing connection');
       return next(new Error('hub auth not configured'));
     }
-    if (provided !== token) {
-      return next(new Error('invalid agent token'));
+
+    try {
+      const node = await getAgentNodeByToken(provided);
+      if (node) {
+        socket.data = { node_id: node.id };
+        return next();
+      }
+
+      if (provided !== token) {
+        return next(new Error('invalid agent token'));
+      }
+      next();
+    } catch (err) {
+      console.error('[agent-hub] Error validating token:', err);
+      return next(new Error('internal error validating token'));
     }
-    next();
   });
 
   io.on('connection', async (socket) => {
@@ -97,6 +111,130 @@ export function initAgentHub(httpServer, { token = process.env.AGENT_HUB_TOKEN }
       const meta = agents.get(socket.id);
       agents.delete(socket.id);
       if (meta) fanout('agent:offline', { ...meta, reason: 'goodbye' });
+    });
+
+    // New event handlers for task claim/heartbeat/result protocol
+    socket.on('agent:claim', async (payload, callback) => {
+      try {
+        const { token_id } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Check if token is already claimed
+        if (token.claimed_at) {
+          return callback?.({ success: false, error: 'Token already claimed' });
+        }
+
+        // Verify that the socket is authorized to claim this token
+        // External nodes can only claim tokens assigned to their node_id
+        if (socket.data?.node_id && token.node_id !== socket.data.node_id) {
+          return callback?.({ success: false, error: 'Token not assigned to this node' });
+        }
+
+        // Atomically claim the token
+        const claimed = claimTaskToken(token_id);
+        if (!claimed) {
+          return callback?.({ success: false, error: 'Failed to claim token' });
+        }
+
+        // Register this claim in our task channels map
+        taskChannels.set(token.task_id, {
+          node_id: token.node_id,
+          socket_id: socket.id,
+          token_id: token_id
+        });
+
+        // Send success response
+        callback?.({ success: true, task: { id: token.task_id, repository: token.repository, branch: token.branch } });
+      } catch (error) {
+        console.error('[agent-hub] claim error:', error);
+        callback?.({ success: false, error: error.message });
+      }
+    });
+
+    socket.on('agent:heartbeat', async (payload, callback) => {
+      try {
+        const { token_id } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Verify that the socket is authorized to send heartbeat for this token
+        // External nodes can only heartbeat tokens assigned to their node_id
+        // and that they previously claimed
+        const taskChannel = taskChannels.get(token.task_id);
+        if (socket.data?.node_id) {
+          if (token.node_id !== socket.data.node_id) {
+            return callback?.({ success: false, error: 'Token not assigned to this node' });
+          }
+          if (!taskChannel || taskChannel.socket_id !== socket.id) {
+            return callback?.({ success: false, error: 'Token not claimed by this socket' });
+          }
+        }
+
+        // Update heartbeat
+        const updated = heartbeatTaskToken(token_id);
+        if (!updated) {
+          return callback?.({ success: false, error: 'Failed to update heartbeat' });
+        }
+
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[agent-hub] heartbeat error:', error);
+        callback?.({ success: false, error: error.message });
+      }
+    });
+
+    socket.on('agent:result', async (payload, callback) => {
+      try {
+        const { token_id, success, result } = payload;
+        if (!token_id) {
+          return callback?.({ success: false, error: 'Missing token_id' });
+        }
+
+        // Verify the token exists and is valid
+        const token = getTaskToken(token_id);
+        if (!token) {
+          return callback?.({ success: false, error: 'Invalid or expired token' });
+        }
+
+        // Verify that the socket is authorized to send result for this token
+        // External nodes can only send results for tokens assigned to their node_id
+        // and that they previously claimed
+        const taskChannel = taskChannels.get(token.task_id);
+        if (socket.data?.node_id) {
+          if (token.node_id !== socket.data.node_id) {
+            return callback?.({ success: false, error: 'Token not assigned to this node' });
+          }
+          if (!taskChannel || taskChannel.socket_id !== socket.id) {
+            return callback?.({ success: false, error: 'Token not claimed by this socket' });
+          }
+        }
+
+        // Mark token as completed (idempotent)
+        completeTaskToken(token_id);
+
+        // Remove from task channels
+        taskChannels.delete(token.task_id);
+
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[agent-hub] result error:', error);
+        callback?.({ success: false, error: error.message });
+      }
     });
 
     socket.on('disconnect', (reason) => {
@@ -135,6 +273,14 @@ export function sendAgentCommand({ agent_id = null, type, payload = {} }) {
   }
   io.emit('admin:command', { type, payload });
   return true;
+}
+
+export async function closeAgentHub() {
+  if (!io) return;
+  await new Promise(resolve => io.close(resolve));
+  io = null;
+  agents.clear();
+  taskChannels.clear();
 }
 
 export function listConnectedAgents() {

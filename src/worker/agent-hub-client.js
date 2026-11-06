@@ -16,6 +16,7 @@
 
 import { io as ioClient } from 'socket.io-client';
 import { createCancelHandler } from './worker-control.js';
+import { randomUUID } from 'crypto';
 
 let socket = null;
 let queue = []; // events buffered while disconnected
@@ -112,4 +113,57 @@ export function disconnectAgentHub() {
     try { socket.disconnect(); } catch { /* ignore */ }
     socket = null;
   }
+}
+
+// New methods for task claim/heartbeat/result protocol
+let currentTaskToken = null;
+
+export async function claimTask(tokenId) {
+  if (!socket) {
+    throw new Error('Agent hub not connected');
+  }
+  
+  return new Promise((resolve, reject) => {
+    socket.emit('agent:claim', { token_id: tokenId }, (response) => {
+      if (response.success) {
+        currentTaskToken = tokenId;
+        resolve(response.task);
+      } else {
+        reject(new Error(response.error || 'Failed to claim task'));
+      }
+    });
+  });
+}
+
+export async function sendHeartbeat() {
+  if (!socket || !currentTaskToken) {
+    throw new Error('Not connected to agent hub or no task claimed');
+  }
+  
+  return new Promise((resolve, reject) => {
+    socket.emit('agent:heartbeat', { token_id: currentTaskToken }, (response) => {
+      if (response.success) {
+        resolve();
+      } else {
+        reject(new Error(response.error || 'Failed to send heartbeat'));
+      }
+    });
+  });
+}
+
+export async function sendResult(success, result) {
+  if (!socket || !currentTaskToken) {
+    throw new Error('Not connected to agent hub or no task claimed');
+  }
+  
+  return new Promise((resolve, reject) => {
+    socket.emit('agent:result', { token_id: currentTaskToken, success, result }, (response) => {
+      if (response.success) {
+        currentTaskToken = null;
+        resolve();
+      } else {
+        reject(new Error(response.error || 'Failed to send result'));
+      }
+    });
+  });
 }
