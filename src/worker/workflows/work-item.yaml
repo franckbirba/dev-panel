@@ -1,25 +1,59 @@
 name: work-item
 description: Standard work-item pipeline — build, review, QA.
+
+# Format graphe (ADR-006). Migré depuis `steps:` le 2026-08-20 : c'est le
+# premier workflow réel à l'utiliser, donc le premier à exercer en prod le
+# comptage par boucle, la sortie par `until` et le prédicat `tests_green`
+# (jusqu'ici couverts par les tests seulement).
+#
+# Ce que la migration change concrètement : le cycle reviewer→builder, qui
+# existait en contrebande borné par un `max_revisions` global et anonyme,
+# devient une boucle NOMMÉE avec sa propre borne et son propre budget. On
+# peut enfin répondre à « quelle boucle tourne, et combien lui reste-t-il ? ».
+#
+# `max_revisions: 3` reste déclaré pour les transitions hors boucle (le
+# garde-fou global du moteur), la boucle `revision` porte la borne du cycle.
 max_revisions: 3
 on_exhaustion: block
 
-steps:
-  - agent: builder
-    on:
-      done:     { next: reviewer }
-      blocked:  { next: pm, workflow: replan }
-      failed:   { terminal: true }
-
-  - agent: reviewer
+nodes:
+  - id: build
+    agent: builder
+  - id: review
+    agent: reviewer
     retreat_allowed: [builder]
-    on:
-      done:     { next: qa }
-      blocked:  { next: pm, workflow: replan }
-      failed:   { next: builder, when: reviewer_rejected_pr }
-
-  - agent: qa
+  - id: qa
+    agent: qa
     retreat_allowed: [pm]
-    on:
-      done:     { terminal: true }
-      failed:   { next: pm, workflow: replan }
-      blocked:  { next: pm, workflow: replan }
+
+loops:
+  - id: revision
+    # Ordonné : le back-edge compté est review -> build (le dernier élément
+    # reboucle sur le premier). C'est CE passage qui consomme une itération.
+    body: [build, review]
+    # Sortie : le reviewer valide. Le prédicat est déclaratif — la sortie
+    # réelle passe par l'edge `review done -> qa` (modèle ADR-006).
+    until: reviewer_approved
+    max_iterations: 3
+    # Budget propre au cycle : 3 allers-retours builder↔reviewer coûtent
+    # bien plus qu'un run simple. Au-delà, on arrête plutôt que de brûler.
+    budget_tokens: 600000
+    on_exhaustion: block
+
+edges:
+  # — chemin nominal
+  - { from: build,  on: done,    to: review }
+  - { from: review, on: done,    to: qa }
+  - { from: qa,     on: done,    terminal: true }
+
+  # — la boucle de révision (back-edge compté)
+  - { from: review, on: failed,  to: build, when: reviewer_rejected_pr }
+
+  # — ambiguïté : replan par le PM (contrat §4.2, jamais une boucle)
+  - { from: build,  on: blocked, workflow: replan, to: pm }
+  - { from: review, on: blocked, workflow: replan, to: pm }
+  - { from: qa,     on: blocked, workflow: replan, to: pm }
+  - { from: qa,     on: failed,  workflow: replan, to: pm }
+
+  # — échec builder : terminal, pas de retry aveugle (contrat §4.2)
+  - { from: build,  on: failed,  terminal: true }

@@ -261,14 +261,23 @@ describe('loadWorkflows — legacy steps: format stays backward compatible', () 
       expect(Array.isArray(flow.graph.edges)).toBe(true);
       expect(Array.isArray(flow.graph.loops)).toBe(true);
     }
-    // work-item's reviewer.failed→builder cycle must be captured as a
-    // synthesized loop bounded by max_revisions (3).
+    // work-item déclare désormais sa boucle explicitement (migration
+    // 2026-08-20) au lieu de la faire synthétiser : le cycle
+    // review.failed→build est nommé `revision`, avec sa propre borne ET son
+    // propre budget — ce que la version synthétisée ne pouvait pas porter.
     const wi = flows['work-item'];
-    expect(wi.graph.loops.length).toBeGreaterThanOrEqual(1);
-    const revisionLoop = wi.graph.loops.find(l =>
-      l.body.includes('builder') && l.body.includes('reviewer'));
+    const revisionLoop = wi.graph.loops.find(l => l.id === 'revision');
     expect(revisionLoop).toBeTruthy();
+    expect(revisionLoop.body).toEqual(['build', 'review']);
     expect(revisionLoop.max_iterations).toBe(3);
+    expect(revisionLoop.budget_tokens).toBe(600000);
+    expect(revisionLoop._legacy).toBe(false);
+
+    // Les 3 autres restent au format legacy : la compat ascendante est
+    // toujours exercée par des YAML réels, pas seulement par des fixtures.
+    for (const name of ['cycle-audit', 'merge-coordinator', 'replan']) {
+      expect(Array.isArray(flows[name].steps)).toBe(true);
+    }
   });
 
   it('legacy steps: format with an undeclared-looking cycle still loads (auto-wrapped)', () => {

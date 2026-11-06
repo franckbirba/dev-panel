@@ -159,11 +159,15 @@ describe('predicate-YAML consistency', () => {
   it('every exported predicate (except KNOWN_UNUSED) is referenced by at least one shipped workflow', () => {
     const flows = loadWorkflows();
     const used = new Set();
+    // Parcourt le graphe normalisé plutôt que `flow.steps` : loadWorkflows
+    // le synthétise pour les deux formats, donc ce test reste valable quel
+    // que soit le YAML (legacy `steps:` ou graphe `nodes:`/`edges:`).
     for (const flow of Object.values(flows)) {
-      for (const step of flow.steps) {
-        for (const branch of Object.values(step.on || {})) {
-          if (branch?.when) used.add(branch.when);
-        }
+      for (const edge of flow.graph?.edges || []) {
+        if (edge?.when) used.add(edge.when);
+      }
+      for (const loop of flow.graph?.loops || []) {
+        if (loop?.until) used.add(loop.until);
       }
     }
     const exported = Object.keys(predicates);

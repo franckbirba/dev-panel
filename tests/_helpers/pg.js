@@ -63,7 +63,11 @@ export async function startPg() {
   if (containerId) return;
   // Pick a random host port so multiple runs don't collide. We bind to 127.0.0.1
   // so CI runners that expose docker publish-all don't accidentally expose pg.
-  const port = 15000 + Math.floor(Math.random() * 40000);
+  // Port choisi par Docker (`:0`), pas tiré au hasard. Un tirage aléatoire
+  // finit par entrer en collision quand plusieurs suites démarrent en
+  // parallèle — vécu le 2026-08-20 : "Bind for 127.0.0.1:24618 failed: port
+  // is already allocated", un échec qui ressemble à une régression mais n'en
+  // est pas. On demande un port libre et on lit celui qui a été attribué.
   containerId = docker([
     'run', '-d', '--rm',
     // Label : un run interrompu (agent tué mid-test) laisse le conteneur en
@@ -71,12 +75,15 @@ export async function startPg() {
     // de tuer un postgres applicatif :
     //   docker rm -f $(docker ps -q --filter label=devpanl-test=pg)
     '--label', 'devpanl-test=pg',
-    '-p', `127.0.0.1:${port}:5432`,
+    '-p', '127.0.0.1::5432',
     '-e', 'POSTGRES_USER=test',
     '-e', 'POSTGRES_PASSWORD=test',
     '-e', 'POSTGRES_DB=test',
     'postgres:16-alpine'
   ]);
+  // `docker port` rend la mappe réelle, ex. "127.0.0.1:49153".
+  const mapped = docker(['port', containerId, '5432/tcp']);
+  const port = mapped.trim().split('\n')[0].split(':').pop();
   process.env.PG_HOST = '127.0.0.1';
   process.env.PG_PORT = String(port);
   process.env.PG_USER = 'test';
