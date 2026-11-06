@@ -462,6 +462,9 @@ const worker = new Worker(QUEUES.agents, async (job) => {
     }
 
     if (jobData.agent === 'shelly_digest') {
+      // Digest (morning/evening): read operational data, format it as a
+      // short Telegram message, push it via notifyJob (no claude -p, no tokens).
+      // Deterministic handler — cheap to run, zero token consumption.
       const { handleShellyDigest } = await import('./handlers/shelly-digest.js');
       const startedAt = Date.now();
       const result = await handleShellyDigest(jobData);

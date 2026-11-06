@@ -54,6 +54,19 @@ const CRON_JOBS = [
     priority: PRIORITY_MAP.p2
   },
   {
+    // Evening digest — runs as a "shelly:digest" handler in the worker
+    // (not a claude -p), provides a recap of the day's activity including
+    // merged PRs, unblocked items, fleet status, and reaped instances.
+    // Cheap, deterministic, no tokens consumed.
+    name: 'shelly:evening-digest',
+    data: { agent: 'shelly_digest', source: 'cron', requested_by: 'cron:evening', digest_type: 'evening' },
+    repeat: {
+      pattern: process.env.EVENING_DIGEST_CRON || '0 19 * * *',
+      tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
+    },
+    priority: PRIORITY_MAP.p2
+  },
+  {
     // PR scanner — replaces the dead GitHub-webhook path. Lists open PRs on
     // every project that has github_owner+github_repo set, dispatches one
     // merge-coordinator per PR. Idempotent via syntheticWorkItemId +
