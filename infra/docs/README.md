@@ -10,7 +10,7 @@ Production Stack (77.42.46.87)
 │   ├── Traefik          → reverse proxy, HTTPS, Let's Encrypt
 │   ├── Redis            → BullMQ backend (exposed on VPS IP:6379)
 │   ├── DevPanel         → main app (ghcr.io/franckbirba/dev-panel:latest)
-│   ├── PostgreSQL       → AFFiNE database
+│   ├── PostgreSQL       → AFFiINE database
 │   └── AFFiNE           → docs & knowledge base
 ├── Plane (profile: plane)
 │   ├── Web/Admin/Space  → frontend SPAs
@@ -22,6 +22,11 @@ Production Stack (77.42.46.87)
 │   ├── Frontend         → design tool UI
 │   ├── Backend          → API server
 │   └── PostgreSQL       → Penpot database
+├── GlitchTip (profile: glitchtip)
+│   ├── Web              → error tracking UI
+│   ├── Worker           → background processing
+│   ├── PostgreSQL       → GlitchTip database
+│   └── Redis            → GlitchTip cache
 └── Monitoring (profile: monitoring)
     ├── Uptime Kuma      → service monitoring
     └── Bull Board       → job queue dashboard
@@ -122,6 +127,7 @@ docker compose --profile core up -d
 docker compose --profile plane up -d
 docker compose --profile penpot up -d
 docker compose --profile monitoring up -d
+docker compose --profile glitchtip up -d
 docker compose --profile all up -d
 
 # Production (via Makefile)
@@ -129,8 +135,11 @@ make deploy-core
 make deploy-plane
 make deploy-penpot
 make deploy-monitoring
+make deploy-glitchtip
 make deploy-all
 ```
+
+Note: The `glitchtip` profile is opted-out of CI deploys and must be deployed manually. See [GLITCHTIP-INTEGRATION.md](GLITCHTIP-INTEGRATION.md) for setup instructions.
 
 ## Troubleshooting
 

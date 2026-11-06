@@ -163,6 +163,7 @@ Read in this order:
 5. **[docs/SECRETS-GUIDE.md](docs/SECRETS-GUIDE.md)** — Secret management
 6. **[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)** — Security hardening
 7. **[docs/PLAYWRIGHT-SETUP.md](docs/PLAYWRIGHT-SETUP.md)** — QA automation setup (agents node)
+8. **[docs/GLITCHTIP-INTEGRATION.md](docs/GLITCHTIP-INTEGRATION.md)** — GlitchTip error tracking integration
 
 ## 🔧 Key Files
 
@@ -207,3 +208,72 @@ The allowlist lives in `config/oauth2-proxy-emails.txt` and is rendered to
 `.env.oauth2-proxy` (gitignored) by `scripts/render-whitelist.sh` during deploy.
 Add an invitee = edit the .txt file + push. Only `oauth2-proxy` restarts;
 devpanel is untouched.
+
+## 🚨 GlitchTip → Captures Forwarding (Zeno Project)
+
+### Configuration Overview
+
+Runtime errors from the Zeno application are tracked in GlitchTip and automatically forwarded to the DevPanel captures inbox via a webhook integration.
+
+**GlitchTip URL:** `https://glitchtip.devpanl.dev`
+**Webhook Endpoint:** `POST /api/webhooks/glitchtip/<devpanel-project-id>`
+**Authentication:** Querystring secret (`?secret=<GLITCHTIP_BRIDGE_HMAC_SECRET>`)
+
+### Setup Process
+
+1. **GlitchTip Project Configuration**
+   - Navigate to `https://glitchtip.devpanl.dev` and log in
+   - Locate the "zeno" project in the organization
+   - Go to Project Settings → Alerts → Destinations
+
+2. **Webhook Configuration**
+   - Add a new "Generic Webhook" destination
+   - Set the URL to: `https://devpanl.dev/api/webhooks/glitchtip/<zeno-project-id>?secret=<GLITCHTIP_BRIDGE_HMAC_SECRET>`
+   - The `<zeno-project-id>` corresponds to the DevPanel project ID for Zeno (found in the projects database)
+   - The `<GLITCHTIP_BRIDGE_HMAC_SECRET>` is stored in the production environment variables
+
+3. **Alert Rules**
+   - Configure alert rules to trigger on specific error conditions
+   - Recommended: "Send a notification for every new issue" for immediate visibility
+   - Optional: Configure rate limiting to prevent notification flood during error bursts
+
+### Testing the Integration
+
+To verify the integration is working correctly:
+
+1. **Find the Zeno Project ID**
+   ```bash
+   # On the production server, check the projects database
+   sqlite3 /home/deploy/dev-panel/storage/projects.db "SELECT id, name FROM projects WHERE name = 'zeno';"
+   ```
+
+2. **Trigger a Test Error**
+   ```bash
+   # From the Zeno application, trigger a test error
+   # This can be done by intentionally causing a JavaScript error in the browser console:
+   throw new Error("Test error for GlitchTip integration verification");
+   ```
+
+3. **Verify Capture Creation**
+   - Check the DevPanel dashboard at `https://devpanl.dev/dashboard/captures`
+   - Look for a new capture with source "glitchtip" appearing within 5 minutes
+   - The capture should contain the error details including stack trace and breadcrumbs
+
+### Troubleshooting
+
+**No captures appearing:**
+- Verify the webhook URL is correctly configured in GlitchTip
+- Check the GlitchTip project settings to ensure alerts are enabled
+- Confirm the `GLITCHTIP_BRIDGE_HMAC_SECRET` matches between GlitchTip and DevPanel
+
+**Authentication errors:**
+- Ensure the secret in the webhook URL matches the `GLITCHTIP_BRIDGE_HMAC_SECRET` environment variable
+- Check that the DevPanel project ID in the URL is correct
+
+**Rate limiting:**
+- The system implements a rate limit of 100 events per minute per project
+- If exceeded, subsequent events will be rejected with HTTP 429
+
+### Test Script
+
+A test script is available at `scripts/test-glitchtip-zeno-webhook.sh` that can be used to verify the webhook endpoint functionality.
