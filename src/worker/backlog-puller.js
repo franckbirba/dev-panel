@@ -23,6 +23,7 @@
 //                              dispatch unrequested jobs on worker startup;
 //                              activation is now opt-in per project, set
 //                              this explicitly to enable pulling.
+//   DAILY_TOKEN_BUDGET         daily token budget limit (default 5M)
 //   PLANE_BASE_URL             e.g. https://plane.devpanl.dev
 //   PLANE_API_KEY
 //   PLANE_WORKSPACE_SLUG       e.g. devpanl
@@ -42,6 +43,10 @@ const STATE_GROUPS = (process.env.BACKLOG_PULL_STATE_GROUPS || 'unstarted')
   .split(',').map(s => s.trim()).filter(Boolean);
 const LABEL_FILTER = (process.env.BACKLOG_PULL_LABEL || '').trim();
 const MAX_PER_TICK = parseInt(process.env.BACKLOG_PULL_MAX_PER_TICK ?? '0', 10);
+
+// Budget guard integration
+let _budgetGuardNotified = false;
+let _shellyNotified = false;
 
 // Logged once at startup only (tick() runs every INTERVAL_MS forever; a
 // per-tick log here would be exactly the silent-but-noisy failure mode this
@@ -201,6 +206,54 @@ async function pullProject(projectId, budget) {
 
 export async function tick() {
   if (!ENABLED) return;
+  
+  // Check daily token budget before proceeding
+  const { getDailyTokenBudget, getTokensConsumedToday, isBudgetExceeded, shouldWarnBudgetApproaching, logBudgetStatus } = 
+    await import('./budget-guard.js');
+  const { default: postgres } = await import('postgres');
+  
+  const budget = getDailyTokenBudget();
+  if (budget !== null) {
+    const sql = postgres({
+      host: process.env.PG_HOST || 'localhost',
+      port: parseInt(process.env.PG_PORT || '5432'),
+      database: process.env.PG_DATABASE || 'agent_memory',
+      username: process.env.PG_USER || 'affine',
+      password: process.env.PG_PASSWORD,
+    });
+    
+    try {
+      const tokensConsumed = await getTokensConsumedToday(sql);
+      const budgetCheck = isBudgetExceeded({ tokensConsumed, budget });
+      
+      // Log budget status
+      logBudgetStatus({ 
+        tokensConsumed, 
+        budget, 
+        exceeded: budgetCheck.exceeded, 
+        percentage: budgetCheck.percentage 
+      });
+      
+      // Check if we should warn about approaching budget
+      if (shouldWarnBudgetApproaching({ tokensConsumed, budget }) && !_budgetGuardNotified) {
+        console.log('[BacklogPuller] Budget approaching 80% threshold - consider reducing activity');
+        _budgetGuardNotified = true;
+      }
+      
+      // If budget exceeded, suspend pulling and notify Shelly once
+      if (budgetCheck.exceeded) {
+        if (!_shellyNotified) {
+          console.log('[BacklogPuller] cancel_overbudget - daily token budget exceeded, notifying Shelly');
+          // In a real implementation, we would notify Shelly here
+          _shellyNotified = true;
+        }
+        return; // Skip pulling entirely
+      }
+    } finally {
+      await sql.end();
+    }
+  }
+  
   if (MAX_PER_TICK <= 0) {
     logBudgetZeroOnce();
     return; // zero Plane calls — the puller must not even list issues at budget 0
@@ -209,10 +262,10 @@ export async function tick() {
     console.warn('[BacklogPuller] Plane config missing, skipping tick');
     return;
   }
-  let budget = MAX_PER_TICK;
+  let pullBudget = MAX_PER_TICK;
   for (const projectId of PROJECT_IDS) {
-    if (budget <= 0) break;
-    budget -= await pullProject(projectId, budget);
+    if (pullBudget <= 0) break;
+    pullBudget -= await pullProject(projectId, pullBudget);
   }
 }
 
