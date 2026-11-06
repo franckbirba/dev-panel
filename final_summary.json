@@ -1,0 +1,31 @@
+{
+  "status": "done",
+  "summary": "Implémenté le système de triage automatique des captures avec traitement quasi temps réel (<30 min) via une combinaison de traitement immédiat (event-driven) et de balayage périodique (30 minutes). Le système valide la qualité du contenu, détecte les doublons, promeut les captures valides vers Plane avec critères d'acceptation, et trace chaque décision.",
+  "artifacts": {
+    "files_created": [
+      "src/worker/handlers/capture-triage.js",
+      "src/worker/handlers/__tests__/capture-triage.test.js",
+      "src/worker/handlers/__tests__/integration-test.js",
+      "docs/capture-triage.md"
+    ],
+    "files_modified": [
+      "src/server/captures.js",
+      "src/worker/crons.js",
+      "src/worker/index.js"
+    ],
+    "commits": [
+      "9e5dcc1afe3d12f0eb5f13912d14b779a94885b7",
+      "eaa608e4c1003d7945b6d0277976733704b0e40d"
+    ],
+    "branch": "feat/wi-3a42b032-feat-worker-triage-des-captures-",
+    "tests_passed": true,
+    "pr_url": null
+  },
+  "handoff": {
+    "next_agent": "reviewer",
+    "reason": "Implémentation terminée avec tests et documentation. Prêt pour revue."
+  },
+  "memory_writes_count": 0,
+  "blockers": [],
+  "issues_found": []
+}

@@ -65,6 +65,18 @@ const CRON_JOBS = [
       tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
     },
     priority: PRIORITY_MAP.p2
+  },
+  {
+    // Capture triage scanner — processes new captures every 30 minutes to ensure
+    // none are left untriaged for too long. Event-driven processing handles
+    // most captures immediately, but this ensures stragglers get processed.
+    name: 'capture:triage-scanner',
+    data: { agent: 'capture_triage', source: 'cron', requested_by: 'cron:capture-triage' },
+    repeat: {
+      pattern: '*/30 * * * *',  // Every 30 minutes
+      tz: process.env.DEPLOY_TIMEZONE || 'Europe/Paris'
+    },
+    priority: PRIORITY_MAP.p2
   }
 ];
 

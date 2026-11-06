@@ -20,6 +20,7 @@ import { randomUUID } from 'crypto';
 import { getMasterDatabase } from './db.js';
 import { upsertSubject } from './subjects.js';
 import { getOrCreateThread, appendMessage, listMessages } from './threads.js';
+import { getQueue, QUEUES, PRIORITY_MAP } from './bullmq.js';
 
 export function createCapture({ project_id, content, kind = 'idea', created_by = 'franck', reporter = null, environment = null, source = 'dashboard', widget_session_id = null, fingerprint = null, external_url = null }) {
   const db = getMasterDatabase();
@@ -63,6 +64,11 @@ export function createCapture({ project_id, content, kind = 'idea', created_by =
     });
   });
   tx();
+
+  // Enqueue immediate triage job for this capture
+  enqueueCaptureTriageJob(id).catch(err => {
+    console.error(`[captures] Failed to enqueue triage job for capture ${id}:`, err.message);
+  });
 
   return getCapture(id);
 }
@@ -318,4 +324,30 @@ export function deleteCapture(id) {
     db.prepare(`DELETE FROM captures WHERE id = ?`).run(id);
   });
   tx();
+}
+
+/**
+ * Enqueue a triage job for a capture to be processed immediately
+ * @param {string} captureId - The capture UUID to triage
+ */
+export async function enqueueCaptureTriageJob(captureId) {
+  const queue = getQueue(QUEUES.agents);
+  const job = await queue.add('capture-triage-immediate', {
+    agent: 'capture_triage',
+    task: { 
+      id: `triage-${captureId.substring(0, 8)}`, 
+      title: `Immediate triage for capture ${captureId.substring(0, 8)}` 
+    },
+    capture_id: captureId,
+    source: 'capture_creation',
+    requested_by: 'system'
+  }, {
+    priority: PRIORITY_MAP.p2,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2000 },
+    removeOnComplete: 100,
+    removeOnFail: 100
+  });
+  
+  return job.id;
 }
