@@ -134,6 +134,24 @@ describe('readSubmitResultEnvelope', () => {
 // is the pure function that replaced the inline spread; tested directly so
 // a future edit can't reintroduce the leak without a test failing.
 describe('buildPiEnv', () => {
+  // Régression du 2026-08-27, trouvée au premier bench e2e hors agents host :
+  // le PATH était REMPLACÉ par une liste figée (~/.npm-global, ~/.bun, …).
+  // Sur l'agents host ça passe, ailleurs `node` disparaît et pi meurt sur
+  // "env: node: No such file or directory" (exit 127). Un défaut qui ne
+  // pouvait apparaître qu'en sortant de l'host de prod.
+  it('préfixe le PATH sans amputer celui hérité (node doit rester joignable)', () => {
+    const env = buildPiEnv({
+      baseEnv: { PATH: '/opt/homebrew/bin:/usr/bin:/bin', HOME: '/home/deploy' },
+      jobId: 'j', agentRole: 'builder',
+    });
+    const parts = env.PATH.split(':');
+    expect(env.PATH).toContain('/opt/homebrew/bin');
+    expect(parts[0]).toContain('.npm-global/bin');
+    // pas de doublon quand un chemin préféré est déjà dans l'hérité
+    const dupes = parts.filter((p, i) => parts.indexOf(p) !== i);
+    expect(dupes).toEqual([]);
+  });
+
   it('forces NODE_ENV=development even when the host env says production', () => {
     const env = buildPiEnv({
       baseEnv: { NODE_ENV: 'production', HOME: '/home/deploy' },
@@ -229,14 +247,18 @@ describe('buildPiEnv', () => {
     expect(env.PI_MCP_CONFIG).toBe('/home/deploy/.mcp-worker.json');
   });
 
-  it('pins PATH to the known-good binary locations under HOME', () => {
+  // Ce test affirmait le REMPLACEMENT du PATH (liste figée). C'est
+  // précisément ce qui cassait pi hors agents host — le test figeait le
+  // défaut. Il vérifie désormais la priorité, pas l'amputation.
+  it('donne la priorité aux binaires du studio, avant ceux hérités', () => {
     const env = buildPiEnv({
-      baseEnv: { HOME: '/home/deploy', PATH: '/some/untrusted/path' },
+      baseEnv: { HOME: '/home/deploy', PATH: '/some/other/path' },
       jobId: '123',
       agentRole: 'builder',
     });
-    expect(env.PATH).toBe(
-      '/home/deploy/.npm-global/bin:/home/deploy/.bun/bin:/home/deploy/.local/bin:/usr/local/bin:/usr/bin:/bin'
-    );
+    expect(env.PATH.startsWith(
+      '/home/deploy/.npm-global/bin:/home/deploy/.bun/bin:/home/deploy/.local/bin:'
+    )).toBe(true);
+    expect(env.PATH).toContain('/some/other/path');
   });
 });

@@ -31,7 +31,7 @@ nodes:
 loops:
   - id: revision
     body: [build, review]
-    until: review_done
+    until: reviewer_approved
     max_iterations: 2
     budget_tokens: 400000
     on_exhaustion: block

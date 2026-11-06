@@ -14,6 +14,10 @@ export default defineConfig({
     // singletons that tests swap out (initMasterDatabase, __setEnqueueForTests).
     pool: 'threads',
     isolate: true,
+    // Neutralise les variables de comportement produit héritées du shell
+    // (typiquement `.env.local` de la stack de dev) avant chaque fichier de
+    // test — voir tests/_setup/env-isolation.js pour le pourquoi.
+    setupFiles: ['./tests/_setup/env-isolation.js'],
     // Plusieurs suites démarrent un conteneur Postgres jetable dans un
     // beforeAll (tests/_helpers/pg.js). Le hookTimeout par défaut (10s) est
     // sous le temps de démarrage réel dès que la machine est chargée — d'où
