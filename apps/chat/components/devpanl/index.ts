@@ -102,3 +102,10 @@ export { WorkbenchShell } from "./WorkbenchShell";
 export { CommandPalette } from "./CommandPalette";
 export { type WorkbenchView } from "./DashboardThreadList";
 export { UserProfile } from "./UserProfile";
+
+// Cockpit components (DEVPA-226)
+export { FleetStatusSidebar } from "./FleetStatusSidebar";
+export { CanvasDock } from "./CanvasDock";
+export { MergeArtifactView as MergeArtifact } from "./artifacts/MergeArtifact";
+export { DispatchArtifactView as DispatchArtifact } from "./artifacts/DispatchArtifact";
+export { LogStreamArtifactView as LogStreamArtifact } from "./artifacts/LogStreamArtifact";

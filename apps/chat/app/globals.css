@@ -64,6 +64,16 @@
   --color-brand-container:            #947dff;
   --color-brand-container-fg:         #2a0088;
 
+  /* Agent colors - derived from design bundle OKLCH hues */
+  --color-agent-zeno:                 #a68cff;   /* violet - 285 */
+  --color-agent-edms:                 #7dd3a5;   /* green - 150 */
+  --color-agent-devpa:                #ffb780;   /* amber - 35 */
+  --color-agent-task:                 #80c9ff;   /* azure - 215 */
+  --color-agent-zeno-soft:            rgba(166, 140, 255, 0.15);
+  --color-agent-edms-soft:            rgba(125, 211, 165, 0.15);
+  --color-agent-devpa-soft:           rgba(255, 183, 128, 0.15);
+  --color-agent-task-soft:            rgba(128, 201, 255, 0.15);
+
   /* Tertiary — high-energy orange for warnings/highlights */
   --color-tertiary:                   #ffb780;
   --color-tertiary-fg:                #4e2600;
@@ -147,6 +157,10 @@
   --color-warning: var(--color-warning);
   --color-error: var(--color-error);
   --color-info: var(--color-info);
+  --color-agent-zeno: var(--color-agent-zeno);
+  --color-agent-edms: var(--color-agent-edms);
+  --color-agent-devpa: var(--color-agent-devpa);
+  --color-agent-task: var(--color-agent-task);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --radius-sm: var(--radius-sm);

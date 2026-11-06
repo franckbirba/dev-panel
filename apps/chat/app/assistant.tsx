@@ -26,6 +26,8 @@ import {
   WorkbenchLogs,
   WorkbenchShell,
   type WorkbenchView,
+  FleetStatusSidebar,
+  CanvasDock,
 } from "@/components/devpanl";
 import { ToolUIRegistry } from "@/lib/tool-ui-registry";
 import {
@@ -445,12 +447,18 @@ export const Assistant = () => {
             />
 
             {activeView === "chat" ? (
-              <ThreadView
-                key={activeRemoteId}
-                remoteId={activeRemoteId}
-                usage={usage}
-                metrics={metrics}
-              />
+              <div className="flex flex-1 overflow-hidden">
+                <FleetStatusSidebar />
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  <ThreadView
+                    key={activeRemoteId}
+                    remoteId={activeRemoteId}
+                    usage={usage}
+                    metrics={metrics}
+                  />
+                </div>
+                <CanvasDock />
+              </div>
             ) : activeView === "engine" ? (
               <WorkbenchEngine
                 onTailAgent={(jobId) => {
