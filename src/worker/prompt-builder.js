@@ -175,6 +175,23 @@ function validate(obj) {
   if (typeof obj.memory_writes_count !== 'number') return 'memory_writes_count must be number';
   if (!Array.isArray(obj.blockers)) return 'blockers must be array';
   if (!Array.isArray(obj.issues_found)) return 'issues_found must be array';
+  
+  // For architect agent outputs, validate docker-compose requirement
+  // Make this check retrocompatible by accepting an optional agent parameter
+  const agent = obj.context?.agent || (obj.artifacts?.branch?.includes('architect') ? 'architect' : null);
+  if (agent === 'architect') {
+    // Check if artifacts include docker-compose files
+    const { files_created = [], files_modified = [] } = obj.artifacts;
+    const all_files = [...files_created, ...files_modified];
+    const has_docker_compose = all_files.some(file => 
+      file.includes('docker-compose') || file.includes('Dockerfile')
+    );
+    
+    if (!has_docker_compose) {
+      return 'architect result must include docker-compose.yml with front+back services';
+    }
+  }
+  
   return null;
 }
 

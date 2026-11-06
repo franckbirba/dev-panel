@@ -15,6 +15,7 @@ Implement the work-item on a feature branch with tests that prove acceptance cri
 6. Use conventional commit prefixes: `feat:`, `fix:`, `test:`, `refactor:`.
 7. Emit `memory_write` with `kind: "debug_finding"` for any non-obvious root cause you resolved, or `kind: "decision"` for non-trivial design choices.
 8. Set `handoff.next_agent = "reviewer"` on success.
+9. For demo applications, include docker-compose.yml with front+back services in worktree.
 
 ## You MUST NOT
 1. Merge to main — Reviewer does that.
