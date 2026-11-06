@@ -475,6 +475,11 @@ const worker = new Worker(QUEUES.agents, async (job) => {
       return handlePrScanner(jobData);
     }
 
+    if (jobData.agent === 'capture_triage') {
+      const { triagePendingCaptures } = await import('./handlers/capture-triage.js');
+      return triagePendingCaptures(jobData);
+    }
+
   // Enrich work_item from Plane REST when the payload only carries the ID.
   // Engine-resumed jobs (replan → re-enqueue) and cron dispatches only know
   // plane.work_item_id; agents therefore lose all task context. Bypasses
