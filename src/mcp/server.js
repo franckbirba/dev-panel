@@ -1234,12 +1234,21 @@ server.tool(
     tags: z.array(z.string()).optional(),
     module_id: z.string().optional(),
     cycle_id: z.string().optional(),
-    work_item_id: z.string().optional()
+    work_item_id: z.string().optional(),
+    valid_from: z.string().optional(),
+    valid_to: z.string().optional(),
+    supersedes_id: z.string().optional()
   },
   async (args) => {
     const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
     const agent    = process.env.AGENT_ROLE || 'unknown';
     const jobId    = process.env.JOB_ID || null;
+    
+    // If supersedes_id is provided, close the previous memory
+    if (args.supersedes_id) {
+      await memorySupersede(args.supersedes_id);
+    }
+    
     const embedding = await embed(`${args.title}\n\n${args.content}`);
     const id = await memoryInsert({
       namespace, agent, kind: args.kind,
@@ -1248,6 +1257,8 @@ server.tool(
       module_id: args.module_id || null,
       cycle_id: args.cycle_id || null,
       work_item_id: args.work_item_id || null,
+      valid_from: args.valid_from || null,
+      valid_to: args.valid_to || null,
       embedding
     });
     if (jobId) await recordMemoryWrite(jobId, id);
@@ -1262,17 +1273,19 @@ server.tool(
     kind: z.string().optional(),
     agent: z.string().optional(),
     module_id: z.string().optional(),
-    limit: z.number().int().min(1).max(20).default(5)
+    limit: z.number().int().min(1).max(20).default(5),
+    as_of: z.string().optional()
   },
   async (args) => {
     const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
     const embedding = await embed(args.query, { inputType: 'query' });
-    const rows = await memorySearchSql({
+    const rows = await memorySearchSqlWithValidity({
       namespace, embedding,
       kind: args.kind || null,
       agent: args.agent || null,
       module_id: args.module_id || null,
-      limit: args.limit
+      limit: args.limit,
+      as_of: args.as_of || null
     });
     return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
   }
@@ -1284,7 +1297,8 @@ server.tool(
     kind: z.string().optional(),
     agent: z.string().optional(),
     module_id: z.string().optional(),
-    limit: z.number().int().min(1).max(50).default(20)
+    limit: z.number().int().min(1).max(50).default(20),
+    as_of: z.string().optional()
   },
   async (args) => {
     const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
@@ -1293,7 +1307,8 @@ server.tool(
       kind: args.kind || null,
       agent: args.agent || null,
       module_id: args.module_id || null,
-      limit: args.limit
+      limit: args.limit,
+      as_of: args.as_of || null
     });
     return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
   }

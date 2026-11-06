@@ -27,18 +27,74 @@ function vecLiteral(arr) {
 export async function memoryInsert({
   namespace, agent, kind, title, content,
   module_id = null, cycle_id = null, work_item_id = null,
-  tags = [], embedding, expires_at = null
+  tags = [], embedding, expires_at = null,
+  valid_from = null, valid_to = null
 }) {
   const { rows } = await pool.query(
     `INSERT INTO memories
        (namespace, agent, kind, module_id, cycle_id, work_item_id,
-        title, content, tags, embedding, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11)
+        title, content, tags, embedding, expires_at, valid_from, valid_to)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,$12,$13)
      RETURNING id`,
     [namespace, agent, kind, module_id, cycle_id, work_item_id,
-     title, content, tags, vecLiteral(embedding), expires_at]
+     title, content, tags, vecLiteral(embedding), expires_at, 
+     valid_from || new Date().toISOString(), valid_to]
   );
   return rows[0].id;
+}
+
+// Supersedes an existing memory by setting its valid_to to now
+export async function memorySupersede(id) {
+  const now = new Date().toISOString();
+  await pool.query(
+    `UPDATE memories SET valid_to = $1 WHERE id = $2 AND valid_to IS NULL`,
+    [now, id]
+  );
+}
+
+// Legacy memorySearchSql function for backward compatibility
+export async function memorySearchSql({
+  namespace, embedding, kind = null, agent = null, module_id = null, limit = 5
+}) {
+  return memorySearchSqlWithValidity({
+    namespace, embedding, kind, agent, module_id, limit
+  });
+}
+
+// Updated memorySearchSql function with temporal validity support
+export async function memorySearchSqlWithValidity({
+  namespace, embedding, kind = null, agent = null, module_id = null, limit = 5, as_of = null
+}) {
+  const params = [namespace, vecLiteral(embedding)];
+  const clauses = ['namespace = $1'];
+  
+  // Add temporal validity filter
+  const now = new Date().toISOString();
+  if (as_of) {
+    // Historical query: valid_at the given time
+    clauses.push(`(valid_from <= $${params.length + 1} AND (valid_to IS NULL OR valid_to > $${params.length + 1}))`);
+    params.push(as_of);
+  } else {
+    // Current query: exclude expired facts
+    clauses.push(`(valid_from <= $${params.length + 1} AND (valid_to IS NULL OR valid_to > $${params.length + 1}))`);
+    params.push(now);
+  }
+  
+  if (kind)      { params.push(kind);      clauses.push(`kind = $${params.length}`); }
+  if (agent)     { params.push(agent);     clauses.push(`agent = $${params.length}`); }
+  if (module_id) { params.push(module_id); clauses.push(`module_id = $${params.length}`); }
+  params.push(limit);
+
+  const sql = `
+    SELECT id, agent, kind, title, content, module_id, cycle_id, work_item_id,
+           tags, created_at, valid_from, valid_to,
+           1 - (embedding <=> $2::vector) AS score
+      FROM memories
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY embedding <=> $2::vector
+     LIMIT $${params.length}`;
+  const { rows } = await pool.query(sql, params);
+  return rows;
 }
 
 export async function memorySearchSql({
@@ -63,10 +119,23 @@ export async function memorySearchSql({
 }
 
 export async function memoryList({
-  namespace, kind = null, agent = null, module_id = null, limit = 20
+  namespace, kind = null, agent = null, module_id = null, limit = 20, as_of = null
 }) {
   const params = [namespace];
   const clauses = ['namespace = $1'];
+  
+  // Add temporal validity filter
+  const now = new Date().toISOString();
+  if (as_of) {
+    // Historical query: valid_at the given time
+    clauses.push(`(valid_from <= $${params.length + 1} AND (valid_to IS NULL OR valid_to > $${params.length + 1}))`);
+    params.push(as_of);
+  } else {
+    // Current query: exclude expired facts
+    clauses.push(`(valid_from <= $${params.length + 1} AND (valid_to IS NULL OR valid_to > $${params.length + 1}))`);
+    params.push(now);
+  }
+  
   if (kind)      { params.push(kind);      clauses.push(`kind = $${params.length}`); }
   if (agent)     { params.push(agent);     clauses.push(`agent = $${params.length}`); }
   if (module_id) { params.push(module_id); clauses.push(`module_id = $${params.length}`); }
@@ -74,7 +143,7 @@ export async function memoryList({
 
   const sql = `
     SELECT id, agent, kind, title, content, module_id, cycle_id, work_item_id,
-           tags, created_at
+           tags, created_at, valid_from, valid_to
       FROM memories
      WHERE ${clauses.join(' AND ')}
      ORDER BY created_at DESC
