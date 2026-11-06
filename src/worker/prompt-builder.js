@@ -139,7 +139,24 @@ export function buildPrompt(jobData, opts = {}) {
     sections.push('## Allowed MCP servers\n\n' + allowed_mcp.map(m => `- ${m}`).join('\n'));
   }
 
-  // 5. Rules (output contract is non-negotiable)
+  // 5. Inject core memory blocks (if any exist)
+  try {
+    // Import the pg module to access memory blocks
+    const pgModule = await import('../server/pg.js');
+    const memoryBlocks = await pgModule.getMemoryBlocksForNamespace(memory_namespace);
+    
+    if (memoryBlocks && memoryBlocks.length > 0) {
+      const blockSections = memoryBlocks.map(block => 
+        `### ${block.block_name}\n\n${block.content}`
+      );
+      sections.push('## Core Memory Blocks\n\nThese memory blocks are always injected into context:\n\n' + blockSections.join('\n\n'));
+    }
+  } catch (err) {
+    // Ignore errors - memory blocks are optional
+    console.debug('Failed to load memory blocks:', err.message);
+  }
+
+  // 6. Rules (output contract is non-negotiable)
   sections.push([
     '## Rules',
     '',

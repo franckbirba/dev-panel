@@ -15,7 +15,7 @@ Control plane for a solo-with-agents studio. One repo holds a floating React wid
 | Dashboard | `src/dashboard/*` | Captures as the default landing, Today, Agents, Work items, Queues, Ops |
 | Workflow engine | `src/worker/engine.js` | YAML-defined agent chains with revision/replan/exhaustion |
 | BullMQ worker | `src/worker/index.js` | Spawns `claude -p` stream-json, persists events, runs automation hooks |
-| Orchestration MCP | `src/mcp/server.js` | 23 tools: dispatch, list/cancel jobs, plane work items + attachments, memory, threads |
+| Orchestration MCP | `src/mcp/server.js` | 26 tools: dispatch, list/cancel jobs, plane work items + attachments, memory, threads, memory blocks |
 | Shelly | `.agents/shelly/SOUL.md` | Persistent Claude Code tmux session on the agents host; reads Telegram |
 
 ## Two-host topology (prod)
@@ -46,6 +46,15 @@ npx vitest run
 ```
 
 Required env for the pg-backed flows: `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `REDIS_HOST`, `REDIS_PORT`. See `infra/devpanel-worker.service` for the production values; docker-compose wires the same values for the container.
+
+## Core Memory Blocks
+
+Shelly now supports core memory blocks that are always injected into her context. These are small, editable memory segments that persist across sessions:
+
+- **Storage**: PostgreSQL `memory_blocks` table
+- **Access**: Via new MCP tools (`memory_block_read`, `memory_block_write`, `memory_block_list`)
+- **Injection**: Automatically added to agent prompts via `prompt-builder.js`
+- **Default blocks**: profil_franck, priorites, regles, etat_projets
 
 ## Docker Compose Requirement
 

@@ -16,7 +16,7 @@ import {
   addMessage
 } from '../server/db.js';
 import { embed } from '../server/voyage.js';
-import { memoryInsert, memorySearchSql, memoryList, transcriptSearch, transcriptRange } from '../server/pg.js';
+import { pool, memoryInsert, memorySearchSql, memoryList, transcriptSearch, transcriptRange } from '../server/pg.js';
 import { recordMemoryWrite } from '../server/jobs-log.js';
 import { parseTag } from '../server/telegram-tag.js';
 import { getSubject } from '../server/subjects.js';
@@ -1296,6 +1296,164 @@ server.tool(
       limit: args.limit
     });
     return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+  }
+);
+
+// ============================================================================
+// MEMORY BLOCKS - Core memory blocks that Shelly can auto-edit
+// These are small, always-injected memory blocks for persistent context
+// ============================================================================
+
+async function getMemoryBlock(namespace, blockName) {
+  const { rows } = await pool.query(
+    'SELECT content, char_limit, updated_at FROM memory_blocks WHERE namespace = $1 AND block_name = $2',
+    [namespace, blockName]
+  );
+  return rows[0] || null;
+}
+
+async function setMemoryBlock(namespace, blockName, content, charLimit = 2000) {
+  // Check if content exceeds character limit
+  if (content.length > charLimit) {
+    throw new Error(`Content exceeds character limit of ${charLimit} characters`);
+  }
+  
+  const { rows } = await pool.query(
+    `INSERT INTO memory_blocks (namespace, block_name, content, char_limit)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (namespace, block_name) 
+     DO UPDATE SET content = $3, char_limit = $4, updated_at = NOW()
+     RETURNING id`,
+    [namespace, blockName, content, charLimit]
+  );
+  return rows[0].id;
+}
+
+async function listMemoryBlocks(namespace) {
+  const { rows } = await pool.query(
+    'SELECT block_name, char_limit, updated_at FROM memory_blocks WHERE namespace = $1 ORDER BY block_name',
+    [namespace]
+  );
+  return rows;
+}
+
+server.tool(
+  'memory_block_read',
+  'Read a core memory block by name. These blocks are always injected into Shelly\'s context.',
+  {
+    block_name: z.string().describe('Name of the memory block to read (e.g. "profil_franck", "priorites", "regles", "etat_projets")')
+  },
+  async ({ block_name }) => {
+    try {
+      const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+      const block = await getMemoryBlock(namespace, block_name);
+      
+      if (!block) {
+        return { 
+          content: [{ type: 'text', text: JSON.stringify({ 
+            found: false, 
+            message: `Memory block "${block_name}" not found` 
+          }) }] 
+        };
+      }
+      
+      return { 
+        content: [{ 
+          type: 'text', 
+          text: JSON.stringify({ 
+            found: true, 
+            block_name, 
+            content: block.content,
+            char_limit: block.char_limit,
+            updated_at: block.updated_at
+          }) 
+        }] 
+      };
+    } catch (err) {
+      return { 
+        content: [{ type: 'text', text: JSON.stringify({ 
+          error: err.message 
+        }) }], 
+        isError: true 
+      };
+    }
+  }
+);
+
+server.tool(
+  'memory_block_write',
+  'Write or update a core memory block. These blocks are always injected into Shelly\'s context. Content is limited to char_limit characters (default 2000).',
+  {
+    block_name: z.string().describe('Name of the memory block to write (e.g. "profil_franck", "priorites", "regles", "etat_projets")'),
+    content: z.string().describe('Content to write to the memory block'),
+    char_limit: z.number().int().min(100).max(10000).default(2000).describe('Character limit for the block (default 2000)')
+  },
+  async ({ block_name, content, char_limit }) => {
+    try {
+      const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+      
+      // Check if content exceeds character limit
+      if (content.length > char_limit) {
+        return { 
+          content: [{ type: 'text', text: JSON.stringify({ 
+            error: `Content length (${content.length}) exceeds character limit (${char_limit})`,
+            content_length: content.length,
+            char_limit: char_limit
+          }) }], 
+          isError: true 
+        };
+      }
+      
+      const id = await setMemoryBlock(namespace, block_name, content, char_limit);
+      
+      return { 
+        content: [{ 
+          type: 'text', 
+          text: JSON.stringify({ 
+            success: true, 
+            block_name, 
+            id,
+            content_length: content.length,
+            char_limit: char_limit
+          }) 
+        }] 
+      };
+    } catch (err) {
+      return { 
+        content: [{ type: 'text', text: JSON.stringify({ 
+          error: err.message 
+        }) }], 
+        isError: true 
+      };
+    }
+  }
+);
+
+server.tool(
+  'memory_block_list',
+  'List all core memory blocks in the namespace',
+  {},
+  async () => {
+    try {
+      const namespace = process.env.AGENT_MEMORY_NAMESPACE || 'dev-panel';
+      const blocks = await listMemoryBlocks(namespace);
+      
+      return { 
+        content: [{ 
+          type: 'text', 
+          text: JSON.stringify({ 
+            blocks 
+          }) 
+        }] 
+      };
+    } catch (err) {
+      return { 
+        content: [{ type: 'text', text: JSON.stringify({ 
+          error: err.message 
+        }) }], 
+        isError: true 
+      };
+    }
   }
 );
 
