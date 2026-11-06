@@ -159,3 +159,15 @@ export async function transcriptRange({
   return rows;
 }
 
+// ============================================================================
+// MEMORY BLOCKS - Core memory blocks that are always injected into context
+// ============================================================================
+
+export async function getMemoryBlocksForNamespace(namespace) {
+  const { rows } = await pool.query(
+    'SELECT block_name, content, char_limit, updated_at FROM memory_blocks WHERE namespace = $1 ORDER BY block_name',
+    [namespace]
+  );
+  return rows;
+}
+
