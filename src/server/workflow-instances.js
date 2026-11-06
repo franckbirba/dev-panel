@@ -212,3 +212,82 @@ export async function listLiveInstances() {
   );
   return rows.map(normalizeRow);
 }
+
+// Check if a workflow instance should be marked as awaiting approval due to high-risk labels
+export async function checkHighRiskAndAwaitApproval({ work_item_id, workflow_name, instance_id, context }) {
+  // High-risk domains that require human approval
+  const HIGH_RISK_DOMAINS = ['migration', 'auth', 'payment', 'schema'];
+  
+  // First check if labels are already available in context (from backlog puller)
+  let labels = context?.labels || [];
+  
+  // If no labels in context, try to fetch them from Plane (for merge-coordinator workflows)
+  if (labels.length === 0 && work_item_id && context?.github?.plane_ref) {
+    try {
+      // Fetch work item labels from Plane
+      const planeRef = context.github.plane_ref;
+      if (planeRef) {
+        const planeBase = process.env.PLANE_BASE_URL || '';
+        const planeSlug = process.env.PLANE_WORKSPACE_SLUG || '';
+        const planeKey = process.env.PLANE_API_KEY || '';
+        
+        if (planeBase && planeSlug && planeKey) {
+          let workItemUrl;
+          if (planeRef.type === 'uuid') {
+            // For UUID-based references, we need to find which project it belongs to
+            workItemUrl = `${planeBase}/api/v1/workspaces/${planeSlug}/projects/issues/${planeRef.value}/`;
+          } else if (planeRef.type === 'sequence' && planeRef.project && planeRef.number) {
+            // For sequence-based references, we need to find the project first
+            // This is more complex as we need to map project codes to actual project IDs
+            // For now, we'll skip this and rely on the context labels
+          }
+          
+          if (workItemUrl) {
+            const response = await fetch(workItemUrl, {
+              headers: { 'X-API-Key': planeKey }
+            });
+            
+            if (response.ok) {
+              const workItem = await response.json();
+              if (Array.isArray(workItem.labels)) {
+                labels = workItem.labels;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[workflow-instances] Failed to fetch work item labels: ${err.message}`);
+    }
+  }
+  
+  // Check if this is a work-item with high-risk labels
+  const isHighRisk = labels.some(label => label === 'high-risk' || HIGH_RISK_DOMAINS.some(domain => label.includes(domain)));
+  
+  if (isHighRisk) {
+    // Update the workflow instance to awaiting_approval status
+    await updateInstance(
+      { work_item_id, workflow_name },
+      { status: 'awaiting_approval' }
+    );
+    
+    // Send notification about high-risk item awaiting approval
+    try {
+      const { notifyJob } = await import('./alerts.js');
+      await notifyJob({
+        job_id: instance_id,
+        agent: 'merge-coordinator',
+        work_item_id: work_item_id,
+        title: `High-risk item awaiting approval`,
+        status: 'blocked',
+        extra: 'Manual review required before merge'
+      });
+    } catch (err) {
+      console.warn(`[workflow-instances] Failed to send high-risk notification: ${err.message}`);
+    }
+    
+    return true;
+  }
+  
+  return false;
+}

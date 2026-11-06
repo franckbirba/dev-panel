@@ -390,8 +390,47 @@ function createPullRequest({ branch, title, body, repo, baseBranch = 'main', cwd
 // merge and waits until all required checks pass + branch protection allows
 // it. Returns true if the merge was queued, false if the PR was already
 // merged or auto-merge was rejected (e.g., admin override needed).
-function autoMergePullRequest({ prUrl, cwd: cwdOverride }) {
+async function autoMergePullRequest({ prUrl, cwd: cwdOverride, jobData }) {
   if (!prUrl) return { ok: false, reason: 'no PR URL' };
+  
+  // Check for high-risk labels that should prevent auto-merge
+  const highRiskLabels = ['high-risk', 'security', 'payment', 'auth', 'migration'];
+  const contextLabels = jobData?.context?.labels || [];
+  
+  // If this is a work-item workflow with high-risk labels, prevent auto-merge
+  if (jobData?.workflow === 'work-item' && Array.isArray(contextLabels)) {
+    const hasHighRiskLabel = contextLabels.some(label => highRiskLabels.includes(label));
+    if (hasHighRiskLabel) {
+      return { 
+        ok: false, 
+        reason: 'high-risk label detected - auto-merge blocked, manual review required' 
+      };
+    }
+  }
+  
+  // For merge-coordinator workflows, we need to check GitHub PR labels directly
+  if (jobData?.workflow === 'merge-coordinator' && jobData?.context?.github?.repo && jobData?.context?.github?.pr_number) {
+    try {
+      const [owner, repo] = jobData.context.github.repo.split('/');
+      const prNumber = jobData.context.github.pr_number;
+      
+      // Import GitHub utilities to check PR labels
+      const { getPullRequestLabels } = await import('../server/github.js');
+      const prLabels = await getPullRequestLabels({ owner, repo, pull_number: prNumber });
+      
+      const hasHighRiskLabel = prLabels.some(label => highRiskLabels.includes(label));
+      if (hasHighRiskLabel) {
+        return { 
+          ok: false, 
+          reason: 'high-risk label detected on PR - auto-merge blocked, manual review required' 
+        };
+      }
+    } catch (err) {
+      console.warn(`[automation] Failed to check PR labels: ${err.message}`);
+      // Continue with auto-merge if we can't check labels
+    }
+  }
+  
   const cwd = cwdOverride || process.env.PROJECT_ROOT || process.cwd();
   const env = { ...process.env, GH_TOKEN: process.env.GITHUB_TOKEN || '' };
   try {
@@ -483,8 +522,8 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
     // waits for required checks (CI, branch protection) before flipping it.
     // In collaborative mode, Franck merges by hand — same as before.
     if (prUrl && getShellyMode() === 'autonomous') {
-      await runStep(job_id, agent, 'publish.pr_merge', () => {
-        mergeOutcome = autoMergePullRequest({ prUrl, cwd: wtPath });
+      await runStep(job_id, agent, 'publish.pr_merge', async () => {
+        mergeOutcome = await autoMergePullRequest({ prUrl, cwd: wtPath, jobData });
         if (!mergeOutcome.ok) {
           // Surface the reason via runStep error so it lands in jobs_log.
           throw new Error(`auto-merge skipped: ${mergeOutcome.reason}`);
