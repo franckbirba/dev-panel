@@ -296,6 +296,26 @@ export async function triggerNext({ jobData, result, flows, enqueue, emit = () =
   }
   const workItemId = jobData.plane?.work_item_id;
   if (!workItemId) throw new Error('triggerNext: missing plane.work_item_id');
+  
+  // Check for high-risk labels in merge-coordinator workflows
+  if (jobData.workflow === 'merge-coordinator') {
+    const { checkHighRiskAndAwaitApproval } = await import('../server/workflow-instances.js');
+    
+    // Check if this is a high-risk item that should await approval
+    const isHighRisk = await checkHighRiskAndAwaitApproval({
+      work_item_id: workItemId,
+      workflow_name: flow.name,
+      instance_id: jobData.workflow_instance_id,
+      context: jobData.context
+    });
+    
+    // If it's high-risk, we should prevent the normal workflow execution
+    if (isHighRisk) {
+      // The checkHighRiskAndAwaitApproval function already updated the instance status
+      // to 'awaiting_approval', so we just need to return early
+      return { action: 'awaiting_approval', reason: 'high-risk item requires manual review' };
+    }
+  }
 
   const instance = await loadInstance({
     work_item_id: workItemId,

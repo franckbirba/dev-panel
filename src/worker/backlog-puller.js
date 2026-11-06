@@ -181,6 +181,10 @@ async function pullProject(projectId, budget) {
           name: issue.name,
           description,
           priority: issue.priority
+        },
+        context: {
+          // Pass issue labels through to the workflow context
+          labels: Array.isArray(issue.labels) ? issue.labels : []
         }
       });
       if (out.ok) dispatched++;

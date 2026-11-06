@@ -37,6 +37,16 @@ export async function getIssue({ owner, repo, issue_number }) {
   return data;
 }
 
+export async function getPullRequestLabels({ owner, repo, pull_number }) {
+  const { data } = await octokit.rest.issues.get({
+    owner,
+    repo,
+    issue_number: pull_number
+  });
+
+  return Array.isArray(data.labels) ? data.labels.map(label => label.name) : [];
+}
+
 export async function updateIssue({ owner, repo, issue_number, title, body, labels, assignees, state }) {
   const updateData = {};
 
