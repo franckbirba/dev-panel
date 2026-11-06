@@ -477,6 +477,14 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
     await runStep(job_id, agent, 'publish.git_push', () => pushBranch(branch, wtPath));
     await runStep(job_id, agent, 'publish.pr_create', () => {
       prUrl = createPullRequest({ branch, title, body, repo, baseBranch, cwd: wtPath });
+      // Emit PR opened event for activity feed
+      if (prUrl) {
+        publishEvent('pr.opened', { 
+          title: title,
+          pr_url: prUrl,
+          work_item_id: workItemId
+        });
+      }
     });
 
     // DEVPA-145: in autonomous mode, queue the PR for auto-merge. GitHub
@@ -488,6 +496,14 @@ async function publishWorkItem({ job_id, agent, jobData, result }) {
         if (!mergeOutcome.ok) {
           // Surface the reason via runStep error so it lands in jobs_log.
           throw new Error(`auto-merge skipped: ${mergeOutcome.reason}`);
+        }
+        // Emit PR merged event for activity feed
+        if (mergeOutcome.ok) {
+          publishEvent('pr.merged', { 
+            title: title,
+            pr_url: prUrl,
+            work_item_id: workItemId
+          });
         }
       });
     }

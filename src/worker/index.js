@@ -12,6 +12,7 @@ import { QUEUES, PRIORITY_MAP, getQueue } from '../server/bullmq.js';
 import { registerCrons } from './crons.js';
 import { startBacklogPuller } from './backlog-puller.js';
 import { startReaper } from './reaper.js';
+import { initActivityFeed } from './activity-feed.js';
 import {
   classifyPreSpawnError, classifyEnvelopeFailure,
   decideInfraRetry, decideEnvelopeRetry, buildEnvelopeFeedback
@@ -965,6 +966,13 @@ async function bootReconcileAndStart() {
 
   await worker.run();
   console.log('[Worker] queue consumption started');
+  
+  // Initialize activity feed to listen for events
+  try {
+    await initActivityFeed();
+  } catch (err) {
+    console.warn('[ActivityFeed] Failed to initialize:', err.message);
+  }
 }
 
 bootReconcileAndStart().catch(err => {
