@@ -827,6 +827,65 @@ services:
 # VOLUMES & NETWORKS
 # ══════════════════════════════════════════════════════════════════════════
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Docuseal KMT — signature électronique de la Fondation KMT (contrats
+  # prestataires, partenaires). Instance DÉDIÉE : distincte du Docuseal de
+  # Zeno (infra Epitech, jamais partagée). Image upstream, pas le fork Zeno
+  # (pas besoin d'embarquer en iframe cross-domain).
+  # Profile `docuseal-kmt` : hors CI (deploy isolation), bootstrap manuel :
+  #   docker compose --profile docuseal-kmt up -d
+  # Pas de `:?` (casserait l'interpolation du deploy CI devpanel) : poser
+  # les secrets AVANT le bootstrap. SECRET_KEY_BASE chiffre les données, ne
+  # jamais le changer après le premier démarrage.
+  # ──────────────────────────────────────────────────────────────────────
+  kmt-docuseal-db:
+    image: postgres:15-alpine
+    container_name: kmt-docuseal-db
+    profiles: [docuseal-kmt, all]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docuseal
+      POSTGRES_PASSWORD: ${KMT_DOCUSEAL_DB_PASSWORD}
+      POSTGRES_DB: docuseal
+    volumes:
+      - kmt-docuseal-pgdata:/var/lib/postgresql/data
+    networks:
+      - devpanel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docuseal"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  kmt-docuseal:
+    image: docuseal/docuseal:1.8.2
+    container_name: kmt-docuseal
+    profiles: [docuseal-kmt, all]
+    restart: unless-stopped
+    mem_limit: 768m
+    environment:
+      DATABASE_URL: postgresql://docuseal:${KMT_DOCUSEAL_DB_PASSWORD}@kmt-docuseal-db:5432/docuseal
+      SECRET_KEY_BASE: ${KMT_DOCUSEAL_SECRET_KEY}
+      APP_URL: https://${KMT_DOCUSEAL_DOMAIN:-sign.openkmt.org}
+      HOST: ${KMT_DOCUSEAL_DOMAIN:-sign.openkmt.org}
+      FORCE_SSL: "false"
+    volumes:
+      - kmt-docuseal-data:/data
+    depends_on:
+      kmt-docuseal-db:
+        condition: service_healthy
+    networks:
+      - devpanel_net
+    labels:
+      - "traefik.enable=true"
+      # Pas d'oauth-google : Docuseal gère son login, et les signataires
+      # externes doivent atteindre les liens de signature sans SSO.
+      - "traefik.http.routers.kmt-docuseal.rule=Host(`${KMT_DOCUSEAL_DOMAIN:-sign.openkmt.org}`)"
+      - "traefik.http.routers.kmt-docuseal.entrypoints=websecure"
+      - "traefik.http.routers.kmt-docuseal.tls=true"
+      - "traefik.http.routers.kmt-docuseal.tls.certresolver=letsencrypt"
+      - "traefik.http.services.kmt-docuseal.loadbalancer.server.port=3000"
+
 volumes:
   traefik-certs:
   redis-data:
@@ -841,6 +900,8 @@ volumes:
   penpot-plugins:
   penpot-pgdata:
   glitchtip-pgdata:
+  kmt-docuseal-pgdata:
+  kmt-docuseal-data:
   uptime-kuma-data:
 
 networks:

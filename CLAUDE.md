@@ -183,6 +183,22 @@ The Postgres password drift trap (above) applies to `glitchtip-db` too — `GLIT
 
 The bridge above goes one direction (GlitchTip → captures). For the other direction — Shelly triaging an issue by id, or an ephemeral agent closing an issue after a fix has merged — the devpanel-mcp exposes two tools backed by the Sentry-compatible API: `glitchtip_get_issue({ org_slug, issue_id })` returns `{ title, culprit, level, status, last_event: { message, exception, stack, breadcrumbs, tags } }`, and `glitchtip_resolve_issue({ org_slug, issue_id })` PUTs `status=resolved`. Auth is `Bearer $GLITCHTIP_API_TOKEN` (the same UI-generated token from bootstrap §6, with `org:admin + project:admin + project:write`); base URL is `$GLITCHTIP_BASE_URL` (defaults to `https://glitchtip.devpanl.dev`). Both env vars are wired through `infra/agents-mcp.json.template` → `~/.mcp.json` on the agents host. 401/403 surface explicitly so a rotated/revoked token never silently returns an empty payload.
 
+## Docuseal KMT — signature électronique de la Fondation KMT
+
+Instance dédiée (`kmt-docuseal` + `kmt-docuseal-db`, profile `docuseal-kmt`), séparée du Docuseal de Zeno qui appartient à l'infra Epitech. Image upstream `docuseal/docuseal:1.8.2`, domaine `sign.openkmt.org` (`KMT_DOCUSEAL_DOMAIN`). Pas d'oauth-google : les signataires externes doivent atteindre les liens. Hors CI, bootstrap manuel :
+
+```bash
+ssh deploy@77.42.46.87 && cd ~/dev-panel
+# 1. Dans .env.production (une seule env file, cf. plus haut) :
+#    KMT_DOCUSEAL_DB_PASSWORD=$(openssl rand -hex 24)
+#    KMT_DOCUSEAL_SECRET_KEY=$(openssl rand -hex 64)   # ne JAMAIS le changer ensuite
+# 2. DNS : A sign.openkmt.org -> 77.42.46.87 (Cloudflare, proxy off le temps du certificat)
+# 3. Vérifier la RAM (VPS 3.7Gi, cf. memory pressure) : free -h ; le service est capé à 768m
+docker compose --profile docuseal-kmt up -d
+# 4. https://sign.openkmt.org -> créer le compte admin KMT au premier accès
+```
+Ajouter `kmt-docuseal-pgdata` et `kmt-docuseal-data` à la sauvegarde nocturne.
+
 ## Remote MCP — `https://devpanl.dev/mcp`
 
 The same MCP server that runs in stdio for Shelly (`src/mcp/server.js`, 23+ tools — dispatch, plane, memory, threads, captures, glitchtip, dev-bots, attachments) is also exposed over HTTP at `https://devpanl.dev/mcp` so any teammate's local Claude Code / Claude Desktop can hit prod without cloning this repo.
