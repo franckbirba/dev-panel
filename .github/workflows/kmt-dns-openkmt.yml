@@ -1,0 +1,48 @@
+# Bascule openkmt.org de Cloudflare Pages (projet `kemet`) vers le site EDMS
+# servi par la box KMT (Coolify/Traefik, 2.29.182.93).
+# Garde : ne touche à rien tant que la box ne répond pas 200 pour openkmt.org.
+# Prérequis : secret repo KMT_CLOUDFLARE_API_TOKEN.
+name: KMT — openkmt.org vers EDMS
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/kemet-cloudflare-site-1e79f3]
+    paths: [.github/workflows/kmt-dns-openkmt.yml]
+jobs:
+  bascule:
+    runs-on: ubuntu-latest
+    env:
+      CF: ${{ secrets.KMT_CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: 59ca249f7f4a9111c93523ab27d52a1f
+      BOX: 2.29.182.93
+      API: https://api.cloudflare.com/client/v4
+    steps:
+      - name: Garde — la box sert openkmt.org
+        run: |
+          code=$(curl -sk -o /dev/null -w '%{http_code}' --resolve openkmt.org:443:$BOX https://openkmt.org/)
+          echo "box openkmt.org: $code"
+          test "$code" = 200
+      - name: Retirer openkmt.org et www du projet Pages
+        run: |
+          for d in openkmt.org www.openkmt.org; do
+            r=$(curl -s -X DELETE "$API/accounts/$ACCOUNT/pages/projects/kemet/domains/$d" -H "Authorization: Bearer $CF")
+            echo "$d: $(echo "$r" | jq -c '{success, errors: [.errors[]?.message]}')"
+          done
+      - name: Enregistrements A vers la box (DNS only)
+        run: |
+          set -e
+          Z=$(curl -s "$API/zones?name=openkmt.org" -H "Authorization: Bearer $CF" | jq -r '.result[0].id')
+          test -n "$Z" && test "$Z" != null
+          for n in openkmt.org www.openkmt.org; do
+            for id in $(curl -s "$API/zones/$Z/dns_records?name=$n" -H "Authorization: Bearer $CF" | jq -r '.result[] | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | .id'); do
+              curl -s -X DELETE "$API/zones/$Z/dns_records/$id" -H "Authorization: Bearer $CF" | jq -c '{deleted: .success, errors: [.errors[]?.message]}'
+            done
+            curl -s -X POST "$API/zones/$Z/dns_records" -H "Authorization: Bearer $CF" -H 'Content-Type: application/json' \
+              -d "{\"type\":\"A\",\"name\":\"$n\",\"content\":\"$BOX\",\"proxied\":false,\"ttl\":60}" \
+              | jq -e -c '{created: .success, name: .result.name, content: .result.content, errors: [.errors[]?.message]}'
+          done
+      - name: Contrôle
+        run: |
+          sleep 30
+          dig +short openkmt.org @1.1.1.1
+          dig +short www.openkmt.org @1.1.1.1
